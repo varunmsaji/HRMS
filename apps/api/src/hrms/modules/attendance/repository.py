@@ -1084,6 +1084,10 @@ def _punch_not_superseded() -> ColumnElement[bool]:
 
 
 class PunchRepository:
+    async def get(self, session: AsyncSession, *, company_id: UUID, punch_id: UUID) -> Punch | None:
+        stmt = select(Punch).where(Punch.company_id == company_id, Punch.id == punch_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> Punch:
         row = Punch(**data)
         session.add(row)

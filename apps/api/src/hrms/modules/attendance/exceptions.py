@@ -726,6 +726,7 @@ class EmployeeTerminatedError(ValidationError):
         last_working_day: date,
         message: str | None = None,
     ) -> None:
+        self.last_working_day = last_working_day
         message = message or (
             "Attendance cannot be recorded after the employee's last working day "
             f"({last_working_day.isoformat()})"
@@ -1405,3 +1406,15 @@ class WorkplaceAuthorizationExistsError(ConflictError):
 
     def __init__(self) -> None:
         super().__init__("This employee is already authorised for that workplace")
+
+
+class PunchNotOrphanedError(ConflictError):
+    """Only a punch that no attendance day owns can be dismissed: dismissing an owned punch
+    would silently change a day's result."""
+
+    code = "PUNCH_NOT_ORPHANED"
+
+    def __init__(
+        self, message: str = "This punch belongs to an attendance day and cannot be dismissed"
+    ) -> None:
+        super().__init__(message)

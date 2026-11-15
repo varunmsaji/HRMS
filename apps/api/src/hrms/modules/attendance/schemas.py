@@ -354,6 +354,8 @@ _ATTENDANCE_VERSION_FIELDS = (
     "grace_in_minutes",
     "grace_out_minutes",
     "early_in_allowance_minutes",
+    "max_early_punch_minutes",
+    "max_late_punch_minutes",
     "punch_rounding",
     "rounding_minutes",
     "missing_punch_behaviour",
@@ -392,6 +394,8 @@ class AttendancePolicyVersionCreate(BaseModel):
     grace_in_minutes: int = Field(default=0, ge=0)
     grace_out_minutes: int = Field(default=0, ge=0)
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
+    max_early_punch_minutes: int = Field(default=240, ge=0, le=1440)
+    max_late_punch_minutes: int = Field(default=720, ge=0, le=1440)
     punch_rounding: str = "NONE"
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str = "INCOMPLETE"
@@ -478,6 +482,8 @@ class AttendancePolicyVersionUpdate(BaseModel):
     grace_in_minutes: int | None = Field(default=None, ge=0)
     grace_out_minutes: int | None = Field(default=None, ge=0)
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
+    max_early_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
+    max_late_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
     punch_rounding: str | None = None
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str | None = None
@@ -602,6 +608,8 @@ class AttendancePolicyVersionRead(BaseModel):
     grace_in_minutes: int
     grace_out_minutes: int
     early_in_allowance_minutes: int | None
+    max_early_punch_minutes: int = 240
+    max_late_punch_minutes: int = 720
     punch_rounding: str
     rounding_minutes: int | None
     missing_punch_behaviour: str
@@ -665,6 +673,8 @@ def attendance_policy_version_to_read(
         grace_in_minutes=row.grace_in_minutes,
         grace_out_minutes=row.grace_out_minutes,
         early_in_allowance_minutes=row.early_in_allowance_minutes,
+        max_early_punch_minutes=row.max_early_punch_minutes,
+        max_late_punch_minutes=row.max_late_punch_minutes,
         punch_rounding=row.punch_rounding,
         rounding_minutes=row.rounding_minutes,
         missing_punch_behaviour=row.missing_punch_behaviour,
@@ -2236,6 +2246,14 @@ class AttendancePeriodCreate(BaseModel):
 #: PAY-001 — the longest range one backfill request may cover (two months), bounding a single
 #: queued job for a large company to a size that finishes in reasonable time.
 RANGE_CALCULATE_MAX_DAYS = 62
+
+
+class OrphanPunchDismissInput(BaseModel):
+    """Invariant B — HR's reviewed decision that an orphan punch is not attendance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class AttendanceRangeCalculateInput(BaseModel):

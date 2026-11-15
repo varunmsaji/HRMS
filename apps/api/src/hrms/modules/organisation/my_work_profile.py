@@ -75,11 +75,16 @@ class MyWorkProfileService:
         ).scalar_one_or_none()
         if assignment is None:
             return MyWorkProfileRead()
-        shift = (
-            await self._shift(company_id, assignment.shift_id, today)
-            if assignment.shift_id
-            else None
+        # SH-16 — today's shift as attendance will judge it: a published roster row first, then
+        # the assignment's shift (`attendance.work_schedule`).
+        from hrms.modules.attendance.repository import ShiftRosterRepository
+        from hrms.modules.attendance.work_schedule import shift_id_for
+
+        roster_entry = await ShiftRosterRepository().get_published_for_date(
+            self._session, company_id=company_id, employee_id=employee_id, roster_date=today
         )
+        shift_id, _source = shift_id_for(assignment, roster_entry)
+        shift = await self._shift(company_id, shift_id, today) if shift_id else None
         location = (
             await self._location(company_id, assignment.branch_id, assignment.work_location_type)
             if assignment.branch_id

@@ -55,9 +55,13 @@ from hrms.modules.attendance.repository import (
 from hrms.modules.attendance.service import (
     _ensure_date_open,
     _ensure_employee_visible,
-    _resolve_shift_schedule,
     _resolve_visible_employee_ids,
-    _ResolvedShiftSchedule,
+)
+from hrms.modules.attendance.work_schedule import (
+    ResolvedShiftSchedule as _ResolvedShiftSchedule,
+)
+from hrms.modules.attendance.work_schedule import (
+    resolve_shift_schedule as _resolve_shift_schedule,
 )
 from hrms.shared.timezone import resolve_zoneinfo
 

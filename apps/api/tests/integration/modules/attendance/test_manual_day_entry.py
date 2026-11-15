@@ -207,14 +207,16 @@ async def test_out_punch_refusal_rolls_back_the_in_punch(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     """The IN would be accepted on its own; the OUT lands after the last working day. The
-    employee's pair is one unit, so the IN must not be left behind."""
+    employee's pair is one unit, so the IN must not be left behind.
+
+    SH-09: an OUT within the last shift's own ownership window (09:00-18:00 UTC + 12h) belongs to
+    the last working day and is accepted, so this OUT is placed beyond it (16:00 IST the 11th)."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
         eid = wired["employee"]["id"]
         await _terminate(client, headers, eid, _DAY)
-        # 22:00 IST on the 10th -> 06:00 IST on the 11th, the day after the last working day
-        body = _body([eid], punch_in_at=f"{_DAY}T16:30:00Z", punch_out_at="2026-08-11T00:30:00Z")
+        body = _body([eid], punch_in_at=f"{_DAY}T16:30:00Z", punch_out_at="2026-08-11T10:30:00Z")
         recorded = _by_employee(await _record(client, headers, body))
         assert recorded[eid]["outcome"] == "BLOCKED"
         assert recorded[eid]["code"] == "EMPLOYEE_TERMINATED"

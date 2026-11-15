@@ -75,6 +75,7 @@ from hrms.modules.attendance.exceptions import (
     PolicyVersionOverlapError,
     PolicyVersionPreviousVersionRequiredError,
     PunchAlreadyRecordedError,
+    PunchNotOrphanedError,
     PunchTimeBeforeEmploymentError,
     PunchTooSoonError,
     RegularizationApproverMismatchError,
@@ -116,8 +117,10 @@ from hrms.modules.attendance.models import (
     OvertimePolicyVersion,
     OvertimeRecord,
     Punch,
+    PunchDismissal,
     RegularizationPolicy,
 )
+from hrms.modules.attendance.ownership_service import PunchOwnershipService
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
     AttendanceDayRepository,
@@ -232,6 +235,15 @@ from hrms.modules.attendance.shift_window import (
     ShiftWindowDecision,
     combine_shift_window_decisions,
     evaluate_shift_window,
+)
+from hrms.modules.attendance.work_schedule import (
+    ResolvedShiftSchedule as _ResolvedShiftSchedule,
+)
+from hrms.modules.attendance.work_schedule import (
+    WorkScheduleResolver,
+)
+from hrms.modules.attendance.work_schedule import (
+    zone_or_none as _zone_or_none,
 )
 from hrms.modules.notification.approvals import (
     OVERTIME_FLOW,
@@ -518,6 +530,8 @@ class AttendanceService:
                 "grace_in_minutes": body.grace_in_minutes,
                 "grace_out_minutes": body.grace_out_minutes,
                 "early_in_allowance_minutes": body.early_in_allowance_minutes,
+                "max_early_punch_minutes": body.max_early_punch_minutes,
+                "max_late_punch_minutes": body.max_late_punch_minutes,
                 "punch_rounding": body.punch_rounding,
                 "rounding_minutes": body.rounding_minutes,
                 "missing_punch_behaviour": body.missing_punch_behaviour,
@@ -2292,17 +2306,33 @@ def _counts_as_excess_break_day(breaks: Iterable[Any]) -> bool:
 
 
 async def _ensure_not_after_last_working_day(
-    session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
+    session: AsyncSession,
+    company_id: UUID,
+    employee_id: UUID,
+    punch_time: datetime,
+    *,
+    direction: str | None = None,
 ) -> None:
     """A punch cannot land after the employee's last working day. The comparison is on the
-    company-local calendar date of the instant (the same business-date basis the rest of the punch
-    path uses), never the server's or the UTC date: with a last working day of the 15th, a punch at
-    23:59 local on the 15th is accepted and one at 00:00 local on the 16th is not."""
+    company-local calendar date of the instant, never the server's or the UTC date: with a last
+    working day of the 15th, a punch at 23:59 local on the 15th is accepted and one at 00:00
+    local on the 16th is not — **unless** (SH-09) the instant falls inside the last working
+    day's own punch-ownership window: the 06:00 checkout of a 22:00-06:00 shift that started on
+    the 15th belongs to the 15th and is accepted."""
     from hrms.modules.organisation.service import OrganisationService
 
     company = await OrganisationService(session).get_company_profile(company_id)
     local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
-    await _ensure_date_within_employment(session, company_id, employee_id, local_date)
+    try:
+        await _ensure_date_within_employment(session, company_id, employee_id, local_date)
+    except EmployeeTerminatedError as exc:
+        if direction is None:
+            raise
+        owner = await PunchOwnershipService(session).claimed_by(
+            company_id, employee_id, punch_time, [exc.last_working_day], direction=direction
+        )
+        if owner is None:
+            raise
 
 
 async def _ensure_date_within_employment(
@@ -2762,138 +2792,6 @@ def _ensure_same_logical_punch(existing: Punch, *, direction: str, source: str) 
         )
 
 
-@dataclass(frozen=True)
-class _ResolvedShiftSchedule:
-    shift_inputs: calc.ShiftInputs | None
-    shift_version_id: UUID | None
-    tz_name: str
-    window: calc.ScheduleWindow
-
-
-def _zone_or_none(tz_name: str | None) -> ZoneInfo | None:
-    """A stored timezone, or None when it is missing or no longer resolvable.
-
-    `None` is not a guess at UTC: the shift-window check fails open when the date it would
-    judge cannot be resolved (`TimezoneConfigurationError`), rather than refusing a punch
-    against the wrong day or failing the request."""
-    if not tz_name:
-        return None
-    try:
-        return resolve_zoneinfo(tz_name)
-    except TimezoneConfigurationError:
-        return None
-
-
-async def _resolve_shift_schedule(
-    organisation_service: Any,
-    *,
-    company_id: UUID,
-    shift_id: UUID | None,
-    target_date: date,
-    branch_timezone: str | None,
-    company_timezone: str,
-) -> _ResolvedShiftSchedule:
-    """The shift version, timezone and schedule window of `shift_id` on one date. The single
-    resolution both the calculation input and the self-service punch shift-window check use."""
-    from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
-
-    shift_inputs: calc.ShiftInputs | None = None
-    shift_version_timezone: str | None = None
-    shift_version_id: UUID | None = None
-    raw_start_time = raw_end_time = raw_window_start = raw_window_end = None
-    if shift_id is not None:
-        try:
-            shift_version = await organisation_service.resolve_shift_version_as_of(
-                company_id, shift_id, target_date
-            )
-        except ShiftVersionNotFoundForDateError:
-            shift_version = None
-        if shift_version is not None:
-            shift_version_id = shift_version.id
-            shift_version_timezone = shift_version.timezone
-            raw_start_time = (
-                _parse_time(shift_version.start_time) if shift_version.start_time else None
-            )
-            raw_end_time = _parse_time(shift_version.end_time) if shift_version.end_time else None
-            raw_window_start = (
-                _parse_time(shift_version.window_start) if shift_version.window_start else None
-            )
-            raw_window_end = (
-                _parse_time(shift_version.window_end) if shift_version.window_end else None
-            )
-            shift_inputs = calc.ShiftInputs(
-                shift_type=shift_version.shift_type,
-                is_ot_eligible=shift_version.is_ot_eligible,
-                operates_on_holiday=shift_version.operates_on_holiday,
-                operates_on_weekly_off=shift_version.operates_on_weekly_off,
-                is_cross_midnight=shift_version.is_cross_midnight,
-                is_night_shift=shift_version.is_night_shift,
-                breaks=[
-                    calc.ShiftBreakData(
-                        id=b.id,
-                        break_kind=b.break_kind,
-                        start_time=_parse_time(b.start_time) if b.start_time else None,
-                        end_time=_parse_time(b.end_time) if b.end_time else None,
-                        window_start=_parse_time(b.window_start) if b.window_start else None,
-                        window_end=_parse_time(b.window_end) if b.window_end else None,
-                        min_minutes=b.min_minutes,
-                        max_minutes=b.max_minutes,
-                        is_paid=b.is_paid,
-                        is_mandatory=b.is_mandatory,
-                        name=b.name,
-                        break_type=b.break_type,
-                        mode=b.mode,
-                        scheduled_minutes=b.scheduled_minutes,
-                        crosses_midnight=b.crosses_midnight,
-                        excess_outcome=b.excess_outcome,
-                        auto_deduct_full=b.auto_deduct_full,
-                        optional_recorded_deducts=b.optional_recorded_deducts,
-                        optional_scheduled_fallback=b.optional_scheduled_fallback,
-                        is_enabled=b.is_enabled,
-                        sort_order=b.sort_order,
-                        allows_split=b.allows_split,
-                    )
-                    for b in shift_version.breaks
-                ],
-                duty_blocks=[
-                    calc.ShiftDutyBlockData(
-                        sequence=d.sequence,
-                        start_time=_parse_time(d.start_time),
-                        end_time=_parse_time(d.end_time),
-                        crosses_midnight=d.crosses_midnight,
-                    )
-                    for d in shift_version.duty_blocks
-                ],
-                core_start=(
-                    _parse_time(shift_version.core_start) if shift_version.core_start else None
-                ),
-                core_end=(_parse_time(shift_version.core_end) if shift_version.core_end else None),
-                required_minutes=shift_version.required_minutes,
-            )
-
-    tz_name = calc.resolve_timezone(
-        shift_version_timezone=shift_version_timezone,
-        branch_timezone=branch_timezone,
-        company_timezone=company_timezone,
-    )
-
-    window = calc.resolve_schedule_window(
-        attendance_date=target_date,
-        tz_name=tz_name,
-        shift=shift_inputs,
-        start_time=raw_start_time,
-        end_time=raw_end_time,
-        window_start=raw_window_start,
-        window_end=raw_window_end,
-    )
-    return _ResolvedShiftSchedule(
-        shift_inputs=shift_inputs,
-        shift_version_id=shift_version_id,
-        tz_name=tz_name,
-        window=window,
-    )
-
-
 class PunchService:
     """Punch ingestion (architecture §19.1 step 9, WD-11 — punches are immutable, append-only
     once written; corrections are new punches, never an UPDATE/DELETE of this row)."""
@@ -3071,7 +2969,9 @@ class PunchService:
         # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
         # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
         # facts), never a silent rewrite.
-        await _ensure_not_after_last_working_day(self._session, company_id, employee_id, punch_time)
+        await _ensure_not_after_last_working_day(
+            self._session, company_id, employee_id, punch_time, direction=direction
+        )
         await _ensure_punch_date_open(self._session, company_id, employee_id, punch_time)
         punch_id = uuid4()
         data = {
@@ -3134,6 +3034,7 @@ class PunchService:
             company_id,
             employee_id,
             punch_time,
+            punch_id=punch_id,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
@@ -3174,7 +3075,6 @@ class PunchService:
         shift does not bypass the window of the shift this resolution returns."""
         if source not in GEOFENCED_SOURCES:
             return
-        from hrms.modules.employee.service import EmployeeAssignmentService
         from hrms.modules.organisation.service import OrganisationService
 
         def skip(reason: str) -> None:
@@ -3188,43 +3088,18 @@ class PunchService:
             )
 
         organisation_service = OrganisationService(self._session)
-        assignment_service = EmployeeAssignmentService(self._session)
         company = await organisation_service.get_company_profile(company_id)
         resolved: dict[date, tuple[_ResolvedShiftSchedule, str | None]] = {}
+
+        work_schedules = WorkScheduleResolver(self._session)
 
         async def schedule_for(target_date: date) -> tuple[_ResolvedShiftSchedule, str | None]:
             cached = resolved.get(target_date)
             if cached is not None:
                 return cached
-            assignment = await assignment_service.get_assignment_as_of(
-                company_id, employee_id, target_date
-            )
-            branch_timezone: str | None = None
-            if assignment is not None and assignment.branch_id is not None:
-                branch_timezone = (
-                    await organisation_service.get_branch(company_id, assignment.branch_id)
-                ).timezone
-            roster_entry = await self._roster_repo.get_published_for_date(
-                self._session,
-                company_id=company_id,
-                employee_id=employee_id,
-                roster_date=target_date,
-            )
-            shift_id = (
-                roster_entry.shift_id
-                if roster_entry is not None
-                else (assignment.shift_id if assignment else None)
-            )
-            schedule = await _resolve_shift_schedule(
-                organisation_service,
-                company_id=company_id,
-                shift_id=shift_id,
-                target_date=target_date,
-                branch_timezone=branch_timezone,
-                company_timezone=company.timezone,
-            )
-            resolved[target_date] = (schedule, branch_timezone)
-            return schedule, branch_timezone
+            work = await work_schedules.resolve(company_id, employee_id, target_date)
+            resolved[target_date] = (work.schedule, work.branch_timezone)
+            return resolved[target_date]
 
         try:
             company_zone = _zone_or_none(company.timezone)
@@ -3460,6 +3335,7 @@ class PunchService:
         employee_id: UUID,
         punch_time: datetime,
         *,
+        punch_id: UUID | None = None,
         actor_user_id: UUID | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -3467,43 +3343,43 @@ class PunchService:
         """Execution gate §16.2's "immediate trigger" — best-effort, non-blocking, failure-
         tolerant. **Must never fail the punch write.** The punch is a fact; a calculation is a
         derivation of it, and losing the fact because a derivation failed is unacceptable. Any
-        failure here — a `CONFIG_ERROR`-producing gap, a lock conflict, an unexpected exception —
-        is swallowed and logged; the Phase 8 scheduled sweep (`attendance.run_daily_calculation`,
-        trailing 3 days) picks up whatever this attempt missed.
+        failure here is swallowed and logged; the scheduled sweep (`attendance.run_daily_
+        calculation`, trailing 3 days) picks up whatever this attempt missed.
 
-        Wrapped in `begin_nested()` (a `SAVEPOINT`) rather than a bare try/except: `calculate()`
-        does real writes (the day row, break rows, the overtime record) on this same session/
-        transaction as the punch insert above, so an exception here — including one that aborts
-        the transaction at the Postgres level, e.g. a constraint violation deep in
-        `_build_calculation_input` — must not poison the outer transaction the punch insert and
-        its audit row are still pending in. Rolling back to the savepoint discards only this
-        attempt's work, never the punch itself.
-
-        The target date is the *local* (company-timezone) calendar date of the punch instant —
-        the same derivation `_ensure_punch_date_open` uses for its own local/previous-local
-        check — not `business_today()`: an on-behalf punch backdated to last week must trigger a
-        calculation for last week, not for today. Cross-midnight attribution can differ from this
-        local-calendar-date approximation (`FR-ATT-005` — a shift's punch may actually belong to
-        the *previous* local date); this hook does not need to get that exactly right, because
-        `calculate()` re-derives ownership from the shift itself when it runs, and the trailing
-        sweep recomputes both the punch's local date and the day before it (`SR-14`'s window
-        shapes already cover the shift/no-shift distinction), whichever one recompute here
-        doesn't reach."""
+        SH-05 — recalculates the day that **owns** the punch (`ownership_service.py`) as well as
+        the punch's company-local date. An overnight checkout at 06:00 belongs to the shift that
+        started the evening before; before this it only recalculated the checkout's own date, so
+        the shift's day showed a missing checkout until the next sweep. Dates are calculated
+        oldest first, in one SAVEPOINT, so a failure rolls back only this attempt."""
         from hrms.modules.organisation.service import OrganisationService
 
         try:
             async with self._session.begin_nested():
                 company = await OrganisationService(self._session).get_company_profile(company_id)
                 local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
-                await AttendanceDayService(self._session).calculate(
-                    company_id,
-                    employee_id,
-                    local_date,
-                    actor_user_id=actor_user_id,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    lock_timeout_ms=get_settings().attendance_punch_calc_lock_timeout_ms,
-                )
+                targets = {local_date}
+                if punch_id is not None:
+                    owners = await PunchOwnershipService(self._session).owners_near(
+                        company_id, employee_id, local_date
+                    )
+                    owner = owners.get(punch_id)
+                    if owner is not None:
+                        targets.add(owner)
+                day_service = AttendanceDayService(self._session)
+                for target in sorted(targets):
+                    if target != local_date and await _is_date_closed(
+                        self._session, company_id, target, employee_id=employee_id
+                    ):
+                        continue
+                    await day_service.calculate(
+                        company_id,
+                        employee_id,
+                        target,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        lock_timeout_ms=get_settings().attendance_punch_calc_lock_timeout_ms,
+                    )
         except Exception as exc:  # noqa: BLE001 - best-effort by design; see docstring
             # A lock/statement timeout is logged under its own event so a sweep holding the row
             # (or a stuck transaction) shows up distinctly; the punch itself is already stored and
@@ -3748,7 +3624,7 @@ class PunchService:
         # Outside the employee's savepoint: a failed calculation must never undo the punches
         # (`_try_immediate_calculate` swallows its own errors; the daily sweep retries).
         calculated: set[date] = set()
-        for instant in (body.punch_in_at, body.punch_out_at):
+        for punch, instant in zip(punches, (body.punch_in_at, body.punch_out_at), strict=False):
             local_date = instant.astimezone(timezone).date()
             if local_date in calculated:
                 continue
@@ -3757,6 +3633,7 @@ class PunchService:
                 company_id,
                 employee_id,
                 instant,
+                punch_id=punch.id,
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
@@ -3775,12 +3652,12 @@ class PunchService:
         preview."""
         await self._ensure_manual_dates_open(company_id, employee_id, body, timezone)
         now = datetime.now(UTC)
-        for instant in (body.punch_in_at, body.punch_out_at):
+        for direction, instant in (("IN", body.punch_in_at), ("OUT", body.punch_out_at)):
             if instant > now:
                 raise FuturePunchTimeError()
             await self._ensure_within_employment(company_id, employee_id, instant)
             await _ensure_not_after_last_working_day(
-                self._session, company_id, employee_id, instant
+                self._session, company_id, employee_id, instant, direction=direction
             )
             await _ensure_punch_date_open(self._session, company_id, employee_id, instant)
 
@@ -4550,86 +4427,99 @@ class AttendanceDayService:
     async def list_orphaned_punches(
         self, company_id: UUID, *, date_from: date, date_to: date
     ) -> list[PunchRead]:
-        """The orphan-punch report (`TZ-08`/`DEC-TZ-16`, execution gate §16.4) — punches that
-        fall outside every attendance day's own load window, and are therefore invisible to
-        `calculate()` regardless of how many times it runs: a supervisor arriving at 06:45 for a
-        09:00 shift and leaving at 20:30 punches successfully, but if 06:45 falls outside the
-        ±2h pad, that punch never gets picked up by any `AttendanceDay` row — the employee shows
-        `ABSENT` for a day nearly fourteen hours long, silently.
+        """Punches no attendance day owns (`TZ-08`/`DEC-TZ-16`, Invariant B): outside every
+        candidate day's ownership window, or a lone punch no shift can take (a check-in after
+        its shift ended). Dismissed punches (`punch_dismissal`) are left out.
 
-        `[date_from, date_to]` are **local** (company-timezone) business dates — the same
-        convention as every other date-range parameter in this module — widened by one day on
-        each side when fetching candidate `AttendanceDay` rows, so a window that legitimately
-        extends past midnight (a cross-midnight shift's pad, or `FLEXIBLE`'s asymmetric +12h
-        lookahead) is still found even when its own `attendance_date` falls just outside the
-        nominal range.
-
-        **`SR-14` — the fourth window shape.** A no-shift day (`shift_id IS NULL`) uses
-        `calendar_day_window_utc` — the full local calendar day, no pad at all — never the ±2h
-        FIXED/SPLIT logic; applying the padded shape to an unscheduled employee would flag every
-        punch a little outside midnight as a false orphan. `FIXED`/`SPLIT` shifts share the same
-        `scheduled_start - 2h .. scheduled_end + 2h` shape and are reconstructed exactly from the
-        row's own stored `scheduled_start`/`scheduled_end`, with no further DB access needed.
-        `FLEXIBLE`'s own pad is asymmetric (`-2h/+12h`, `calculation.resolve_schedule_window`) —
-        not distinguishable from `FIXED`/`SPLIT` using only what's stored on `AttendanceDay`
-        (`shift_id`, not `shift_type`), so this report applies the narrower ±2h shape to every
-        shift-bearing day regardless of type. That is conservative in the safe direction for a
-        report: it can only ever over-report (flag a `FLEXIBLE` employee's punch inside their
-        real +12h lookahead as an orphan candidate for HR to dismiss), never under-report a
-        genuinely missed punch.
-
-        A date with **no** `AttendanceDay` row at all (calculation never ran for it) has no
-        window to cover anything — every punch on such a date is orphaned by definition, which is
-        exactly the visibility this report exists to provide (`F-14`'s gap, before the row is
-        ever created)."""
+        `[date_from, date_to]` are company-local dates of the punch instants. Ownership is the
+        same computation the calculation uses (`ownership_service.py`), so this report and
+        `calculate()` can never disagree about whether a punch is counted. A punch is reported
+        whether or not its day has been calculated yet."""
         from hrms.modules.organisation.service import OrganisationService
 
         company = await OrganisationService(self._session).get_company_profile(company_id)
-        tz_name = company.timezone
-
-        padded_from = date_from - timedelta(days=1)
-        padded_to = date_to + timedelta(days=1)
-        window_start, _ = calc.calendar_day_window_utc(attendance_date=padded_from, tz_name=tz_name)
-        _, window_end = calc.calendar_day_window_utc(attendance_date=padded_to, tz_name=tz_name)
-
-        days = await self._day_repo.list_filtered(
-            self._session,
-            company_id=company_id,
-            visible_employee_ids=None,
-            employee_id=None,
-            date_from=padded_from,
-            date_to=padded_to,
-            status=None,
+        tz = resolve_zoneinfo(company.timezone)
+        window_start, _ = calc.calendar_day_window_utc(
+            attendance_date=date_from, tz_name=company.timezone
         )
-        windows_by_employee: dict[UUID, list[tuple[datetime, datetime]]] = {}
-        for day in days:
-            if day.shift_id is None:
-                covering = calc.calendar_day_window_utc(
-                    attendance_date=day.attendance_date, tz_name=day.timezone
-                )
-            elif day.scheduled_start is not None and day.scheduled_end is not None:
-                covering = (
-                    day.scheduled_start - timedelta(hours=2),
-                    day.scheduled_end + timedelta(hours=2),
-                )
-            else:
-                covering = calc.calendar_day_window_utc(
-                    attendance_date=day.attendance_date, tz_name=day.timezone
-                )
-            windows_by_employee.setdefault(day.employee_id, []).append(covering)
-
+        _, window_end = calc.calendar_day_window_utc(
+            attendance_date=date_to, tz_name=company.timezone
+        )
         punches = await self._punch_repo.list_for_company_window(
             self._session, company_id=company_id, window_start=window_start, window_end=window_end
         )
-        orphaned = [
-            punch
-            for punch in punches
-            if not any(
-                start <= punch.punch_time < end
-                for start, end in windows_by_employee.get(punch.employee_id, [])
-            )
-        ]
+        by_employee: dict[UUID, list[Punch]] = {}
+        for punch in punches:
+            by_employee.setdefault(punch.employee_id, []).append(punch)
+
+        orphaned: list[Punch] = []
+        for employee_id, rows in by_employee.items():
+            ownership = PunchOwnershipService(self._session)
+            owners_by_date: dict[date, dict[UUID, date | None]] = {}
+            dismissed = await ownership._dismissed_ids(company_id, [r.id for r in rows])
+            for row in rows:
+                if row.id in dismissed:
+                    continue
+                local_date = row.punch_time.astimezone(tz).date()
+                if local_date not in owners_by_date:
+                    owners_by_date[local_date] = await ownership.owners_near(
+                        company_id, employee_id, local_date
+                    )
+                if owners_by_date[local_date].get(row.id) is None:
+                    orphaned.append(row)
+        orphaned.sort(key=lambda r: (str(r.employee_id), r.punch_time))
         return [punch_to_read(p) for p in orphaned]
+
+    async def dismiss_orphan_punch(
+        self,
+        company_id: UUID,
+        punch_id: UUID,
+        *,
+        reason: str,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PunchRead:
+        """Invariant B — records that an orphan punch (owned by no day) is not attendance, so it
+        stops blocking period close. Refused for a punch some day owns: that would change a
+        result without a correction. The punch row itself is never touched (WD-11)."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        row = await self._punch_repo.get(self._session, company_id=company_id, punch_id=punch_id)
+        if row is None:
+            raise NotFoundError("Resource not found")
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        local_date = row.punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
+        ownership = PunchOwnershipService(self._session)
+        if await ownership._dismissed_ids(company_id, [row.id]):
+            return punch_to_read(row)
+        owners = await ownership.owners_near(company_id, row.employee_id, local_date)
+        if owners.get(row.id) is not None:
+            raise PunchNotOrphanedError()
+        self._session.add(
+            PunchDismissal(
+                id=uuid4(),
+                company_id=company_id,
+                punch_id=row.id,
+                reason=reason.strip(),
+                dismissed_by=actor_user_id,
+                dismissed_at=datetime.now(UTC),
+            )
+        )
+        await self._session.flush()
+        read = punch_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PUNCH_DISMISSED",
+            entity_type="punch",
+            entity_id=row.id,
+            after={**punch_to_audit_dict(read), "dismissal_reason": reason.strip()},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
 
     @staticmethod
     def _result_to_values(
@@ -4712,55 +4602,6 @@ class AttendanceDayService:
             "calculated_at": datetime.now(UTC),
         }
 
-    async def _prior_day_window_end(
-        self,
-        organisation_service: Any,
-        assignment_service: Any,
-        *,
-        company_id: UUID,
-        employee_id: UUID,
-        target_date: date,
-        company_timezone: str,
-        load_start: datetime,
-    ) -> datetime | None:
-        """Where the previous date's shift stops loading punches, if that is after this date's
-        own window starts (an overnight shift). Resolved the same way the previous date's own
-        calculation resolves its shift: published roster row first, then the assignment."""
-        prior_date = target_date - timedelta(days=1)
-        assignment = await assignment_service.get_assignment_as_of(
-            company_id, employee_id, prior_date
-        )
-        roster_entry = await self._roster_repo.get_published_for_date(
-            self._session, company_id=company_id, employee_id=employee_id, roster_date=prior_date
-        )
-        shift_id = (
-            roster_entry.shift_id
-            if roster_entry is not None
-            else (assignment.shift_id if assignment else None)
-        )
-        if shift_id is None:
-            return None
-        branch_timezone: str | None = None
-        if assignment is not None and assignment.branch_id is not None:
-            branch_timezone = (
-                await organisation_service.get_branch(company_id, assignment.branch_id)
-            ).timezone
-        try:
-            prior = await _resolve_shift_schedule(
-                organisation_service,
-                company_id=company_id,
-                shift_id=shift_id,
-                target_date=prior_date,
-                branch_timezone=branch_timezone,
-                company_timezone=company_timezone,
-            )
-        except (TimezoneConfigurationError, ZoneInfoNotFoundError):
-            # The previous date fails on its own; this date keeps every punch it loaded.
-            return None
-        if prior.shift_inputs is None or prior.window.load_end <= load_start:
-            return None
-        return prior.window.load_end
-
     async def _build_calculation_input(
         self, company_id: UUID, employee_id: UUID, target_date: date
     ) -> tuple[
@@ -4772,16 +4613,13 @@ class AttendanceDayService:
         # Local, function-scoped imports — the established cross-module-seam convention
         # (module docstring; mirrors `PolicyResolutionService.resolve`,
         # `CalendarResolutionService._scope_candidates`, `EmployeeService._check_seat_limit`).
-        from hrms.modules.employee.service import EmployeeAssignmentService, EmploymentService
+        from hrms.modules.employee.service import EmploymentService
         from hrms.modules.organisation.calendar_resolution import (
             CalendarResolutionService,
             weekly_off_fraction_of,
         )
-        from hrms.modules.organisation.service import OrganisationService
 
         employment_service = EmploymentService(self._session)
-        assignment_service = EmployeeAssignmentService(self._session)
-        organisation_service = OrganisationService(self._session)
         calendar_service = CalendarResolutionService(self._session)
 
         employment = await employment_service.get_employment_as_of(
@@ -4795,44 +4633,14 @@ class AttendanceDayService:
         else:
             population_status = "ACTIVE"
 
-        assignment = await assignment_service.get_assignment_as_of(
-            company_id, employee_id, target_date
-        )
-
-        company = await organisation_service.get_company_profile(company_id)
-        branch_timezone: str | None = None
-        branch_id = assignment.branch_id if assignment else None
-        if branch_id is not None:
-            branch = await organisation_service.get_branch(company_id, branch_id)
-            branch_timezone = branch.timezone
-
-        # W5 (architecture §9.7) — a PUBLISHED `ShiftRoster` row for this employee-date outranks
-        # `EmployeeAssignment.shift_id`; falling back to the assignment default when none
-        # exists. Only PUBLISHED rows are considered (`get_published_for_date`) — a staged
-        # DRAFT roster must never change a live calculation (WD-27).
-        roster_entry = await self._roster_repo.get_published_for_date(
-            self._session, company_id=company_id, employee_id=employee_id, roster_date=target_date
-        )
-        roster_week_off_override = (
-            roster_entry.is_week_off_override if roster_entry is not None else False
-        )
-        roster_holiday_working_override = (
-            roster_entry.is_holiday_working_override if roster_entry is not None else False
-        )
-
-        shift_id = (
-            roster_entry.shift_id
-            if roster_entry is not None
-            else (assignment.shift_id if assignment else None)
-        )
-        schedule = await _resolve_shift_schedule(
-            organisation_service,
-            company_id=company_id,
-            shift_id=shift_id,
-            target_date=target_date,
-            branch_timezone=branch_timezone,
-            company_timezone=company.timezone,
-        )
+        # Invariant A — the one resolution of which shift applies on this date (published roster
+        # row, else the assignment's shift, else none). `work_schedule.py`.
+        resolver = WorkScheduleResolver(self._session)
+        resolved = await resolver.resolve(company_id, employee_id, target_date)
+        roster_week_off_override = resolved.roster_week_off_override
+        roster_holiday_working_override = resolved.roster_holiday_working_override
+        shift_id = resolved.shift_id
+        schedule = resolved.schedule
         # Break management V1 — the employee's in-force break overrides are layered over the
         # shift version's breaks (deterministic, dated; the shift rows are never touched).
         from hrms.modules.attendance.break_service import (
@@ -4853,21 +4661,6 @@ class AttendanceDayService:
         shift_version_id = schedule.shift_version_id
         tz_name = schedule.tz_name
         window = schedule.window
-
-        # A date with no shift loads its whole calendar day, which can include the morning end
-        # of the previous date's overnight shift. Hand the engine where that shift's punch
-        # window ends so those punches stay with the previous date.
-        prior_day_window_end: datetime | None = None
-        if shift_inputs is None and population_status == "ACTIVE":
-            prior_day_window_end = await self._prior_day_window_end(
-                organisation_service,
-                assignment_service,
-                company_id=company_id,
-                employee_id=employee_id,
-                target_date=target_date,
-                company_timezone=company.timezone,
-                load_start=window.load_start,
-            )
 
         calendar_result = await calendar_service.resolve_for_employee(
             company_id, employee_id, target_date
@@ -5093,19 +4886,13 @@ class AttendanceDayService:
             else None
         )
 
-        punches: list[calc.PunchData] = []
-        if population_status == "ACTIVE":
-            punch_rows = await self._punch_repo.list_for_employee_window(
-                self._session,
-                company_id=company_id,
-                employee_id=employee_id,
-                window_start=window.load_start,
-                window_end=window.load_end,
-            )
-            punches = [
-                calc.PunchData(id=p.id, punch_time=p.punch_time, direction=p.direction)
-                for p in punch_rows
-            ]
+        # Invariant B (SH-01/SH-02) — the punches this date owns: compared with its neighbours'
+        # claims so every punch belongs to exactly one day, however long after the shift it is
+        # (up to the policy's `max_late_punch_minutes`). `ownership_service.py`.
+        ownership = await PunchOwnershipService(self._session, resolver).owned_punches(
+            company_id, employee_id, target_date
+        )
+        punches: list[calc.PunchData] = ownership.punches if population_status == "ACTIVE" else []
         break_events = to_event_data(
             await self._break_event_repo.list_for_date(
                 self._session,
@@ -5115,8 +4902,12 @@ class AttendanceDayService:
             )
         )
         # An open break START is *active* only while the day can still receive its END; once the
-        # punch window has closed it is unresolved (and the sweep's recompute flips it).
-        day_open = utcnow() <= window.load_end
+        # ownership window has closed it is unresolved (and the sweep's recompute flips it).
+        day_open = (
+            utcnow() < ownership.claim.window_end
+            if ownership.claim is not None
+            else utcnow() <= window.load_end
+        )
 
         # W9 (architecture §21) — active approved leave projections for this employee-date,
         # resolved here (DB access) exactly like the roster overrides above, then handed to the
@@ -5182,7 +4973,11 @@ class AttendanceDayService:
             on_duty_approved=on_duty_approved,
             break_events=break_events,
             day_open=day_open,
-            prior_day_window_end=prior_day_window_end,
+            ownership_window=(
+                (ownership.claim.window_start, ownership.claim.window_end)
+                if ownership.claim is not None
+                else None
+            ),
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -6294,7 +6089,11 @@ class RegularizationRequestService:
             replaceable = list(day_input.punches)
         for requested in requested_punches:
             await _ensure_not_after_last_working_day(
-                self._session, company_id, row.employee_id, requested.requested_time
+                self._session,
+                company_id,
+                row.employee_id,
+                requested.requested_time,
+                direction=requested.direction,
             )
             # WRONG_PUNCH replaces the nearest punch of that direction, not adds alongside it.
             replaced = min(
@@ -7361,6 +7160,37 @@ class AttendancePeriodService:
                     sample=[
                         f"{r.employee_id}:{r.roster_date.isoformat()}" for r in draft_roster[:20]
                     ],
+                )
+            )
+
+        # ORPHAN_PUNCHES — Invariant B: a punch no attendance day owns is attendance nobody has
+        # counted. It blocks close until it is corrected (a regularization puts the time on the
+        # right day) or dismissed with a reason (`dismiss_orphan_punch`).
+        from hrms.modules.organisation.service import OrganisationService
+
+        company_zone = resolve_zoneinfo(
+            (await OrganisationService(self._session).get_company_profile(company_id)).timezone
+        )
+        orphans = [
+            p
+            for p in await AttendanceDayService(self._session).list_orphaned_punches(
+                company_id, date_from=period.period_start, date_to=period.period_end
+            )
+            if scope.owns(
+                p.employee_id,
+                datetime.fromisoformat(p.punch_time).astimezone(company_zone).date(),
+            )
+        ]
+        if orphans:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="ORPHAN_PUNCHES",
+                    message=(
+                        "Some punches belong to no attendance day — correct them with a "
+                        "regularization or dismiss them with a reason before finalizing"
+                    ),
+                    count=len(orphans),
+                    sample=[f"{p.employee_id}:{p.id}" for p in orphans[:20]],
                 )
             )
 
