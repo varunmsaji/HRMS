@@ -8,6 +8,7 @@ import 'core/providers.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/theme_selection.dart';
 import 'features/auth/state/auth_controller.dart';
+import 'features/notifications/presentation/notification_popup_host.dart';
 import 'core/auth/surface.dart';
 import 'core/time.dart';
 
@@ -41,6 +42,8 @@ class HrmsApp extends ConsumerWidget {
       darkTheme: selection.darkTheme,
       themeMode: selection.themeMode,
       routerConfig: router,
+      // Above every screen, so a new notification can pop up wherever the user is.
+      builder: (context, child) => NotificationPopupHost(router: router, child: child ?? const SizedBox.shrink()),
     );
   }
 }
