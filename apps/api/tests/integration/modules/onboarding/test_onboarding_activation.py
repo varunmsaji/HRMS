@@ -16,6 +16,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory, set_rls_company_id
 
 from .test_onboarding_case import (
@@ -285,6 +286,46 @@ async def test_activate_success_creates_full_employee_graph(
             await client.get(f"/v1/employees/{employee_id}/documents", headers=headers)
         ).json()["data"]
         assert documents == []
+    finally:
+        await _full_teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_activate_sends_one_welcome_email_with_login_details_and_password_link(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Leave the email queued (a sent row has its body cleared) so its content can be read.
+    monkeypatch.setenv("EMAIL_OUTBOX_DISPATCH", "none")
+    get_settings.cache_clear()
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        case = await _verified_case(client, headers, company_id, with_org=True)
+        response = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
+        assert response.status_code == 200, response.text
+        employee_id = response.json()["data"]["employee_id"]
+        employee = (await client.get(f"/v1/employees/{employee_id}", headers=headers)).json()[
+            "data"
+        ]
+        company = (await client.get("/v1/companies/current", headers=headers)).json()["data"]
+
+        async with get_session_factory()() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT message_id, recipient, subject, text_body, html_body "
+                        "FROM email_outbox WHERE company_id = :cid AND recipient = :to"
+                    ),
+                    {"cid": str(company_id), "to": case["personal_email"]},
+                )
+            ).all()
+        # One email, not a welcome plus a separate account invite.
+        assert [r.message_id for r in rows] == [f"onboarding_activated:{case['id']}"]
+        (email,) = rows
+        assert "Set up your login" in email.subject
+        for body in (email.text_body, email.html_body):
+            assert case["personal_email"].lower() in body
+            assert company["login_code"] in body
+            assert employee["employee_code"] in body
+            assert "/accept-invite/" in body
     finally:
         await _full_teardown(company_id=company_id, user_id=user_id)
 

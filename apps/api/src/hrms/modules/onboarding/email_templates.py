@@ -8,6 +8,11 @@ from html import escape as _e
 
 from hrms.core.links import mobile_html as _mobile_html
 from hrms.core.links import mobile_text as _mobile_text
+from hrms.modules.account_invite.email_templates import (
+    LoginDetails,
+    login_details_html,
+    login_details_text,
+)
 
 
 def build_invite_email(
@@ -64,22 +69,66 @@ def build_changes_requested_email(
 
 
 def build_activated_email(
-    *, candidate_first_name: str, company_name: str, employee_code: str
+    *,
+    candidate_first_name: str,
+    company_name: str,
+    employee_code: str,
+    login: LoginDetails | None = None,
+    set_password_url: str | None = None,
+    mobile_url: str | None = None,
+    sign_in_url: str | None = None,
 ) -> tuple[str, str, str]:
-    """Sent once activation (O7) has created the real `Employee` row. Login/account-creation
-    itself is out of scope for this slice (plan §14/§13 Q4) — this is a plain welcome notice,
-    not an invitation to sign in anywhere."""
-    subject = f"Welcome to {company_name}!"
-    text_body = (
+    """Sent once activation (O7) has created the real `Employee` row — the one email the new
+    employee gets: the welcome, how they sign in (`login`), and the link to set their password
+    (`set_password_url`, the account invite issued in the same activation). When no invite could
+    be issued (e.g. the address already has an account) it points at `sign_in_url` instead; with
+    neither it is a plain welcome notice."""
+    subject = (
+        f"Welcome to {company_name}! Set up your login"
+        if set_password_url
+        else f"Welcome to {company_name}!"
+    )
+    intro_text = (
         f"Hi {candidate_first_name},\n\n"
         f"Your onboarding at {company_name} is complete and your employee record has been "
-        f"created (employee code {employee_code}). Welcome aboard — HR will be in touch with "
-        "any next steps before your start date."
+        f"created (employee code {employee_code}). Welcome aboard!"
     )
-    html_body = (
+    intro_html = (
         f"<p>Hi {_e(candidate_first_name)},</p>"
         f"<p>Your onboarding at <strong>{_e(company_name)}</strong> is complete and your employee "
         f"record has been created (employee code <strong>{_e(employee_code)}</strong>). Welcome "
-        "aboard — HR will be in touch with any next steps before your start date.</p>"
+        "aboard!</p>"
     )
-    return subject, html_body, text_body
+    if set_password_url:
+        action_text = (
+            "Set your password using the secure link below, then sign in:\n\n"
+            f"{set_password_url}{_mobile_text(mobile_url)}"
+        )
+        action_html = (
+            "<p>Set your password using the secure link below, then sign in:</p>"
+            f'<p><a href="{_e(set_password_url)}">{_e(set_password_url)}</a></p>'
+            f"{_mobile_html(mobile_url)}"
+        )
+        closing = "This link is personal to you — please don't forward it."
+    elif sign_in_url:
+        action_text = f"Sign in with your existing password at {sign_in_url}"
+        action_html = (
+            "<p>Sign in with your existing password at "
+            f'<a href="{_e(sign_in_url)}">{_e(sign_in_url)}</a>.</p>'
+        )
+        closing = "HR will be in touch with any next steps before your start date."
+    else:
+        action_text = action_html = ""
+        closing = "HR will be in touch with any next steps before your start date."
+
+    text_parts = [intro_text]
+    html_parts = [intro_html]
+    if login is not None:
+        text_parts.append(login_details_text(login))
+        html_parts.append(login_details_html(login))
+    if action_text:
+        text_parts.append(action_text)
+        html_parts.append(action_html)
+    text_parts.append(closing)
+    html_parts.append(f"<p>{closing}</p>")
+    return subject, "".join(html_parts), "\n\n".join(text_parts)
