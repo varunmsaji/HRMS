@@ -12,6 +12,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
 import 'leave_applications_screen.dart' show LeaveStatusChip;
+import '../../../core/format.dart';
 
 /// One leave application — mirrors `apps/web/src/app/app/leave-applications/[id]/page.tsx`: the
 /// request, its day-by-day breakdown and action history, and the review (approve / reject) and
@@ -186,7 +187,7 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
                 Row(children: [
                   const Icon(Icons.event_rounded, size: 16, color: Colors.white70),
                   const SizedBox(width: 6),
-                  Text('${a.startDate} → ${a.endDate}', style: const TextStyle(color: Colors.white70)),
+                  Text(formatDateRange(a.startDate, a.endDate), style: const TextStyle(color: Colors.white70)),
                 ]),
                 const SizedBox(height: 4),
                 Text('${s('total_days')} day(s)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),

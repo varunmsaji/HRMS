@@ -24,7 +24,7 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final me = ref.watch(authControllerProvider).user?.employeeId;
     return DecisionCenterView<LeaveDecisionCenter>(
-      tabs: const [('pending', 'Pending approvals'), ('approved', 'Approved leaves'), ('declined', 'Declined & cancelled')],
+      tabs: const [('pending', 'Awaiting approval'), ('approved', 'Approved'), ('declined', 'Rejected or cancelled')],
       load: (tab) => ref.read(leaveRepositoryProvider).getDecisionCenter(tab),
       count: (d, tab) => d.counts[tab] ?? 0,
       forbiddenMessage: 'You do not have permission to review leave requests.',
@@ -33,7 +33,7 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
       stats: (d) {
         final byType = d.onLeaveTodayByType.map((t) => '${t.$2} ${t.$1.replaceFirst(RegExp(r' Leave$'), '')}').join(', ');
         return [
-          DecisionStat('Pending requests', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
+          DecisionStat('Awaiting your decision', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
           DecisionStat('On leave today', '${d.onLeaveToday}', note: '${byType.isEmpty ? 'Everyone is in' : byType} · ${d.activeStaff} active staff'),
           DecisionStat('Approved starts, next 7 days', '${d.upcomingStarts7d}', note: d.peakDay == null ? 'No approved leave in the next 7 days' : 'Peak absence: ${d.peakDay} (${d.peakDayAway} away)'),
           DecisionStat('Staff available today', d.availablePct == null ? '—' : '${d.availablePct!.round()}%', note: '${d.onLeaveToday} of ${d.activeStaff} on leave'),
@@ -95,7 +95,7 @@ class _LeaveCard extends StatelessWidget {
           name: item.employeeName,
           code: item.employeeCode,
           lines: [where.isEmpty ? '—' : where, 'Submitted ${relativeTime(item.submittedAt, now: now)}'],
-          status: StatusChip(label: item.isPending ? 'Pending approval' : humanize(item.status), tone: item.isPending ? Tone.warning : toneForStatus(item.status)),
+          status: StatusChip.request(item.status),
         ),
         const SizedBox(height: 12),
         DecisionBlock(title: 'Leave particulars', children: [

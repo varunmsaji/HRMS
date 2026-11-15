@@ -50,6 +50,8 @@ class RequestConfig {
     this.approverMismatchCode,
     this.cancelLabel = 'Cancel request',
     this.editableMinutes,
+    this.openStatus,
+    this.emptyHint,
   });
 
   final String title;
@@ -58,6 +60,14 @@ class RequestConfig {
 
   final List<String> statuses;
   final Map<String, String> statusLabels;
+
+  /// The status of a request still waiting on someone (`SUBMITTED`, `PENDING`). With no status
+  /// filter chosen, the list also shows every request in this status whatever its date, so an old
+  /// pending one never drops out of view behind the default date range (audit MOB-UX-013).
+  final String? openStatus;
+
+  /// What an empty, unfiltered list says: what will appear and how to make it appear.
+  final String? emptyHint;
 
   /// Query parameter that filters by status (`request_status`, `record_status`).
   final String statusParam;

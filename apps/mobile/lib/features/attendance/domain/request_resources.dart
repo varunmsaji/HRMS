@@ -1,7 +1,9 @@
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/requests/request_config.dart';
+import '../../../core/status_words.dart';
 import '../../../core/time.dart';
+import '../../../core/format.dart';
 
 /// Regularization requests and overtime records — the attendance module's approval workflows,
 /// configured on the shared request framework. Mirrors `apps/web/src/app/app/{regularizations,overtime}`.
@@ -20,7 +22,8 @@ const regularizationTypeLabels = {
   'EARLY_DEPARTURE_APPROVAL': 'Leaving early (ask in advance)',
 };
 
-const requestStatusLabels = {'SUBMITTED': 'Submitted', 'APPROVED': 'Approved', 'REJECTED': 'Rejected', 'CANCELLED': 'Cancelled'};
+/// The shared request status words (`core/status_words.dart`).
+const requestStatusLabels = requestStatusWords;
 
 String _s(Map<String, dynamic> r, String k) => (r[k] ?? '—').toString();
 
@@ -113,13 +116,15 @@ final regularizationConfig = RequestConfig(
   statuses: const ['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'],
   statusLabels: requestStatusLabels,
   statusParam: 'request_status',
+  openStatus: 'SUBMITTED',
+  emptyHint: 'No corrections in the last 30 days. Raise one from any attendance day.',
   filters: [
     RequestFilter(param: 'request_type', label: 'Type', options: [for (final e in regularizationTypeLabels.entries) (e.key, e.value)]),
   ],
   approvePermission: attendanceRegularizationApprove,
   submitPermission: attendanceRegularizationRequest,
   onBehalfPermission: attendanceRegularizationRequestOnBehalf,
-  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${regularizationTypeLabels[r['request_type']] ?? r['request_type']} · ${r['attendance_date']}',
+  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${regularizationTypeLabels[r['request_type']] ?? r['request_type']} · ${formatDayDate('${r['attendance_date']}')}',
   rowSubtitle: (r) => r['reason'] as String?,
   createSpec: regularizationSpec,
   // `GET /shifts` needs ORG.SHIFT.MANAGE, which an employee does not hold: optional, so a 403 only
@@ -170,8 +175,10 @@ final overtimeConfig = RequestConfig(
   path: '/overtime',
   statuses: const ['PENDING', 'AUTO_APPROVED', 'APPROVED', 'REJECTED'],
   statusParam: 'record_status',
+  openStatus: 'PENDING',
+  emptyHint: 'No overtime in the last 30 days. Overtime appears here when you work past your shift.',
   approvePermission: attendanceOvertimeApprove,
-  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${r['attendance_date']}',
+  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${formatDayDate('${r['attendance_date']}')}',
   rowSubtitle: (r) => 'Detected ${formatMinutes(r['minutes_detected'] as int?)}${(r['minutes_approved'] as int? ?? 0) > 0 ? ' · approved ${formatMinutes(r['minutes_approved'] as int?)}' : ''}',
   sections: _overtimeSections,
   isPending: (r) => r['status'] == 'PENDING',

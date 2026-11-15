@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/format.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
@@ -106,9 +107,9 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
           ]),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
+            Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From ${formatDayDate(_from)}'))),
             const SizedBox(width: 8),
-            Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To $_to'))),
+            Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To ${formatDayDate(_to)}'))),
           ]),
           const SizedBox(height: 8),
           Wrap(spacing: 8, runSpacing: 8, children: [

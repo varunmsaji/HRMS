@@ -91,7 +91,7 @@ class _ShiftSwapsScreenState extends ConsumerState<ShiftSwapsScreen> {
       body: _loading && _swaps == null
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load shift swaps", message: _error!.message, actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: swaps.isEmpty

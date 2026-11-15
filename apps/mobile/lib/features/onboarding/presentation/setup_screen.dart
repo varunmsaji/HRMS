@@ -99,7 +99,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!, actionLabel: 'Retry', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load setup", message: _error!, actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(

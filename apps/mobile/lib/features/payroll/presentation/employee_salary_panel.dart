@@ -138,7 +138,7 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final scheme = Theme.of(context).colorScheme;
     if (_loading) return const ListSkeleton(count: 3);
-    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? "You do not have permission to view this employee's salary." : _error!.message, actionLabel: 'Retry', onAction: _load);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load salary", message: _error!.status == 403 ? "You do not have permission to view this employee's salary." : _error!.message, actionLabel: 'Try again', onAction: _load);
     final b = _breakup;
     final inner = b?['breakup'] as Map<String, dynamic>?;
     return RefreshIndicator(
@@ -175,7 +175,7 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
               child: ListRowCard(
                 leading: const IconBadge(icon: Icons.payments_outlined, size: 38),
                 title: h['daily_rate_minor'] != null ? 'Daily rate ${formatInr(h['daily_rate_minor'] as num)}' : _structure(h['salary_structure_id'] as String?),
-                subtitle: '${h['effective_from']} → ${h['effective_to'] ?? 'present'}${h['reason'] != null ? '\n${h['reason']}' : ''}',
+                subtitle: '${formatPeriod(h['effective_from'] as String?, h['effective_to'] as String?, openEnd: 'present')}${h['reason'] != null ? '\n${h['reason']}' : ''}',
                 showChevron: false,
               ),
             ),

@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/nav/nav_entries.dart' show kPayrollInRelease;
 import '../../../core/format.dart';
+import '../../../core/status_words.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
 import '../../attendance/data/attendance_repository.dart';
@@ -393,7 +394,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           iconColor: Dd.navy,
           iconBackground: const Color(0xFFE8EEF9),
           title: typeNames[a.leaveTypeId] ?? 'Leave',
-          badge: 'Submitted',
+          badge: requestStatusLabel('SUBMITTED'),
           badgeColor: Dd.amberFg,
           badgeBackground: Dd.amberBg,
           caption: [_range(a.startDate, a.endDate), if (a.totalDays != null) '${a.totalDays} ${a.totalDays == 1 ? 'day' : 'days'}', if (_ago(a.raw['submitted_at'] as String?) case final ago?) ago].join(' · '),
@@ -404,8 +405,8 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           icon: Icons.edit_note,
           iconColor: Dd.amberFg,
           iconBackground: const Color(0xFFFFF4E0),
-          title: 'Punch Correction',
-          badge: 'Submitted',
+          title: 'Attendance correction',
+          badge: requestStatusLabel('SUBMITTED'),
           badgeColor: Dd.amberFg,
           badgeBackground: Dd.amberBg,
           caption: [c.title, if (c.caption != null) _shortDate(c.caption!), if (_ago(c.submittedAt) case final ago?) ago].join(' · '),

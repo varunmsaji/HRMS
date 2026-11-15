@@ -186,8 +186,12 @@ void main() {
 
     testWidgets('the missing-punch filter narrows the list', (tester) async {
       await pump(tester, const []);
-      await tester.tap(find.text('Missing punch'));
+      await tester.tap(find.text('Filter'));
       await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilterChip, 'Missing punch'));
+      await tester.tap(find.text('Show results'));
+      await tester.pumpAndSettle();
+      expect(find.text('Filter (1)'), findsOneWidget);
       expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
       expect(find.textContaining('Ravi Iyer (E-2)'), findsNothing);
     });
@@ -204,9 +208,10 @@ void main() {
 
     testWidgets('the status filter narrows the list locally, keeping the day summary whole', (tester) async {
       final repo = await pump(tester, const []);
-      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+      await tester.tap(find.text('Filter'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('PRESENT').last);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Present'));
+      await tester.tap(find.text('Show results'));
       await tester.pumpAndSettle();
       expect(repo.calls.last, endsWith(':*'));
       expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);

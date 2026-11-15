@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../status_words.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 
@@ -28,6 +29,14 @@ Tone toneForStatus(String status) => switch (status.toUpperCase()) {
       'REJECTED' || 'CANCELLED' || 'CANCELED' || 'SUSPENDED' || 'EXPIRED' || 'ABSENT' || 'FAILED' => Tone.danger,
       'TRIAL' || 'TRIALING' || 'IN_PROGRESS' || 'PROCESSING' || 'OPEN' => Tone.info,
       _ => Tone.neutral,
+    };
+
+/// The tone of a request that goes through approval. Unlike [toneForStatus], "Cancelled" and
+/// "Withdrawn" are neutral: the requester chose them, nothing went wrong.
+Tone toneForRequestStatus(String status) => switch (status.toUpperCase()) {
+      'CANCELLED' || 'CANCELED' || 'WITHDRAWN' => Tone.neutral,
+      'AUTO_APPROVED' => Tone.success,
+      _ => toneForStatus(status),
     };
 
 /// `PENDING_APPROVAL` → `Pending approval`.
@@ -94,6 +103,11 @@ class StatusChip extends StatelessWidget {
   StatusChip.status(String status, {Key? key})
       : this(key: key, label: humanize(status), tone: toneForStatus(status));
 
+  /// The chip for a leave application, correction or overtime record: the shared status words
+  /// ([requestStatusWords]) and tone, so every screen says the same thing in the same colour.
+  StatusChip.request(String status, {Key? key, Map<String, String> labels = const {}})
+      : this(key: key, label: labels[status] ?? requestStatusLabel(status), tone: toneForRequestStatus(status));
+
   final String label;
   final Tone tone;
   final bool dot;
@@ -111,7 +125,7 @@ class StatusChip extends StatelessWidget {
             Container(width: 6, height: 6, decoration: BoxDecoration(color: c.fg, shape: BoxShape.circle)),
             const SizedBox(width: 6),
           ],
-          Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: c.fg)),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: c.fg)),
         ],
       ),
     );
@@ -257,9 +271,12 @@ class StateMessage extends StatelessWidget {
 
 /// Pulsing placeholder rows shown while a list loads (replaces the bare spinner).
 class ListSkeleton extends StatefulWidget {
-  const ListSkeleton({super.key, this.count = 6});
+  const ListSkeleton({super.key, this.count = 6, this.embedded = false});
 
   final int count;
+
+  /// Inside another scrolling list (a decision centre below its figures): sizes to its rows.
+  final bool embedded;
 
   @override
   State<ListSkeleton> createState() => _ListSkeletonState();
@@ -280,7 +297,8 @@ class _ListSkeletonState extends State<ListSkeleton> with SingleTickerProviderSt
     final scheme = Theme.of(context).colorScheme;
     return ListView.separated(
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
+      shrinkWrap: widget.embedded,
+      padding: widget.embedded ? EdgeInsets.zero : const EdgeInsets.all(16),
       itemCount: widget.count,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (context, _) => AnimatedBuilder(

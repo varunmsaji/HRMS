@@ -520,6 +520,16 @@ Ordering principle: fix what misdirects users first, then what costs them taps e
 | 6 | 014, 015, 016 | Faster, clearer approving | After 001 |
 
 ### Phase 3: Design consistency (about 3–4 weeks, can run alongside Phase 2 after week 1)
+
+**Status (2026-11-15):** partly implemented on `test`; 041 and the employee dark theme wait on a design decision.
+* 042: one set of status words (`core/status_words.dart`). Anything waiting reads "Awaiting approval" (or "Awaiting HR/manager approval" on a correction card), whether the API says `SUBMITTED` or `PENDING`. Every request chip uses `StatusChip.request`, so it gets the same words and theme colours. `RequestStatusChip` no longer uses raw `Colors.orange/green/red`, which also covers that part of 039. Cancelled is neutral, not red. Decision-centre tabs read "Awaiting approval / Approved / Rejected".
+* 026: readable dates in list rows, detail headers, decision cards, filter buttons and spec-form date fields ("Thu, 12 Nov"; the year appears only when it is not this year). Effective periods read "1 Apr 2026 – 31 Mar 2027". ISO stays on the wire.
+* 013/043: one pattern, a summary line plus a "Filter (n)" button that opens a bottom sheet (`core/widgets/list_filter.dart`), on Leave, both request lists (corrections, overtime) and Team attendance. The unused `filter_sheet.dart` is removed. With no status chosen, the request lists also show every open request whatever its date. The Employees list keeps its search-and-menus row.
+* 028: any choice list longer than 10 options, in every spec form and in the filters, opens a searchable sheet (`core/widgets/choice_picker.dart`). This covers the employee pickers without a new field kind.
+* 044: Notifications and the decision centres use `ListSkeleton` and `StateMessage`. Error titles name what failed ("Couldn't load attendance"), and the action is always "Try again". Empty states say what will appear and how.
+* 038 (part): on-screen text below 11 pt is raised to 11 pt (charts, calendar headers, roster cells). Status chips are 12 pt. 3 sizes under 11 pt remain: the notification badge, avatar initials and calendar glyphs, all inside fixed circles. The `fontSize:` literal count is 266, so the CI check proposed below is not added yet.
+* 040 (short term): in dark mode the administrator's Attendance, Leave and Profile tabs stay dark instead of switching to the light employee theme.
+* Not done: **041** (one component kit, retiring `Dd*` and `_Panel`; 201 colour literals unchanged) needs the design sign-off listed as its dependency. **Employee dark mode** (040, medium term) depends on it. The calendar cells already carry letters (039).
 | Order | Issues | Expected impact | Dependencies |
 |---|---|---|---|
 | 1 | 042, 026 | One status vocabulary, human dates everywhere | None |

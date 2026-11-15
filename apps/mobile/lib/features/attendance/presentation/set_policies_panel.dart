@@ -334,7 +334,7 @@ class _SetPoliciesPanelState extends ConsumerState<SetPoliciesPanel> {
       children.add(StateMessage(
         icon: Icons.error_outline_rounded,
         tone: Tone.danger,
-        title: 'Something went wrong',
+        title: "Couldn't load the rules",
         message: _error!.status == 403 ? 'You do not have permission to manage policy assignments.' : _error!.message,
         actionLabel: 'Try again',
         onAction: _loadCoverage,

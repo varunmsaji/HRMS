@@ -162,7 +162,7 @@ class _HolidayYearViewState extends ConsumerState<HolidayYearView> {
           mainAxisSpacing: 2,
           crossAxisSpacing: 2,
           children: [
-            for (final l in _weekdayLetters) Center(child: Text(l, style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant))),
+            for (final l in _weekdayLetters) Center(child: Text(l, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant))),
             for (final day in cells)
               if (day == null)
                 const SizedBox.shrink()

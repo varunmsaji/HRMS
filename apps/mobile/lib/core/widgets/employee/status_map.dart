@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../status_words.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/employee_tokens.dart';
-import '../ui.dart';
 
 /// The kinds of status the employee surface shows. Each has a fill, a glyph/border colour, a
 /// text colour that passes AA on the fill, and a glyph so colour is never the only signal.
@@ -49,7 +49,7 @@ EmployeeStatus statusForRequest(String status, {Map<String, String> labels = con
     'CANCELLED' || 'CANCELED' || 'WITHDRAWN' => StatusKind.holiday,
     _ => StatusKind.neutral,
   };
-  final label = labels[status] ?? (code == 'AUTO_APPROVED' ? 'Auto-approved' : humanize(status));
+  final label = labels[status] ?? requestStatusLabel(status);
   return _s(kind, label);
 }
 

@@ -10,6 +10,7 @@ import '../presentation/holiday_year_view.dart';
 import '../presentation/work_calendar_month_view.dart';
 import 'package:go_router/go_router.dart';
 import '../../attendance/presentation/policy_followers_section.dart' show followersFooter;
+import '../../../core/format.dart';
 
 /// Resource configs for the organisation module — each spec mirrors a `*Create`/`*Update` schema
 /// in `apps/api/.../organisation/schemas.py` and the matching web form.
@@ -184,7 +185,7 @@ final holidayCalendarResource = ResourceConfig(
   path: '/holiday-calendars',
   spec: holidayCalendarSpec,
   rowTitle: (r) => r['name'] as String,
-  rowSubtitle: (r) => _join([r['kind'], r['valid_from'] != null ? '${r['valid_from']} → ${r['valid_to'] ?? 'open'}' : null]),
+  rowSubtitle: (r) => _join([r['kind'], r['valid_from'] != null ? formatPeriod('${r['valid_from']}', r['valid_to'] as String?) : null]),
   manage: orgCalendarManage,
   // Validity dates decide which holidays apply to employees; a rename does not.
   reviewEdit: (context, row, changed) async => changed.containsKey('valid_from') || changed.containsKey('valid_to')

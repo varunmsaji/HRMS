@@ -161,7 +161,7 @@ void main() {
       expect(find.text('Missing punch'), findsWidgets);
       expect(find.text('Config error'), findsWidgets);
       expect(find.text('ATTENDANCE CORRECTIONS'), findsOneWidget);
-      expect(find.text('Submitted'), findsOneWidget);
+      expect(find.text('Awaiting approval'), findsOneWidget);
     });
 
     testWidgets('requests that fail to load say so; the rest still shows', (tester) async {

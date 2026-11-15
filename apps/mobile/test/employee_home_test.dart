@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/format.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
@@ -457,7 +458,7 @@ void main() {
       await tester.tap(find.text('Correction'));
       await tester.pumpAndSettle();
       expect(find.text('Attendance correction'), findsOneWidget);
-      expect(find.text(yesterday), findsOneWidget, reason: 'the flagged day is prefilled');
+      expect(find.text(formatDayDate(yesterday)), findsOneWidget, reason: 'the flagged day is prefilled');
       expect(find.widgetWithText(FilledButton, 'Submit request'), findsOneWidget);
     });
 

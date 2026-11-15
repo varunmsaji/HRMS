@@ -10,6 +10,7 @@ import '../providers.dart';
 import '../../features/auth/state/auth_controller.dart';
 import 'resource_config.dart';
 import 'resource_screens.dart' show displayValue;
+import '../format.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -278,7 +279,7 @@ class _VersionsSectionState extends ConsumerState<VersionsSection> {
                 ),
               ]),
               subtitle: Text([
-                '${v['effective_from'] ?? 'no effective date'} → ${v['effective_to'] ?? 'open'}',
+                v['effective_from'] == null ? 'No effective date' : formatPeriod('${v['effective_from']}', v['effective_to'] as String?),
                 if (_v.summary?.call(v) != null) _v.summary!(v)!,
               ].join('\n')),
               children: _details(v),

@@ -7,9 +7,10 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form_screen.dart';
-import '../../../core/format.dart' show formatLeaveDays;
+import '../../../core/format.dart';
 import '../../../core/providers.dart';
 import '../../../core/widgets/employee/leave_balance_strip.dart';
+import '../../../core/widgets/list_filter.dart';
 import 'package:go_router/go_router.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
@@ -34,10 +35,9 @@ class LeaveApplicationsScreen extends ConsumerStatefulWidget {
 
 class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScreen> {
   late bool _team;
-  String _status = '';
-  String _employee = '';
-  String _from = '';
-  String _to = '';
+  ListFilter _filter = const ListFilter();
+  String get _status => _filter.group('status');
+  String get _employee => _filter.employee;
   bool _loading = true;
   bool _loadingMore = false;
   ApiError? _error;
@@ -94,8 +94,8 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     final myEmployeeId = ref.read(authControllerProvider).user?.employeeId;
     final env = await ref.read(leaveRepositoryProvider).listLeaveApplicationsPage(
           employeeId: _team ? (_employee.isEmpty ? null : _employee) : myEmployeeId,
-          dateFrom: _from.isEmpty ? null : _from,
-          dateTo: _to.isEmpty ? null : _to,
+          dateFrom: _filter.from,
+          dateTo: _filter.to,
           status: _status.isEmpty ? null : _status,
           page: page,
         );
@@ -150,14 +150,20 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     }
   }
 
-  Future<void> _pick(bool from) async {
-    final current = DateTime.tryParse(from ? _from : _to) ?? DateTime.now();
-    final picked = await showDatePicker(context: context, initialDate: current, firstDate: DateTime(2020), lastDate: DateTime(2100));
-    if (picked == null) return;
-    final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-    setState(() => from ? _from = iso : _to = iso);
+  static final _statusGroup = FilterGroup(key: 'status', label: 'Status', options: [for (final st in leaveApplicationStatuses) (st, leaveApplicationStatusLabels[st] ?? st)]);
+
+  Future<void> _openFilter() async {
+    final next = await showListFilterSheet(context, initial: _filter, defaults: const ListFilter(), groups: [_statusGroup], employees: _team ? _employees : null);
+    if (next == null || next == _filter || !mounted) return;
+    setState(() => _filter = next);
     _load();
   }
+
+  String _filterSummary() => [
+        describeDates(_filter.from, _filter.to),
+        _status.isEmpty ? 'All statuses' : (leaveApplicationStatusLabels[_status] ?? _status),
+        if (_team && _employee.isNotEmpty) _employeeName(_employee),
+      ].join(' · ');
 
   String _title(LeaveApplication a) {
     final type = _typeNames[a.leaveTypeId] ?? 'Leave';
@@ -183,7 +189,6 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
       if (widget.decisionCenter != null && canApprove) const ButtonSegment(value: 'decisions', label: Text('Decisions')),
       if (canApprove || permissions.contains(leaveApplicationSubmitOnBehalf)) const ButtonSegment(value: 'team', label: Text('Team')),
     ];
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Leave'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
       floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _apply, icon: const Icon(Icons.add_rounded), label: Text(notMine ? 'Apply on behalf' : 'Apply for leave')) : null,
@@ -212,58 +217,8 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
               ),
               const SizedBox(height: 10),
             ],
-            if (!_decisions) ...[
-            Row(children: [
-              Expanded(child: OutlinedButton.icon(onPressed: () => _pick(true), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_from.isEmpty ? 'From' : _from))),
-              const SizedBox(width: 8),
-              Expanded(child: OutlinedButton.icon(onPressed: () => _pick(false), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_to.isEmpty ? 'To' : _to))),
-              if (_from.isNotEmpty || _to.isNotEmpty) IconButton(tooltip: 'Clear dates', icon: const Icon(Icons.clear), onPressed: () {
-                setState(() {
-                  _from = '';
-                  _to = '';
-                });
-                _load();
-              }),
-            ]),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 38,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final entry in [('', 'All'), for (final st in leaveApplicationStatuses) (st, leaveApplicationStatusLabels[st]!)])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(entry.$2),
-                        selected: _status == entry.$1,
-                        labelStyle: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: _status == entry.$1 ? scheme.primary : scheme.onSurfaceVariant,
-                        ),
-                        onSelected: (_) {
-                          setState(() => _status = entry.$1);
-                          _load();
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (_team && _employees.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _employee,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Employee', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                items: [const DropdownMenuItem(value: '', child: Text('All employees')), for (final e in _employees) DropdownMenuItem(value: e.value, child: Text(e.label))],
-                onChanged: (v) {
-                  setState(() => _employee = v ?? '');
-                  _load();
-                },
-              ),
-            ],
-            ],
+            if (!_decisions)
+              ListFilterBar(summary: _filterSummary(), activeCount: _filter.countAgainst(const ListFilter()), onTap: _openFilter),
           ]),
         ),
         Expanded(
@@ -281,10 +236,15 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                           if (_rows.isEmpty)
                             SizedBox(
                               height: MediaQuery.sizeOf(context).height * 0.4,
-                              child: const StateMessage(
+                              child: StateMessage(
                                 icon: Icons.beach_access_outlined,
                                 title: 'No leave applications',
-                                message: 'Nothing matches these filters.',
+                                // Says what would appear here and how to make it appear (MOB-UX-044).
+                                message: _filter.countAgainst(const ListFilter()) > 0
+                                    ? 'Nothing matches these filters. Change them with Filter.'
+                                    : _team
+                                        ? 'Your team\'s leave applications will appear here.'
+                                        : 'Your leave applications will appear here. Apply with the button below.',
                               ),
                             ),
                           for (final a in _rows)
@@ -292,8 +252,8 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                               padding: const EdgeInsets.only(bottom: 10),
                               child: ListRowCard(
                                 title: _title(a),
-                                subtitle: '${a.startDate} → ${a.endDate}${a.totalDays != null ? ' · ${a.totalDays} day(s)' : ''}',
-                                leading: IconBadge(icon: _iconFor(a.status), tone: toneForStatus(a.status)),
+                                subtitle: '${formatDateRange(a.startDate, a.endDate)}${a.totalDays != null ? ' · ${formatDayCount(a.totalDays!)}' : ''}',
+                                leading: IconBadge(icon: _iconFor(a.status), tone: toneForRequestStatus(a.status)),
                                 trailing: _StatusChip(status: a.status),
                                 onTap: () async {
                                   await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a));
@@ -345,7 +305,7 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      StatusChip(label: leaveApplicationStatusLabels[status] ?? humanize(status), tone: toneForStatus(status));
+      StatusChip.request(status);
 }
 
 /// Shared with the detail screen.

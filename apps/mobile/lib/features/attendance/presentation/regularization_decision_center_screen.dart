@@ -11,6 +11,7 @@ import '../../../core/widgets/ui.dart';
 import '../../auth/state/auth_controller.dart';
 import '../domain/regularization_decision_center.dart';
 import '../domain/request_resources.dart';
+import '../../../core/format.dart';
 
 /// The approver's attendance-correction screen — mirrors the web
 /// `regularization/decision-center.tsx`: what the system recorded beside what is being asked for.
@@ -26,14 +27,14 @@ class RegularizationDecisionCenterPanel extends ConsumerWidget {
     final me = ref.watch(authControllerProvider).user?.employeeId;
     final zone = ref.watch(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
     return DecisionCenterView<RegularizationDecisionCenter>(
-      tabs: const [('pending', 'Pending review'), ('approved', 'Approved history'), ('declined', 'Declined')],
+      tabs: const [('pending', 'Awaiting approval'), ('approved', 'Approved'), ('declined', 'Rejected')],
       load: (tab) => ref.read(apiClientProvider).get('/regularizations/decision-center?tab=$tab', parse: (d) => RegularizationDecisionCenter.fromJson(d as Map<String, dynamic>)),
       count: (d, tab) => d.counts[tab] ?? 0,
       forbiddenMessage: 'You do not have permission to review regularizations.',
       narrowHint: 'Use Team to filter further.',
       emptyIcon: Icons.edit_note,
       stats: (d) => [
-        DecisionStat('Pending decisions', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
+        DecisionStat('Awaiting your decision', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
         DecisionStat('Correction rate (last 30 days)', d.windowRatePct == null ? '—' : '${d.windowRatePct}%', note: '${d.windowRegularizedDays} of ${d.windowExpectedDays} working days corrected'),
         DecisionStat('Approved / declined', '${d.counts['approved'] ?? 0} / ${d.counts['declined'] ?? 0}', note: 'All time, within your access'),
       ],
@@ -99,10 +100,10 @@ class _RegularizationCard extends StatelessWidget {
           code: item.employeeCode,
           lines: [
             where.isEmpty ? '—' : where,
-            'Dispute: ${item.attendanceDate}${item.shiftName == null ? '' : ' · Shift: ${item.shiftName}'}',
+            'Dispute: ${formatDayDate(item.attendanceDate)}${item.shiftName == null ? '' : ' · Shift: ${item.shiftName}'}',
             'Submitted ${relativeTime(item.submittedAt, now: now)}',
           ],
-          status: StatusChip(label: item.isPending ? item.stageLabel : humanize(item.status), tone: item.isPending ? Tone.warning : toneForStatus(item.status)),
+          status: item.isPending ? StatusChip(label: item.stageLabel, tone: Tone.warning) : StatusChip.request(item.status),
         ),
         const SizedBox(height: 12),
         DecisionBlock(title: 'Recorded by system', children: [

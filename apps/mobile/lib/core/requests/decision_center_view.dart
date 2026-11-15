@@ -113,11 +113,13 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
           ]),
           const SizedBox(height: 12),
           if (_error != null)
-            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Retry', onAction: _load)
+            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Try again', onAction: _load)
           else if (_loading)
-            const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
+            const ListSkeleton(count: 3, embedded: true)
           else if (cards.isEmpty)
-            StateMessage(icon: widget.emptyIcon, title: 'No requests here.', message: 'Nothing to show for this tab.')
+            _tab == 'pending'
+                ? StateMessage(icon: widget.emptyIcon, tone: Tone.success, title: 'Nothing awaiting your decision', message: 'New requests appear here as soon as they are submitted.')
+                : StateMessage(icon: widget.emptyIcon, title: 'Nothing here yet', message: 'Requests appear here once they are decided.')
           else ...[
             for (final card in cards) Padding(padding: const EdgeInsets.only(bottom: 12), child: card),
             if (data != null && widget.count(data, _tab) > cards.length)

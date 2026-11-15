@@ -310,7 +310,7 @@ class BarChart extends StatelessWidget {
           for (final b in bars)
             Expanded(
               child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                if (b.value > 0) Text('${_n(b.value)}$unit', maxLines: 1, style: theme.textTheme.labelSmall?.copyWith(color: t.inkSecondary, fontSize: 10)),
+                if (b.value > 0) Text('${_n(b.value)}$unit', maxLines: 1, style: theme.textTheme.labelSmall?.copyWith(color: t.inkSecondary, fontSize: 11)),
                 const SizedBox(height: 2),
                 Container(
                   width: 18,

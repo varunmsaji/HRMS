@@ -50,14 +50,36 @@ String formatShortDate(String iso) {
   return d == null ? iso : '${d.day} ${_shortMonths[d.month - 1]}';
 }
 
-/// "12 Nov", "12–13 Nov", or "30 Oct – 2 Nov" for an inclusive range of ISO dates.
-String formatDateRange(String start, String end) {
+/// "12 Nov", "12–13 Nov", or "30 Oct – 2 Nov" for an inclusive range of ISO dates, with the year
+/// added when the range is not in this year ("28 Dec 2025 – 2 Jan 2026").
+String formatDateRange(String start, String end, {DateTime? now}) {
   final s = DateTime.tryParse(start), e = DateTime.tryParse(end);
   if (s == null || e == null) return start == end ? start : '$start – $end';
-  if (start == end) return formatShortDate(start);
-  if (s.year == e.year && s.month == e.month) return '${s.day}–${e.day} ${_shortMonths[e.month - 1]}';
-  return '${formatShortDate(start)} – ${formatShortDate(end)}';
+  final thisYear = (now ?? DateTime.now()).year;
+  final withYear = s.year != thisYear || e.year != thisYear;
+  String day(DateTime d) => '${d.day} ${_shortMonths[d.month - 1]}${withYear ? ' ${d.year}' : ''}';
+  if (start == end) return day(s);
+  if (s.year == e.year && s.month == e.month) return '${s.day}–${day(e)}';
+  if (s.year == e.year && withYear) return '${s.day} ${_shortMonths[s.month - 1]} – ${day(e)}';
+  return '${day(s)} – ${day(e)}';
 }
+
+/// "1 Apr 2026": always with the year, for effective dates and records that span years.
+String formatFullDate(String iso) {
+  final d = DateTime.tryParse(iso);
+  return d == null ? iso : '${d.day} ${_shortMonths[d.month - 1]} ${d.year}';
+}
+
+/// An effective period: "1 Apr 2026 – 31 Mar 2027", or "From 1 Apr 2026" when it has no end.
+/// [openEnd] names a missing end when the screen needs a word ("present").
+String formatPeriod(String? from, String? to, {String? openEnd}) {
+  if (from == null || from.isEmpty) return to == null || to.isEmpty ? '—' : 'Until ${formatFullDate(to)}';
+  if (to == null || to.isEmpty) return openEnd == null ? 'From ${formatFullDate(from)}' : '${formatFullDate(from)} – $openEnd';
+  return '${formatFullDate(from)} – ${formatFullDate(to)}';
+}
+
+/// "1 day", "2 days", "0.5 day".
+String formatDayCount(num days) => '${formatLeaveDays(days)} ${days == 1 || days == 0.5 ? 'day' : 'days'}';
 
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 

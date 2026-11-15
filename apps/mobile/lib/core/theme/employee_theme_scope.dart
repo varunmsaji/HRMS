@@ -13,7 +13,7 @@ import 'employee_tokens.dart';
 /// employee record have nothing to show here, so for them this is a no-op. Everything outside the
 /// three wrapped routes keeps the unchanged administrator theme. Dialogs and sheets opened from
 /// inside capture this theme; screens pushed with `Navigator.push` sit above it and keep the
-/// administrator theme (a documented limit of the per-route scope).
+/// administrator theme (a documented limit of the per-route scope). In dark mode it does nothing.
 class EmployeeThemeScope extends ConsumerWidget {
   const EmployeeThemeScope({super.key, required this.child});
 
@@ -25,7 +25,11 @@ class EmployeeThemeScope extends ConsumerWidget {
       final user = s.user;
       return user != null && user.employeeId != null && !usesEmployeeSurface(user);
     }));
-    return scoped ? Theme(data: AppTheme.employee, child: child) : child;
+    // The employee theme is light only. When the administrator's app is dark, these tabs stay dark
+    // too, rather than flashing light between a dark Dashboard and a dark More (audit
+    // MOB-UX-040); the employee components fall back to the dark colour scheme.
+    if (!scoped || Theme.of(context).brightness == Brightness.dark) return child;
+    return Theme(data: AppTheme.employee, child: child);
   }
 }
 

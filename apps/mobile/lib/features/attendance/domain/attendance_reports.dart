@@ -1,3 +1,4 @@
+import '../../../core/status_words.dart';
 import '../../../core/time.dart';
 import '../data/attendance_repository.dart';
 import '../presentation/attendance_summary.dart' show attendanceBucketOf;
@@ -99,7 +100,8 @@ List<EmployeeTally> tallyByEmployee(List<AttendanceDay> rows) {
   return map.values.toList();
 }
 
-const overtimeStatusLabels = {'PENDING': 'Pending', 'AUTO_APPROVED': 'Auto-approved', 'APPROVED': 'Approved', 'REJECTED': 'Rejected'};
+/// The shared request status words (`core/status_words.dart`).
+const overtimeStatusLabels = requestStatusWords;
 
 /// The five reports built from the range's days and overtime records. The payroll report reads a
 /// period summary and is built by [payrollReport] once that has loaded.

@@ -33,8 +33,8 @@ class MiniColumnChart extends StatelessWidget {
       }
     }
     if (max <= 0) max = 1;
-    const labelH = 28.0;
-    final plot = height - labelH - 14;
+    const labelH = 32.0;
+    final plot = height - labelH - 16;
     return SizedBox(
       height: height,
       child: ListView.separated(
@@ -47,7 +47,7 @@ class MiniColumnChart extends StatelessWidget {
           return SizedBox(
             width: 34,
             child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-              SizedBox(height: 14, child: Text(v == null ? '—' : format(v), style: const TextStyle(fontSize: 9), maxLines: 1, overflow: TextOverflow.clip)),
+              SizedBox(height: 16, child: Text(v == null ? '—' : format(v), style: const TextStyle(fontSize: 11), maxLines: 1, overflow: TextOverflow.clip)),
               SizedBox(
                 height: plot,
                 child: Stack(alignment: Alignment.bottomCenter, children: [
@@ -55,7 +55,7 @@ class MiniColumnChart extends StatelessWidget {
                   if (b.reference != null && b.reference! > 0) Positioned(bottom: (b.reference! / max * plot).clamp(0, plot - 2).toDouble(), child: Container(width: 28, height: 2, color: scheme.error)),
                 ]),
               ),
-              SizedBox(height: labelH, child: Padding(padding: const EdgeInsets.only(top: 4), child: Text(b.label, textAlign: TextAlign.center, style: TextStyle(fontSize: 9, color: scheme.onSurfaceVariant), maxLines: 2))),
+              SizedBox(height: labelH, child: Padding(padding: const EdgeInsets.only(top: 4), child: Text(b.label, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant), maxLines: 2))),
             ]),
           );
         },

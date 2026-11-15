@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../features/auth/presentation/widgets/auth_form_field.dart';
+import '../format.dart';
+import '../widgets/choice_picker.dart';
 import 'choice_sources.dart';
 import 'form_spec.dart';
 
@@ -84,7 +86,7 @@ class _SpecFormState extends State<SpecForm> {
     );
     if (picked == null) return;
     final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-    _controller(f).text = iso;
+    _controller(f).text = _dateLabel(iso);
     _set(f.key, iso);
   }
 
@@ -105,8 +107,22 @@ class _SpecFormState extends State<SpecForm> {
     final time = await showTimePicker(context: context, initialTime: current == null ? const TimeOfDay(hour: 9, minute: 0) : TimeOfDay(hour: current.hour, minute: current.minute));
     if (time == null) return;
     final value = '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}T${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    _controller(f).text = value.replaceFirst('T', ' ');
+    _controller(f).text = _dateTimeLabel(value);
     _set(f.key, value);
+  }
+
+  static String _dateLabel(Object? value) {
+    final v = (value ?? '').toString();
+    return v.isEmpty ? '' : formatDayDate(v);
+  }
+
+  /// "Thu, 12 Nov · 09:30" for a `YYYY-MM-DDTHH:MM` value.
+  static String _dateTimeLabel(Object? value) {
+    final v = (value ?? '').toString();
+    final t = v.indexOf('T');
+    if (t < 0) return _dateLabel(v);
+    final time = v.substring(t + 1);
+    return '${formatDayDate(v.substring(0, t))} · ${time.length >= 5 ? time.substring(0, 5) : time}';
   }
 
   TextInputType _keyboard(FieldKind t) {
@@ -130,6 +146,20 @@ class _SpecFormState extends State<SpecForm> {
     final current = (widget.values[f.key] ?? '').toString();
     final items = [...options];
     if (current.isNotEmpty && !items.any((o) => o.value == current)) items.add((value: current, label: current));
+    if (items.length > kSearchableChoiceThreshold) {
+      return AuthFormField(
+        label: f.label,
+        required: f.required,
+        errorText: error,
+        child: SearchableChoiceField(
+          title: f.label,
+          choices: items,
+          value: current,
+          allLabel: f.required ? null : '—',
+          onChanged: _disabled(f) ? null : (v) => _set(f.key, v),
+        ),
+      );
+    }
     return AuthFormField(
       label: f.label,
       required: f.required,
@@ -240,11 +270,13 @@ class _SpecFormState extends State<SpecForm> {
           required: f.required,
           errorText: error,
           child: TextField(
-            controller: _controller(f),
+            // The value stays ISO on the wire; the field shows it as a person reads a date
+            // (audit MOB-UX-026).
+            controller: _controller(f)..text = _dateLabel(widget.values[f.key]),
             readOnly: true,
             onTap: _disabled(f) ? null : () => _pickDate(f),
             decoration: InputDecoration(
-              hintText: 'YYYY-MM-DD',
+              hintText: 'Choose a date',
               suffixIcon: (!f.required && !_disabled(f) && (widget.values[f.key] ?? '').toString().isNotEmpty)
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 18),
@@ -263,10 +295,10 @@ class _SpecFormState extends State<SpecForm> {
           required: f.required,
           errorText: error,
           child: TextField(
-            controller: _controller(f)..text = (widget.values[f.key] ?? '').toString().replaceFirst('T', ' '),
+            controller: _controller(f)..text = _dateTimeLabel(widget.values[f.key]),
             readOnly: true,
             onTap: _disabled(f) ? null : () => _pickDateTime(f),
-            decoration: const InputDecoration(hintText: 'YYYY-MM-DD HH:MM', suffixIcon: Icon(Icons.event_available_outlined, size: 18)),
+            decoration: const InputDecoration(hintText: 'Choose a date and time', suffixIcon: Icon(Icons.event_available_outlined, size: 18)),
           ),
         );
       case FieldKind.time:

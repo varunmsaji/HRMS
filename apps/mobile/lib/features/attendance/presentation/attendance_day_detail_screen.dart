@@ -403,7 +403,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     if (day == null && _loading) {
       body = const ListSkeleton();
     } else if (day == null) {
-      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Retry', onAction: _load);
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this day", message: _error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
     } else {
       final r = day.raw;
       final tz = day.timezone;

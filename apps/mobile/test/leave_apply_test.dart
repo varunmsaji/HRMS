@@ -102,7 +102,7 @@ void main() {
     expect(formatDayDate('2027-01-04', now: DateTime(2026, 6)), 'Mon, 4 Jan 2027');
     expect(formatLeaveDays(4), '4');
     expect(formatLeaveDays(8.5), '8.5');
-    expect(formatDateRange('2026-11-12', '2026-11-13'), '12–13 Nov');
-    expect(formatDateRange('2026-10-30', '2026-11-02'), '30 Oct – 2 Nov');
+    expect(formatDateRange('2026-11-12', '2026-11-13', now: DateTime(2026, 6)), '12–13 Nov');
+    expect(formatDateRange('2026-10-30', '2026-11-02', now: DateTime(2026, 6)), '30 Oct – 2 Nov');
   });
 }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hrms_mobile/core/widgets/ui.dart';
 import 'package:hrms_mobile/core/api/envelope.dart';
 import 'support/fake_auth.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
@@ -165,7 +166,7 @@ void main() {
     final repo = _Repo(items: [_json(), _json(id: 'n2', read: true, title: 'Older')], gate: gate);
     await tester.pumpWidget(_app(repo));
     await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(ListSkeleton), findsOneWidget);
     gate.complete();
     await tester.pumpAndSettle();
     expect(find.text('Face Enrollment Requested'), findsOneWidget);

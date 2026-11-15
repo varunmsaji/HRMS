@@ -74,9 +74,9 @@ class RegularizationDecisionItem {
   bool get isPending => status == 'SUBMITTED';
 
   String get stageLabel => switch (approvalStage) {
-        'HR' => 'Pending HR review',
-        'MANAGER' => 'Pending manager review',
-        _ => 'Pending review',
+        'HR' => 'Awaiting HR approval',
+        'MANAGER' => 'Awaiting manager approval',
+        _ => 'Awaiting approval',
       };
 
   /// The earliest requested IN or latest requested OUT; null if the employee didn't ask for one.

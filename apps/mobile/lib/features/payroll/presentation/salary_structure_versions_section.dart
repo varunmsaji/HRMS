@@ -261,7 +261,7 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
 
   String _chipLabel(Rec v) {
     final n = v['version_number'];
-    final when = v['status'] == 'DRAFT' ? 'Draft' : '${v['effective_from']} → ${v['effective_to'] ?? 'now'}';
+    final when = v['status'] == 'DRAFT' ? 'Draft' : formatPeriod(v['effective_from'] as String?, v['effective_to'] as String?, openEnd: 'now');
     return n == null ? when : 'v$n · $when';
   }
 

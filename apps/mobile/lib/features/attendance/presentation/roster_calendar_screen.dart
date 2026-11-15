@@ -154,7 +154,7 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
                   ),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('$day', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    if (label.isNotEmpty) Expanded(child: Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurfaceVariant), overflow: TextOverflow.fade)),
+                    if (label.isNotEmpty) Expanded(child: Text(label, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant), overflow: TextOverflow.fade)),
                   ]),
                 ),
               );

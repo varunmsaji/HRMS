@@ -52,7 +52,7 @@ class AttendanceDayTile extends StatelessWidget {
             child: date == null
                 ? const Icon(Icons.event_outlined, size: 20)
                 : Column(children: [
-                    Text(months[date.month - 1], style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.6, color: scheme.primary)),
+                    Text(months[date.month - 1], style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6, color: scheme.primary)),
                     Text('${date.day}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, height: 1.15, color: scheme.onSurface)),
                   ]),
           ),

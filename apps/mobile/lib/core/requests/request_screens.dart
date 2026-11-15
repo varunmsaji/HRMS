@@ -12,31 +12,21 @@ import '../../features/auth/presentation/widgets/auth_form_field.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/shell/more_action.dart';
 import 'request_config.dart';
+import '../status_words.dart';
+import '../widgets/list_filter.dart';
 import '../widgets/ui.dart' hide DetailSection;
 import '../widgets/ui.dart' as ui show DetailSection;
 import '../theme/employee_theme_scope.dart';
 
-Color _statusColor(BuildContext context, String status) => switch (status) {
-      'APPROVED' || 'AUTO_APPROVED' => Colors.green,
-      'REJECTED' => Colors.red,
-      'CANCELLED' => Theme.of(context).colorScheme.onSurfaceVariant,
-      _ => Colors.orange,
-    };
-
+/// A request's status, in the shared words and theme colours (audit MOB-UX-042, 039). [labels]
+/// overrides a word for one resource; most pass none.
 class RequestStatusChip extends StatelessWidget {
   const RequestStatusChip({super.key, required this.status, this.labels = const {}});
   final String status;
   final Map<String, String> labels;
 
   @override
-  Widget build(BuildContext context) {
-    final color = _statusColor(context, status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
-      child: Text(labels[status] ?? prettyEnum(status), style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-    );
-  }
+  Widget build(BuildContext context) => StatusChip.request(status, labels: labels);
 }
 
 /// A "Mine / Team" list with date, status and extra filters — mirrors the web list pages
@@ -59,13 +49,10 @@ class RequestListScreen extends ConsumerStatefulWidget {
 
 class _RequestListScreenState extends ConsumerState<RequestListScreen> {
   late bool _team;
-  late String _from;
-  late String _to;
+  late ListFilter _defaults;
+  late ListFilter _filter;
   bool _decisions = false;
   int _decisionsKey = 0;
-  String _status = '';
-  String _employee = '';
-  final _extra = <String, String>{};
   bool _loading = true;
   ApiError? _error;
   List<Rec> _rows = const [];
@@ -82,8 +69,8 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     _team = _perms.contains(_c.approvePermission) || ref.read(authControllerProvider).user?.employeeId == null;
     // An approver starts on what is waiting for them, as on the web.
     _decisions = widget.decisionCenter != null && _perms.contains(_c.approvePermission);
-    _from = businessDayOffset(_zone, -30);
-    _to = businessToday(_zone);
+    _defaults = ListFilter(from: businessDayOffset(_zone, -30), to: businessToday(_zone));
+    _filter = _defaults;
     _loadEmployees();
     if (!_decisions) _load();
   }
@@ -102,22 +89,38 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
       _error = null;
     });
     final myEmployeeId = ref.read(authControllerProvider).user?.employeeId;
+    final status = _filter.group('status');
+    final common = <String, dynamic>{
+      for (final f in _c.filters)
+        if (_filter.group(f.param).isNotEmpty) f.param: _filter.group(f.param),
+      if (!_team && myEmployeeId != null) 'employee_id': myEmployeeId,
+      if (_team && _filter.employee.isNotEmpty) 'employee_id': _filter.employee,
+    };
+    Future<List<Rec>> fetch(Map<String, dynamic> filters) async => (await ref.read(apiClientProvider).getList<Rec>(
+          _c.path,
+          query: PageQuery(perPage: 100),
+          filters: {...common, ...filters},
+          parseItem: (d) => d as Rec,
+        ))
+            .data;
     try {
-      final env = await ref.read(apiClientProvider).getList<Rec>(
-        _c.path,
-        query: PageQuery(perPage: 100),
-        filters: {
-          'date_from': _from,
-          'date_to': _to,
-          if (_status.isNotEmpty) _c.statusParam: _status,
-          for (final e in _extra.entries)
-            if (e.value.isNotEmpty) e.key: e.value,
-          if (!_team && myEmployeeId != null) 'employee_id': myEmployeeId,
-          if (_team && _employee.isNotEmpty) 'employee_id': _employee,
-        },
-        parseItem: (d) => d as Rec,
-      );
-      if (mounted) setState(() => _rows = env.data);
+      final open = _c.openStatus;
+      final results = await Future.wait([
+        fetch({
+          if (_filter.from != null) 'date_from': _filter.from,
+          if (_filter.to != null) 'date_to': _filter.to,
+          if (status.isNotEmpty) _c.statusParam: status,
+        }),
+        // Anything still waiting, whatever its date, unless a status was chosen.
+        if (status.isEmpty && open != null) fetch({_c.statusParam: open}),
+      ]);
+      final seen = <Object?>{};
+      final rows = [
+        for (final list in results)
+          for (final r in list)
+            if (seen.add(r['id'])) r,
+      ];
+      if (mounted) setState(() => _rows = rows);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
@@ -155,12 +158,29 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     }
   }
 
-  Future<void> _pick(bool from) async {
-    final picked = await showDatePicker(context: context, initialDate: DateTime.tryParse(from ? _from : _to) ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
-    if (picked == null) return;
-    final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-    setState(() => from ? _from = iso : _to = iso);
+  List<FilterGroup> get _groups => [
+        FilterGroup(key: 'status', label: 'Status', options: [for (final st in _c.statuses) (st, _c.statusLabels[st] ?? requestStatusLabel(st))]),
+        for (final f in _c.filters) FilterGroup(key: f.param, label: f.label, options: f.options),
+      ];
+
+  Future<void> _openFilter() async {
+    final next = await showListFilterSheet(context, initial: _filter, defaults: _defaults, groups: _groups, employees: _team ? _employees : null);
+    if (next == null || next == _filter || !mounted) return;
+    setState(() => _filter = next);
     _load();
+  }
+
+  String _filterSummary() {
+    final status = _filter.group('status');
+    final dates = _filter.from == _defaults.from && _filter.to == _defaults.to ? 'Last 30 days' : describeDates(_filter.from, _filter.to);
+    return [
+      // The open ones are added whatever their date; say so, or an old one looks misplaced.
+      status.isEmpty && _c.openStatus != null ? '$dates, plus anything awaiting approval' : dates,
+      if (status.isNotEmpty) _c.statusLabels[status] ?? requestStatusLabel(status),
+      for (final f in _c.filters)
+        if (_filter.group(f.param).isNotEmpty) f.options.firstWhere((o) => o.$1 == _filter.group(f.param), orElse: () => (_filter.group(f.param), _filter.group(f.param))).$2,
+      if (_team && _filter.employee.isNotEmpty) _employeeName(_filter.employee),
+    ].join(' · ');
   }
 
   String _employeeName(String id) {
@@ -203,50 +223,8 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
                 },
               ),
             const SizedBox(height: 8),
-            if (!_decisions) ...[
-            Row(children: [
-              Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
-              const SizedBox(width: 8),
-              Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To $_to'))),
-            ]),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _status,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Status', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-              items: [const DropdownMenuItem(value: '', child: Text('All statuses')), for (final s in _c.statuses) DropdownMenuItem(value: s, child: Text(_c.statusLabels[s] ?? prettyEnum(s)))],
-              onChanged: (v) {
-                setState(() => _status = v ?? '');
-                _load();
-              },
-            ),
-            for (final f in _c.filters) ...[
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _extra[f.param] ?? '',
-                isExpanded: true,
-                decoration: InputDecoration(labelText: f.label, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                items: [DropdownMenuItem(value: '', child: Text('All')), for (final o in f.options) DropdownMenuItem(value: o.$1, child: Text(o.$2))],
-                onChanged: (v) {
-                  setState(() => _extra[f.param] = v ?? '');
-                  _load();
-                },
-              ),
-            ],
-            if (_team && _employees.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _employee,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Employee', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                items: [const DropdownMenuItem(value: '', child: Text('All employees')), for (final e in _employees) DropdownMenuItem(value: e.value, child: Text(e.label))],
-                onChanged: (v) {
-                  setState(() => _employee = v ?? '');
-                  _load();
-                },
-              ),
-            ],
-            ],
+            if (!_decisions)
+              ListFilterBar(summary: _filterSummary(), activeCount: _filter.countAgainst(_defaults), onTap: _openFilter),
           ]),
         ),
         Expanded(
@@ -255,13 +233,23 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
               : _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load requests", message: _error!.message, actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.only(top: 8, bottom: 88),
                         children: [
-                          if (_rows.isEmpty) SizedBox(height: 320, child: StateMessage(icon: Icons.inbox_outlined, title: 'Nothing here', message: 'No ${_c.title.toLowerCase()} match these filters.')),
+                          if (_rows.isEmpty)
+                            SizedBox(
+                              height: 320,
+                              child: StateMessage(
+                                icon: Icons.inbox_outlined,
+                                title: 'No ${_c.title.toLowerCase()}',
+                                message: _filter.countAgainst(_defaults) > 0
+                                    ? 'Nothing matches these filters. Change them with Filter.'
+                                    : (_c.emptyHint ?? 'Nothing in the last 30 days, and nothing awaiting approval.'),
+                              ),
+                            ),
                           for (final r in _rows)
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),

@@ -9,6 +9,8 @@ import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
+import '../../../core/format.dart';
+import '../../../core/widgets/choice_picker.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
@@ -188,20 +190,21 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
             Row(children: [
-              Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
+              Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From ${formatDayDate(_from)}'))),
               const SizedBox(width: 8),
-              Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To $_to'))),
+              Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To ${formatDayDate(_to)}'))),
             ]),
             const SizedBox(height: 8),
             Row(children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
+                child: SearchableChoiceField(
+                  label: 'Employee',
+                  title: 'Choose an employee',
+                  choices: _employees,
                   value: _employee,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Employee', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                  items: [const DropdownMenuItem(value: '', child: Text('All')), for (final e in _employees) DropdownMenuItem(value: e.value, child: Text(e.label))],
+                  allLabel: 'All',
                   onChanged: (v) {
-                    setState(() => _employee = v ?? '');
+                    setState(() => _employee = v);
                     _load();
                   },
                 ),
@@ -226,7 +229,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the roster", message: _error!.message, actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
