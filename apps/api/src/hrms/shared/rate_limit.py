@@ -152,9 +152,10 @@ async def enforce_rate_limit(
 
 
 async def _extract_login_identity(request: Request) -> str:
-    """Best-effort `email` from the raw JSON body — `Request.json()` caches the parsed body
-    on the `Request` instance, so this read is free for the endpoint's own `LoginRequest`
-    body param (SEC-02): no double-consumption of the ASGI receive channel."""
+    """Best-effort `email` (or company code + employee code) from the raw JSON body —
+    `Request.json()` caches the parsed body on the `Request` instance, so this read is free for
+    the endpoint's own `LoginRequest` body param (SEC-02): no double-consumption of the ASGI
+    receive channel."""
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 — malformed/absent body just falls back to "unknown"
@@ -163,6 +164,16 @@ async def _extract_login_identity(request: Request) -> str:
         email = body.get("email")
         if isinstance(email, str) and email.strip():
             return email.strip().lower()
+        # Employee-ID login (`company_code` + `employee_code`) — the pair is the account key.
+        company_code = body.get("company_code")
+        employee_code = body.get("employee_code")
+        if (
+            isinstance(company_code, str)
+            and isinstance(employee_code, str)
+            and company_code.strip()
+            and employee_code.strip()
+        ):
+            return f"{company_code.strip()}/{employee_code.strip()}".lower()
     return "unknown"
 
 

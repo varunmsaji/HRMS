@@ -1098,7 +1098,6 @@
   "email"
  ],
  "identity.LoginRequest": [
-  "email",
   "password"
  ],
  "identity.MeResponseData": [

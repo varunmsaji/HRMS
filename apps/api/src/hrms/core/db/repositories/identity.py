@@ -17,6 +17,12 @@ from hrms.core.db.models.identity import (
 
 
 @dataclass(frozen=True, slots=True)
+class EmployeeLogin:
+    user_id: UUID
+    company_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class UserCompanyMembership:
     company_id: UUID
     is_primary: bool
@@ -52,6 +58,27 @@ class IdentityRepository:
             UserCompanyMembership(company_id=row.company_id, is_primary=row.is_primary)
             for row in rows
         ]
+
+    async def find_employee_login(
+        self, session: AsyncSession, *, company_code: str, employee_code: str
+    ) -> EmployeeLogin | None:
+        """Login only. Resolves a (company code, employee code) pair to the employee's linked
+        user before any tenant context exists, through the `login_lookup_employee_user`
+        SECURITY DEFINER function (migration 20261114090000) — same reason as
+        `list_user_companies_for_login`: `employee` is under RLS. `None` when the pair is unknown
+        or the employee has no login yet."""
+        stmt = text(
+            "SELECT user_id, company_id "
+            "FROM login_lookup_employee_user(:company_code, :employee_code)"
+        )
+        row = (
+            await session.execute(
+                stmt, {"company_code": company_code, "employee_code": employee_code}
+            )
+        ).first()
+        if row is None:
+            return None
+        return EmployeeLogin(user_id=row.user_id, company_id=row.company_id)
 
     async def get_user_company(
         self,

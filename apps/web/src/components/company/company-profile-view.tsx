@@ -111,6 +111,7 @@ export function CompanyProfileView({ profile }: { profile: CompanyProfile }) {
             </dd>
           </div>
           <Field label="Version" value={String(profile.version)} mono />
+          <Field label="Company code (for employee-ID sign-in)" value={profile.login_code ?? null} mono />
           <Field label="Subdomain" value={profile.subdomain} mono />
           <Field
             label="Onboarded at"

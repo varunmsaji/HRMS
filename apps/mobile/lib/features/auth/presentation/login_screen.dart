@@ -22,9 +22,11 @@ enum _ResendState { idle, sending, sent }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
+  final _companyCodeController = TextEditingController();
   final _passwordController = TextEditingController();
 
   String? _emailError;
+  String? _companyCodeError;
   String? _passwordError;
   String? _formError;
   String? _unverifiedEmail;
@@ -34,6 +36,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void dispose() {
     _emailController.dispose();
+    _companyCodeController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -45,15 +48,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _resendState = _ResendState.idle;
     });
 
-    final email = _emailController.text;
+    final identifier = _emailController.text.trim();
+    final companyCode = _companyCodeController.text.trim();
     final password = _passwordController.text;
-    final nextEmailError = email.trim().isEmpty
-        ? 'Email is required.'
-        : (!isValidEmail(email) ? 'Enter a valid email address.' : null);
+    final byEmail = _isEmail(identifier);
+    final nextEmailError = identifier.isEmpty
+        ? 'Email or employee ID is required.'
+        : (byEmail && !isValidEmail(identifier) ? 'Enter a valid email address.' : null);
+    final nextCompanyCodeError = identifier.isNotEmpty && !byEmail && companyCode.isEmpty
+        ? 'Company code is required to sign in with an employee ID.'
+        : null;
     final nextPasswordError = password.isEmpty ? 'Password is required.' : null;
-    if (nextEmailError != null || nextPasswordError != null) {
+    if (nextEmailError != null || nextCompanyCodeError != null || nextPasswordError != null) {
       setState(() {
         _emailError = nextEmailError;
+        _companyCodeError = nextCompanyCodeError;
         _passwordError = nextPasswordError;
       });
       return;
@@ -61,16 +70,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     setState(() => _submitting = true);
     try {
-      final user =
-          await ref.read(authControllerProvider.notifier).login(email: email.trim(), password: password);
+      final auth = ref.read(authControllerProvider.notifier);
+      final user = byEmail
+          ? await auth.login(email: identifier, password: password)
+          : await auth.login(companyCode: companyCode, employeeCode: identifier, password: password);
       if (!mounted) return;
       context.go(landingPathFor(user));
     } catch (error) {
       if (error is ApiError) {
         if (error.code == 'EMAIL_NOT_VERIFIED') {
-          setState(() => _unverifiedEmail = email.trim());
+          setState(() {
+            if (byEmail) {
+              _unverifiedEmail = identifier;
+            } else {
+              _formError = 'Please verify your email address before signing in. '
+                  'Check your inbox for the verification link.';
+            }
+          });
         } else if (error.status == 401) {
-          setState(() => _formError = 'Invalid email or password.');
+          setState(() => _formError =
+              byEmail ? 'Invalid email or password.' : 'Invalid company code, employee ID or password.');
         } else if (error.status == 423) {
           setState(() => _formError = 'This account is temporarily locked. Try again later.');
         } else if (error.status == 429) {
@@ -84,6 +103,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// Anything with an `@` is an email; otherwise it is an employee ID, which
+  /// needs the company code too.
+  static bool _isEmail(String identifier) => identifier.contains('@');
+
+  bool get _showCompanyCode {
+    final identifier = _emailController.text.trim();
+    return identifier.isNotEmpty && !_isEmail(identifier);
   }
 
   Future<void> _resendVerification() async {
@@ -183,22 +211,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 16),
             ],
             AuthFormField(
-              label: 'Work email',
+              label: 'Email or employee ID',
               errorText: _emailError,
               child: TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 autocorrect: false,
-                autofillHints: const [AutofillHints.email],
+                autofillHints: const [AutofillHints.username],
                 enabled: !_submitting,
                 onChanged: (_) => setState(() => _emailError = null),
                 decoration: const InputDecoration(
-                  hintText: 'you@company.com',
-                  prefixIcon: Icon(Icons.mail_outline_rounded),
+                  hintText: 'you@company.com or EMP-0007',
+                  prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
               ),
             ),
+            if (_showCompanyCode) ...[
+              const SizedBox(height: 18),
+              AuthFormField(
+                label: 'Company code',
+                errorText: _companyCodeError,
+                child: TextField(
+                  controller: _companyCodeController,
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.next,
+                  autocorrect: false,
+                  enabled: !_submitting,
+                  onChanged: (_) => setState(() => _companyCodeError = null),
+                  decoration: const InputDecoration(
+                    hintText: 'e.g. ACME — it\'s in your welcome email',
+                    prefixIcon: Icon(Icons.business_outlined),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             AuthFormField(
               label: 'Password',

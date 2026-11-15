@@ -1,5 +1,7 @@
 {
+ "company_code": "x",
  "company_id": "00000000-0000-0000-0000-000000001234",
  "email": "a@example.com",
+ "employee_code": "x",
  "password": "x"
 }

@@ -1,5 +1,7 @@
 {
+ "company_code": null,
  "company_id": null,
- "email": "a@example.com",
+ "email": null,
+ "employee_code": null,
  "password": "x"
 }

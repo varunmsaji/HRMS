@@ -14,11 +14,10 @@ export interface TokenResponseData {
   companies: CompanySummary[];
 }
 
-export interface LoginRequest {
-  email: string;
-  password: string;
-  company_id?: string;
-}
+/** Sign in with an email, or with a company code plus employee ID — never both. */
+export type LoginRequest =
+  | { email: string; password: string; company_id?: string }
+  | { company_code: string; employee_code: string; password: string; company_id?: string };
 
 export interface UserProfile {
   id: string;

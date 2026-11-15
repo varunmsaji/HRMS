@@ -60,8 +60,18 @@ class AuthController extends StateNotifier<AuthState> {
     return _loadCurrentUser(session);
   }
 
-  Future<UserProfile?> login({required String email, required String password}) async {
-    final data = await _repository.login(email: email, password: password);
+  Future<UserProfile?> login({
+    String? email,
+    String? companyCode,
+    String? employeeCode,
+    required String password,
+  }) async {
+    final data = await _repository.login(
+      email: email,
+      companyCode: companyCode,
+      employeeCode: employeeCode,
+      password: password,
+    );
     return applyTokenResponse(data);
   }
 
