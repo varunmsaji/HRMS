@@ -140,6 +140,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
       context,
       title: onBehalf ? '${_c.singular} on behalf' : _c.singular,
       spec: _c.createSpec!(onBehalf),
+      submitLabel: 'Submit request',
       loadChoiceSet: (required.isEmpty && optional.isEmpty)
           ? null
           : () async {
@@ -156,6 +157,15 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
       setState(() => _decisionsKey++);
       _load();
     }
+  }
+
+  /// Back from a request: re-reads only that one and updates it in place, keeping the scroll
+  /// position (audit MOB-UX-010).
+  Future<void> _refreshRow(String id) async {
+    try {
+      final fresh = await ref.read(apiClientProvider).get<Rec>('${_c.path}/$id', parse: (d) => d as Rec);
+      if (mounted) setState(() => _rows = [for (final r in _rows) r['id'] == id ? fresh : r]);
+    } catch (_) {}
   }
 
   List<FilterGroup> get _groups => [
@@ -260,7 +270,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
                                 trailing: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
                                 onTap: () async {
                                   await pushKeepingTheme<void>(context, (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r));
-                                  _load();
+                                  _refreshRow(r['id'] as String);
                                 },
                               ),
                             ),

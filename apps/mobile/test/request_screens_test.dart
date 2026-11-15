@@ -142,7 +142,7 @@ void main() {
       await _pump(tester, api, [attendanceRegularizationRequest], RequestListScreen(config: regularizationConfig));
       await tester.tap(find.text('Attendance correction'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Submit request'));
       await tester.pumpAndSettle();
       expect(find.text('Attendance date is required.'), findsOneWidget);
       expect(find.text('Choose an option.'), findsOneWidget);

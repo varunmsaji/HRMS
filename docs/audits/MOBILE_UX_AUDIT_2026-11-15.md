@@ -539,6 +539,16 @@ Ordering principle: fix what misdirects users first, then what costs them taps e
 | 5 | 044 | Uniform states | None |
 
 ### Phase 4: UX enhancements (ongoing)
+
+**Status (2026-11-15):** first pass on `test`.
+* 025: phone and PIN code fields get their own kinds (phone keypad with autofill; a 6-digit number pad, validated). Fields chain with "next", notes start with a capital letter, and amounts have no minus key.
+* 027: every spec form pins its submit button above the keyboard, and a failed submit scrolls to the first field with an error. A correction raised from the corrections list now says "Submit request".
+* 008/035/033: the admin dashboard opens on "Waiting for you". It counts only decisions for this user (onboarding cases waiting on the candidate are no longer counted) and names every part. Present and On leave tiles open Team attendance. A block that fails to load says "Couldn't load this" with a retry; a refused block is still left out. The shortcuts read "Corrections" and "Balances".
+* 009: the More menu folds every configuration group under one "Company setup" row. Search still covers everything.
+* 010/036: back from a leave request, a correction or overtime record, or an employee, only that row is re-read and updated in place, so the loaded pages and scroll position stay. A failed "Load more" on Leave and Notifications says so, with a retry.
+* 020/021/023: Home offers the other punch direction ("Punch in instead"). On a leave day or a day off, the Attendance tab's punch bar is one line with "Punch anyway". Only the worked-time clock ticks, and only while punched in.
+* 045/046 (part): the employee record has Call and Email buttons, says "Confirm employment", and moves Deactivate into the overflow menu.
+* Not done: 029 (sections for the new-employee form), 048 (per-day lists in place of grids), 032 (offline banner and cached Home: needs a connectivity package), 046's server-side status filter (an API change), 045's sectioned Overview, and the new features (swipe and bulk approve, "who's off" while applying).
 | Issues | Expected impact | Dependencies |
 |---|---|---|
 | 025, 027, 029 | Faster, less error-prone data entry | Form engine changes |

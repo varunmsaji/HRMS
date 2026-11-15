@@ -31,22 +31,32 @@ String _longDate() {
   return '${wd[d.weekday - 1]}, ${d.day} ${mo[d.month - 1]} ${d.year}';
 }
 
-/// Onboarding cases waiting on HR, and on the candidate — web `ONBOARDING_HR_STATUSES` /
-/// `ONBOARDING_CANDIDATE_STATUSES`; both count toward "Pending Approvals", as on web.
+/// Onboarding cases waiting on HR's review (web `ONBOARDING_HR_STATUSES`). Cases waiting on the
+/// candidate (invited, in progress, changes requested) are not a decision for HR, so unlike web they
+/// are not counted (audit MOB-UX-035).
 const _onboardingHrStatuses = ['SUBMITTED', 'UNDER_REVIEW'];
-const _onboardingCandidateStatuses = ['INVITED', 'IN_PROGRESS', 'CHANGES_REQUESTED'];
 
 /// Pending approvals by queue — web `usePendingApprovals`; a queue the viewer can't approve (or that
 /// fails) is null and omitted.
 class _Pending {
-  const _Pending({this.leave, this.attendance, this.overtime, this.onboardingHr, this.onboardingCandidate});
+  const _Pending({this.leave, this.attendance, this.overtime, this.onboardingHr, this.failed = false});
   final PendingQueue? leave;
   final PendingQueue? attendance;
   final PendingQueue? overtime;
   final int? onboardingHr;
-  final int? onboardingCandidate;
-  int get total => (leave?.total ?? 0) + (attendance?.total ?? 0) + (overtime?.total ?? 0) + (onboardingHr ?? 0) + (onboardingCandidate ?? 0);
-  bool get any => leave != null || attendance != null || overtime != null || onboardingHr != null || onboardingCandidate != null;
+
+  /// A queue the viewer may approve could not be read: the total is then a lower bound.
+  final bool failed;
+  int get total => (leave?.total ?? 0) + (attendance?.total ?? 0) + (overtime?.total ?? 0) + (onboardingHr ?? 0);
+  bool get any => leave != null || attendance != null || overtime != null || onboardingHr != null || failed;
+
+  /// Every part of [total], so the tile's figure and its hint add up.
+  String get breakdown => [
+        if (leave != null) '${leave!.total} Leave',
+        if (attendance != null) '${attendance!.total} Corrections',
+        if (overtime != null) '${overtime!.total} Overtime',
+        if (onboardingHr != null) '$onboardingHr Onboarding',
+      ].join(' · ');
 
   /// The four newest waiting requests across leave, regularization and overtime — web `pendingRows`.
   List<PendingItem> get newest {
@@ -56,7 +66,7 @@ class _Pending {
 }
 
 /// Web's pending row titles and the queue each opens.
-const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Attendance correction', 'overtime': 'Overtime'};
+const _pendingTitle = {'leave': 'Leave request', 'regularization': 'Attendance correction', 'overtime': 'Overtime'};
 const _pendingRoute = {'leave': '/app/leave-applications', 'regularization': '/app/regularizations', 'overtime': '/app/overtime'};
 const _pendingIcon = {'leave': Icons.event_busy_outlined, 'regularization': Icons.schedule_outlined, 'overtime': Icons.more_time_outlined};
 
@@ -99,6 +109,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _insightsLoading = false;
   ApiError? _error;
 
+  /// Blocks the viewer may see whose read failed (not refused): each shows "Couldn't load" with a
+  /// retry instead of silently disappearing (audit MOB-UX-033).
+  Set<String> _failed = const {};
+
   @override
   void initState() {
     super.initState();
@@ -134,14 +148,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       }
     }
 
+    // Like [quiet], but a failure other than "not allowed" or "not available" is remembered under
+    // [block], so the panel can say it couldn't load rather than vanish.
+    final failed = <String>{};
+    Future<T?> soft<T>(String block, Future<T> Function() call) async {
+      try {
+        return await call();
+      } on ApiError catch (e) {
+        if (e.status != 403 && e.status != 404) failed.add(block);
+        return null;
+      } catch (_) {
+        failed.add(block);
+        return null;
+      }
+    }
+
     Future<PendingQueue?> queue(bool allowed, String kind, String path, Map<String, dynamic> filters, {String timeField = 'submitted_at'}) async =>
-        allowed ? quiet(() => repository.pendingQueue(kind, path, filters, timeField: timeField)) : null;
+        allowed ? soft('pending', () => repository.pendingQueue(kind, path, filters, timeField: timeField)) : null;
 
     // One onboarding bucket spans several statuses and the list filters on one, so the totals add.
     final onboarding = permissions.contains(onboardingReview) && permissions.contains(onboardingView);
     Future<int?> onboardingCount(List<String> statuses) async {
       if (!onboarding) return null;
-      final parts = await Future.wait([for (final s in statuses) quiet(() => repository.countPending('/onboarding-cases', {'status': s}))]);
+      final parts = await Future.wait([for (final s in statuses) soft('pending', () => repository.countPending('/onboarding-cases', {'status': s}))]);
       return parts.every((p) => p == null) ? null : parts.fold<int>(0, (sum, p) => sum + (p ?? 0));
     }
 
@@ -149,22 +178,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     // Best-effort, as on web: without it the picker is simply not shown. Started alongside the
     // rest (a record `.wait` takes at most nine futures).
     final branchesFuture = quiet(repository.activeBranches);
-    final (dashboard, profile, overview, insights, leave, attendance, overtime, onboardingHr, onboardingCandidate) = await (
+    final (dashboard, profile, overview, insights, leave, attendance, overtime, onboardingHr) = await (
       fetch(repository.getCompanyDashboard),
       fetch(repository.getCompanyProfile),
-      permissions.contains(attendanceView) ? quiet(() => repository.getAttendanceOverview(branchId: branchId)) : Future<AttendanceOverviewSummary?>.value(null),
-      quiet(() => repository.getInsights(leaveScope: _leaveScope, branchId: branchId)),
+      permissions.contains(attendanceView) ? soft('attendance', () => repository.getAttendanceOverview(branchId: branchId)) : Future<AttendanceOverviewSummary?>.value(null),
+      soft('insights', () => repository.getInsights(leaveScope: _leaveScope, branchId: branchId)),
       queue(permissions.contains(_leaveApprove), 'leave', '/leave-applications', {'application_status': 'SUBMITTED'}),
       queue(permissions.contains(_regularizationApprove), 'regularization', '/regularizations', {'request_status': 'SUBMITTED'}),
       queue(permissions.contains(_overtimeApprove), 'overtime', '/overtime', {'record_status': 'PENDING'}, timeField: 'created_at'),
       onboardingCount(_onboardingHrStatuses),
-      onboardingCount(_onboardingCandidateStatuses),
     ).wait;
 
     final branches = await branchesFuture;
     if (!mounted) return;
-    final pending = _Pending(leave: leave, attendance: attendance, overtime: overtime, onboardingHr: onboardingHr, onboardingCandidate: onboardingCandidate);
+    final pending = _Pending(leave: leave, attendance: attendance, overtime: overtime, onboardingHr: onboardingHr, failed: failed.contains('pending'));
     setState(() {
+      _failed = failed;
       _dashboard = dashboard.data;
       _profile = profile.data;
       _overview = overview;
@@ -330,6 +359,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             if (!dashboard.setupProgress.isComplete)
               Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: _SetupProgressCard(progress: dashboard.setupProgress, companyName: companyName)),
+            // What needs a decision comes first, then today's figures, then the charts (audit
+            // MOB-UX-008).
+            if (_pending.any)
+              DashPanel(
+                title: 'Waiting for you',
+                caption: _pending.total == 0 ? null : '${_pending.total}${_pending.failed ? '+' : ''} awaiting your decision${_pending.breakdown.isEmpty ? '' : ' · ${_pending.breakdown}'}',
+                actionLabel: 'View all',
+                // Every kind in one place, not just leave (MOB-UX-001).
+                onAction: () => context.push('/app/approvals'),
+                child: _pending.newest.isEmpty
+                    ? (_pending.failed
+                        ? _PanelRetry(onRetry: _load)
+                        : Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text(_pending.total > 0 ? 'Open the Approvals inbox to see them.' : 'Nothing waiting for you.', style: Theme.of(context).textTheme.bodySmall)))
+                    : Column(children: [
+                        for (final p in _pending.newest)
+                          DashListRow(
+                            icon: _pendingIcon[p.kind]!,
+                            title: _pendingTitle[p.kind]!,
+                            caption: '${_names[p.employeeId] ?? 'Employee'}${p.at.isEmpty ? '' : ' · ${relativeTime(p.at)}'}',
+                            // The request itself, not its list (MOB-UX-003).
+                            onTap: () => context.push('${_pendingRoute[p.kind]!}/${p.id}'),
+                          ),
+                      ]),
+              ),
+            if (_pending.any) const SizedBox(height: 16),
             StatGrid(tiles: [
               StatTile(
                 icon: Icons.groups_outlined,
@@ -345,6 +399,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   value: '${overview.present}',
                   hint: _hint(trendOf(overview.present, insights?.yesterdayPresent, 'vs yesterday'), overview.late > 0 ? '${overview.late} late arrivals' : null),
                   accent: const Color(0xFF16A34A),
+                  onTap: () => context.push('/app/team-attendance'),
                 ),
               if (overview != null)
                 StatTile(
@@ -353,18 +408,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   value: '${overview.onLeave}',
                   hint: _hint(trendOf(overview.onLeave, insights?.yesterdayOnLeave, 'vs yesterday'), overview.halfDayLeave > 0 ? '${overview.halfDayLeave} half-day' : null),
                   accent: const Color(0xFF8B5CF6),
-                ),
-              if (_pending.any)
-                StatTile(
-                  icon: Icons.hourglass_bottom_outlined,
-                  label: 'Pending Approvals',
-                  value: '${_pending.total}',
-                  hint: [
-                    if (_pending.leave != null) '${_pending.leave!.total} Leave',
-                    if (_pending.attendance != null) '${_pending.attendance!.total} Attendance',
-                    if (_pending.overtime != null) '${_pending.overtime!.total} Overtime',
-                  ].join(' · '),
-                  accent: const Color(0xFFF59E0B),
+                  onTap: () => context.push('/app/team-attendance'),
                 ),
             ]),
             if (overview != null)
@@ -383,6 +427,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         DonutSegment('Others', overview.others, const Color(0xFF94A3B8)),
                       ]),
               ),
+            if (_failed.contains('attendance'))
+              DashPanel(title: 'Attendance Overview', child: _PanelRetry(onRetry: _load)),
+            if (insights == null && _failed.contains('insights'))
+              DashPanel(title: 'Leave Statistics', child: _PanelRetry(onRetry: _load)),
             if (insights != null)
               DashPanel(
                 title: 'Leave Statistics',
@@ -404,25 +452,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ]),
                 ]),
               ),
-            if (_pending.any)
-              DashPanel(
-                title: 'Pending Approvals',
-                actionLabel: 'View all',
-                // Every kind in one place, not just leave (MOB-UX-001).
-                onAction: () => context.push('/app/approvals'),
-                child: _pending.newest.isEmpty
-                    ? Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text('Nothing pending.', style: Theme.of(context).textTheme.bodySmall))
-                    : Column(children: [
-                        for (final p in _pending.newest)
-                          DashListRow(
-                            icon: _pendingIcon[p.kind]!,
-                            title: _pendingTitle[p.kind]!,
-                            caption: '${_names[p.employeeId] ?? 'Employee'}${p.at.isEmpty ? '' : ' · ${relativeTime(p.at)}'}',
-                            // The request itself, not its list (MOB-UX-003).
-                            onTap: () => context.push('${_pendingRoute[p.kind]!}/${p.id}'),
-                          ),
-                      ]),
-              ),
             if (insights != null && insights.recentActivities.isNotEmpty)
               DashPanel(
                 title: 'Recent Activities',
@@ -438,6 +467,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
     );
   }
+}
+
+/// A panel whose figures could not be read: says so, with a retry (audit MOB-UX-033).
+class _PanelRetry extends StatelessWidget {
+  const _PanelRetry({required this.onRetry});
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Icon(Icons.cloud_off_rounded, size: 18, color: Theme.of(context).colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Couldn\'t load this.', style: Theme.of(context).textTheme.bodyMedium)),
+          TextButton(onPressed: onRetry, child: const Text('Try again')),
+        ]),
+      );
 }
 
 /// A trend ("+5% vs yesterday") and a note on one line, either optional.
@@ -631,10 +677,10 @@ class _QuickActions extends StatelessWidget {
     _QuickAction('Employees', Icons.people_alt_outlined, '/app/employees', Color(0xFF2563EB)),
     _QuickAction('Onboarding', Icons.person_add_alt_1_outlined, '/app/onboarding', Color(0xFF0D9488)),
     _QuickAction('Attendance', Icons.fact_check_outlined, '/app/team-attendance', Color(0xFF16A34A)),
-    _QuickAction('Leave', Icons.beach_access_outlined, '/app/leave-balances', Color(0xFF8B5CF6)),
+    _QuickAction('Balances', Icons.beach_access_outlined, '/app/leave-balances', Color(0xFF8B5CF6)),
     _QuickAction('Payroll', Icons.payments_outlined, '/app/payroll/pay-runs', Color(0xFFF59E0B)),
     _QuickAction('Rosters', Icons.event_available_outlined, '/app/rosters', Color(0xFF0EA5E9)),
-    _QuickAction('Requests', Icons.edit_note_rounded, '/app/regularizations', Color(0xFFEF4444)),
+    _QuickAction('Corrections', Icons.edit_note_rounded, '/app/regularizations', Color(0xFFEF4444)),
     _QuickAction('Company', Icons.apartment_outlined, '/app/company', Color(0xFF64748B)),
   ];
 

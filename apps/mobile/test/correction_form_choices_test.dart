@@ -61,7 +61,7 @@ void main() {
 
     expect(find.textContaining('Could not load the options'), findsNothing);
     expect(find.text('HH:MM'), findsNWidgets(2), reason: 'check-in and check-out time fields');
-    expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Submit request'), findsOneWidget);
   });
 
   testWidgets('403 on /shifts: only the shift option is disabled, with an explanation', (tester) async {

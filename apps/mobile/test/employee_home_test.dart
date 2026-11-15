@@ -166,7 +166,9 @@ void main() {
       expect(find.text('WORKED TODAY'), findsOneWidget);
       expect(find.textContaining('02:00:'), findsOneWidget);
       expect(find.text('Punch out'), findsOneWidget);
-      expect(find.text('Punch in'), findsNothing, reason: 'Punch out is the one offered action');
+      expect(find.text('Punch in'), findsNothing, reason: 'Punch out is the primary action');
+      // The other direction stays one tap away, as on the Attendance tab (MOB-UX-020).
+      expect(find.text('Punch in instead'), findsOneWidget);
     });
 
     testWidgets('a punch the day calculation has not caught up with is "being calculated" and shows no status or worked time', (tester) async {

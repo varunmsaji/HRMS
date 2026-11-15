@@ -19,6 +19,10 @@ class SettingsHubScreen extends ConsumerStatefulWidget {
 class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
   String _query = '';
 
+  /// Configuration screens are folded under one "Company setup" row until opened, so the daily
+  /// tools are what the menu shows first (audit MOB-UX-009). Search always looks in all of them.
+  bool _setupOpen = false;
+
   Future<void> _confirmSignOut() => confirmSignOut(context, ref);
 
   @override
@@ -63,7 +67,7 @@ class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
             else
               _GroupCard(items: [for (final m in matches) m.$2], subtitles: [for (final m in matches) m.$1]),
           ] else ...[
-            for (final group in groups)
+            for (final group in groups.where((g) => !_isSetup(g)))
               if (employeeMenu && group == groups.first) ...[
                 if (group.items.isNotEmpty) ...[
                   const SectionHeader('Your work'),
@@ -91,6 +95,26 @@ class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
                   ),
                   _GroupCard(items: group.items),
                 ],
+            if (groups.any(_isSetup)) ...[
+              const SizedBox(height: 20),
+              _SetupToggle(
+                open: _setupOpen,
+                count: [for (final g in groups.where(_isSetup)) ...g.items].length,
+                onTap: () => setState(() => _setupOpen = !_setupOpen),
+              ),
+              if (_setupOpen)
+                for (final group in groups.where(_isSetup)) ...[
+                  const SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                    child: Text(
+                      group.label.toUpperCase(),
+                      style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8),
+                    ),
+                  ),
+                  _GroupCard(items: group.items),
+                ],
+            ],
             const SizedBox(height: 24),
             AppCard(
               padding: EdgeInsets.zero,
@@ -108,6 +132,40 @@ class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// A configuration group (company structure, policies, pay setup), as opposed to a daily tool.
+bool _isSetup(NavGroup g) => navSettingsGroups.any((s) => s.label == g.label);
+
+/// The folded "Company setup" row.
+class _SetupToggle extends StatelessWidget {
+  const _SetupToggle({required this.open, required this.count, required this.onTap});
+  final bool open;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      onTap: onTap,
+      child: Semantics(
+        expanded: open,
+        child: Row(children: [
+          const IconBadge(icon: Icons.tune_rounded, size: 38),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Company setup', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+              Text('$count settings · policies, structure and pay. Complex rules are easier on the web.', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            ]),
+          ),
+          Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+        ]),
       ),
     );
   }

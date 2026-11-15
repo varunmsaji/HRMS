@@ -30,6 +30,12 @@ enum FieldKind {
   aadhaar,
   upper,
   email,
+
+  /// A phone number: the phone keypad and autofill (audit MOB-UX-025).
+  phone,
+
+  /// An Indian PIN code: six digits on the number pad.
+  pincode,
   hidden,
 }
 
@@ -137,6 +143,8 @@ typedef Choice = ({String value, String label});
 final _panPattern = RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]$');
 final _aadhaarPattern = RegExp(r'^[0-9]{12}$');
 final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+final _phonePattern = RegExp(r'^\+?[0-9 ()-]{7,20}$');
+final _pincodePattern = RegExp(r'^[1-9][0-9]{5}$');
 final _dateTimePattern = RegExp(r'^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 final _timePattern = RegExp(r'^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 
@@ -312,6 +320,11 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
         if (!_aadhaarPattern.hasMatch(text.replaceAll(RegExp(r'\s+'), ''))) errors[f.key] = 'Enter a valid 12-digit Aadhaar number.';
       case FieldKind.email:
         if (!_emailPattern.hasMatch(text)) errors[f.key] = 'Enter a valid email address.';
+      case FieldKind.phone:
+        final digits = text.replaceAll(RegExp(r'[^0-9]'), '').length;
+        if (!_phonePattern.hasMatch(text) || digits < 7 || digits > 15) errors[f.key] = 'Enter a valid phone number.';
+      case FieldKind.pincode:
+        if (!_pincodePattern.hasMatch(text)) errors[f.key] = 'Enter a 6-digit PIN code.';
       case FieldKind.time:
         if (!_timePattern.hasMatch(text)) errors[f.key] = 'Use HH:MM (24-hour).';
       case FieldKind.dateTime:

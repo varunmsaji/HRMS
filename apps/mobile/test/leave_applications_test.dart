@@ -48,6 +48,7 @@ class _FakeLeave implements LeaveRepository {
   _FakeLeave(this.apps);
   final List<Map<String, dynamic>> apps;
   final calls = <String>[];
+  final gets = <String>[];
   ApiError? approveError;
 
   @override
@@ -57,7 +58,10 @@ class _FakeLeave implements LeaveRepository {
   }
 
   @override
-  Future<LeaveApplication> getLeaveApplication(String id) async => LeaveApplication.fromJson(apps.firstWhere((a) => a['id'] == id));
+  Future<LeaveApplication> getLeaveApplication(String id) async {
+    gets.add(id);
+    return LeaveApplication.fromJson(apps.firstWhere((a) => a['id'] == id));
+  }
 
   @override
   Future<LeaveApplication> submitLeaveApplication(Map<String, dynamic> body, {String? idempotencyKey}) async {
@@ -158,6 +162,21 @@ void main() {
       await _pump(tester, repo, [leaveApplicationApprove], const LeaveApplicationsScreen(), employeeId: null);
       expect(repo.calls.first, startsWith('list:*:'));
       expect(find.text('Mine'), findsNothing);
+    });
+
+    testWidgets('back from a request, only that request is re-read and updated in place (MOB-UX-010)', (tester) async {
+      final repo = _FakeLeave([_app()]);
+      await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());
+      final lists = repo.calls.where((c) => c.startsWith('list:')).length;
+      await tester.tap(find.text('Awaiting approval'));
+      await tester.pumpAndSettle();
+      repo.apps[0] = {...repo.apps[0], 'status': 'CANCELLED'};
+      final gets = repo.gets.length;
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(repo.calls.where((c) => c.startsWith('list:')).length, lists, reason: 'the list is not reloaded from page 1');
+      expect(repo.gets.length, gets + 1);
+      expect(find.text('Cancelled'), findsOneWidget);
     });
 
     testWidgets('the status filter is sent as application_status', (tester) async {

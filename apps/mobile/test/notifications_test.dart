@@ -30,6 +30,9 @@ class _Repo implements NotificationRepository {
   _Repo({List<Map<String, dynamic>>? items, this.failList = false, this.gate}) : items = items ?? [_json()];
   List<Map<String, dynamic>> items;
   bool failList;
+
+  /// Pretends there is a second page, and fails reading it until cleared.
+  bool failPage2 = false;
   Completer<void>? gate;
   int unread = 1;
   int listCalls = 0;
@@ -44,8 +47,14 @@ class _Repo implements NotificationRepository {
     lastUnreadOnly = unreadOnly;
     if (gate != null) await gate!.future;
     if (failList) throw Exception('boom');
+    if (page == 2 && failPage2) throw Exception('offline');
     final rows = unreadOnly ? items.where((m) => m['is_read'] == false).toList() : items;
-    return ListEnvelope(data: rows.map(AppNotification.fromJson).toList(), pagination: null, meta: ResponseMeta(requestId: 'r'));
+    final paged = failPage2 || page == 2;
+    return ListEnvelope(
+      data: (page == 2 ? [_json(id: 'n-older', title: 'Second page')] : rows).map(AppNotification.fromJson).toList(),
+      pagination: paged ? PaginationMeta(page: page, perPage: perPage, total: 2, totalPages: 2) : null,
+      meta: ResponseMeta(requestId: 'r'),
+    );
   }
 
   @override
@@ -173,6 +182,21 @@ void main() {
     expect(find.text('Older'), findsOneWidget);
     expect(find.byKey(const Key('unread-dot')), findsOneWidget); // only the unread one
     expect(find.text('Complete Face Enrollment →'), findsOneWidget);
+  });
+
+  testWidgets('a failed "load more" says so at the end of the list and can retry (MOB-UX-036)', (tester) async {
+    final repo = _Repo(items: [for (var i = 0; i < 20; i++) _json(id: 'n$i', title: 'Item $i')])..failPage2 = true;
+    await tester.pumpWidget(_app(repo));
+    await tester.pumpAndSettle();
+    await tester.fling(find.byType(ListView), const Offset(0, -5000), 3000);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Couldn\'t load more · Try again'), findsOneWidget);
+    repo.failPage2 = false;
+    await tester.tap(find.text('Couldn\'t load more · Try again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Second page'), findsOneWidget);
   });
 
   testWidgets('empty and error states; error can retry', (tester) async {

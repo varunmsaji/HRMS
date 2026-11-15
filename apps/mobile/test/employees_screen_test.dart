@@ -106,6 +106,24 @@ void main() {
     expect(find.text('Salary'), findsOneWidget);
   });
 
+  testWidgets('the record offers Email, says "Confirm employment", and keeps Deactivate in the menu (MOB-UX-045/046)', (tester) async {
+    tester.view.physicalSize = const Size(1600, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(FakeApiClient()), fakeAuth([employeeViewAll, employeeUpdate, employeeConfirm, employeeDeactivate])],
+      child: MaterialApp(home: EmployeeDetailScreen(employee: Employee.fromJson({..._employee(1, 'Asha'), 'status': 'PROBATION'}))),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Call'), findsNothing, reason: 'no mobile number on record');
+    expect(find.text('Confirm employment'), findsOneWidget);
+    expect(find.text('Deactivate'), findsNothing);
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deactivate employee'), findsOneWidget);
+  });
+
   testWidgets('shows the first page and loads the next on demand', (tester) async {
     final api = _DirectoryApi(people);
     await _pump(tester, api);

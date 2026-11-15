@@ -13,6 +13,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
+import '../domain/today_state.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_month_card.dart';
 import 'face_punch_card.dart';
@@ -42,6 +43,9 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   int _faceReload = 0;
 
   final _barKey = GlobalKey();
+
+  /// Set when the person asks to punch on a leave day or a day off.
+  bool _punchAnyway = false;
 
   /// The bar plus its 16 px padding above and below.
   double _barHeight() => (_barKey.currentContext?.size?.height ?? 0) + 32;
@@ -168,14 +172,24 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
             ],
           ),
         ),
-        bar: KeyedSubtree(key: _barKey, child: CheckInAction(
-          likely: state.likely,
-          faceRequired: faceRequired,
-          busy: punch.plainBusy || punch.faceBusy,
-          ready: _faceKnown,
-          busyLabel: punch.faceBusy ? 'Verifying…' : 'Recording punch…',
-          onPunch: _punch,
-        )),
+        // On a leave day or a day off the two punch buttons give way to one line, so the history
+        // gets the space; punching stays one tap away (audit MOB-UX-021).
+        bar: KeyedSubtree(
+          key: _barKey,
+          child: (state.kind == TodayStateKind.onLeave || state.kind == TodayStateKind.notWorkingDay) && !_punchAnyway
+              ? Row(children: [
+                  Expanded(child: Text(state.kind == TodayStateKind.onLeave ? 'You\'re on leave today.' : 'Today is not a working day.', style: Theme.of(context).textTheme.bodyMedium)),
+                  TextButton(onPressed: () => setState(() => _punchAnyway = true), child: const Text('Punch anyway')),
+                ])
+              : CheckInAction(
+                  likely: state.likely,
+                  faceRequired: faceRequired,
+                  busy: punch.plainBusy || punch.faceBusy,
+                  ready: _faceKnown,
+                  busyLabel: punch.faceBusy ? 'Verifying…' : 'Recording punch…',
+                  onPunch: _punch,
+                ),
+        ),
       );
     }
 
