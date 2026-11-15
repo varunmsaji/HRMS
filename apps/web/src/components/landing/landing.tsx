@@ -234,7 +234,6 @@ export function Landing() {
             </ul>
 
             <div className="win-stage up d3">
-              <div className="win-rise">
               <Tilt className="hold-stage" maxDegrees={2.5}>
                 <div className="win">
                   <div className="win-bar"><i /><i /><i /></div>
@@ -251,7 +250,6 @@ export function Landing() {
                   </div>
                 ))}
               </Tilt>
-              </div>
             </div>
           </div>
         </section>
