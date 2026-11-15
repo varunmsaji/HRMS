@@ -229,4 +229,63 @@ Locked days keep their stored results and engine version.
 
 ## 8. Results
 
-Filled in when implementation is complete.
+Status on 15 Nov 2026 (branch `test`, not pushed). Engine version 13.
+
+### Fixed
+
+| Issue | What changed | Where |
+|---|---|---|
+| SH-01, SH-02, SH-05, SH-09 | Punch ownership: each punch belongs to exactly one day, inside a window set by `max_early_punch_minutes` (240) and `max_late_punch_minutes` (720) and bounded by the neighbouring shift. Orphan punches are listed, block period close and can be dismissed. | `punch_ownership.py`, `ownership_service.py` |
+| SH-03 | A holiday or weekly off the shift operates on (or a roster "working this holiday" row) is an ordinary working day: no-show follows the missing-punch rule, overtime is NORMAL class, leave charges the day. | `calculation.py`, `leave/service.py` |
+| SH-04 | Split-shift blocks placed in sequence; scheduled minutes are the sum of the blocks; overtime is detected. | `calculation.py` |
+| SH-06 | Branch and shift-version timezones are held to `allowed_company_timezones`, at write and at publish. Web and mobile pickers offer only the allowed zones. | organisation schemas/service, web, mobile |
+| SH-07, SH-16 (partial) | One resolved work schedule (roster, else assignment) used by calculation, punch window, SHIFT-scoped policy, calendar and My Shift. | `work_schedule.py` |
+| SH-08 | No shift: worked minutes go through the hour bands; a holiday or weekly off with no shift and no punches is NOT_EXPECTED. | `calculation.py` |
+| SH-10 | A punched gap matches the break it overlaps most; under `excess_break_behaviour = DEDUCT` a paid break pays up to its maximum. | `calculation.py` |
+| SH-11 | A FLEXIBLE shift's fixed break is checked against window start to window end + required minutes. | organisation service |
+| SH-12 | A punched gap overlapping an AUTO_DEDUCT window counts toward that deduction. | `calculation.py` |
+| SH-13 | Assignment: refused in a closed period; `clear_shift` flag ("No shift" in web, a toggle in mobile); a chosen shift needs a published version on the start date; a change can be dated before a future-dated row (the covering row is split). | `employee/service.py`, web, mobile |
+| SH-14 | The API refuses non-default dormant settings (punch rounding, AUTO_CLOSE, half-day split, `early_out_uses_core_end`, shift-version weekly-off pattern and scheduled minutes). Web and mobile no longer show or send them. | schemas, web, mobile |
+| SH-15 | Break modes and break start/end are refused unless `SHIFT_BREAK_MODES_ENABLED` (default off; on in the test env). | settings, break router/schemas |
+| SH-17 | Company-zone "today" for the weekly planner default, swap dates, break-override revoke and geofence workplaces; punch-list date filter uses company days; mobile shows punch-refusal and enrollment times in the company zone. | several |
+| SH-18, SH-20 | Roster rows need an active shift with a published version on the date. Swaps: past dates refused (company zone, HR and self-service), stale pending swaps expire, approval locks both roster rows in a fixed order, references numbered under an advisory lock. | `service.py`, `schedule_service.py`, `core/db/locks.py` |
+| SH-21 | Shift names unique per company ignoring case; `required_minutes` 1-1440; breaks together shorter than the shift. | organisation service/schemas |
+| Invariant C | Shift publish, assignment, published roster change, approved swap and policy assignment queue an `attendance_recalc_request`; a Celery task (kicked after commit, plus a 5-minute Beat) recalculates the existing unlocked days in range. | `recalc.py`, `tasks.py`, `celery_app.py` |
+
+Also: the web and mobile attendance-policy forms now offer the two punch-window settings.
+
+### Not done
+
+- SH-16 (rest): weekly planner does not yet count staff on their default (assignment) shift, nor show per-day timings.
+- SH-19: no read-only shift options endpoint for roster and assignment users.
+- SH-22: shifts page copy ("grace" lives on the attendance policy).
+- SH-21 caveat: the name check has no unique index, so two creates at the same moment can both pass.
+- Attendance-policy version publish does not queue a recalculation (not in the commit plan).
+- Awaiting owner decision, current behaviour kept: P-01, P-04, P-05, P-07, P-10, P-11, P-12, P-14.
+
+### Migration
+
+`20261115090000_shift_remediation.py` (additive). `attendance_recalc_request.employee_id` and
+`shift_id` cascade on delete. A person must merge it.
+
+### After deploy
+
+1. Run the read-only data checks in section 4.
+2. Recalculate unlocked days of open periods: `POST /attendance/days/calculate-range` per open
+   period (engine 13 changes results for SH-03, SH-04, SH-08, SH-10, SH-12 and punch ownership).
+
+### Test results
+
+Run on 15 Nov 2026 against isolated test databases (`hrms_test`, `hrms_test2`).
+
+| Suite | Result |
+|---|---|
+| API: organisation, employee, attendance, leave integration | 1843 run; 4 failures were test fixtures broken by the new rules (two shifts with one name in a tenant; an assignment before its shift's first version; an assignment dated before a future row, now allowed). Fixed and re-run green. |
+| API: all other unit and integration tests | 2720 run; 29 failures were mock-session unit tests reaching the new database checks, and the job-health broker test seeing unconsumed recalculation kicks. Fixed and re-run green. 1 remaining failure, `test_settings.py::test_development_has_no_explicit_origins_but_a_valid_fallback`, comes from the local `.env` and is unrelated. |
+| ruff (check + format), `mypy src/hrms`, import-linter | clean |
+| Web: `tsc`, vitest | clean; 1044 passed |
+| Mobile: `flutter analyze`, `flutter test` | clean; 1396 passed |
+
+The SH-10 and SH-12 regression tests fail on the engine before this change. The roster and swap
+tests (SH-18, SH-20) could not be checked against the old code separately: the old service files no
+longer import with the new employee code.
