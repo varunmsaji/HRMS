@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/nav/nav_entries.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
@@ -61,6 +62,17 @@ class _Repo implements DashboardRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FailingRepo extends _Repo {
+  @override
+  Future<AttendanceOverviewSummary> getAttendanceOverview({String? branchId}) async => throw ApiError(status: 500, code: 'SERVER_ERROR', message: 'boom');
+
+  @override
+  Future<CompanyInsights> getInsights({String leaveScope = 'month', String? branchId}) async => throw ApiError(status: 403, code: 'FORBIDDEN', message: 'no');
+
+  @override
+  Future<PendingQueue> pendingQueue(String kind, String path, Map<String, dynamic> filters, {String timeField = 'submitted_at', int size = 5}) async => throw ApiError(status: 0, code: 'NETWORK_ERROR', message: 'offline');
+}
+
 Future<_Repo> _pump(WidgetTester tester, List<String> permissions, [_Repo? r]) async {
   final repo = r ?? _Repo();
   tester.view.physicalSize = const Size(400, 3000);
@@ -113,7 +125,7 @@ void main() {
 
     testWidgets('no tiles at all when none can be opened', (tester) async {
       await _pump(tester, const [dashboardCompanyView]);
-      for (final label in ['Employees', 'Onboarding', 'Attendance', 'Leave', 'Rosters', 'Requests', 'Company']) {
+      for (final label in ['Employees', 'Onboarding', 'Attendance', 'Balances', 'Rosters', 'Corrections', 'Company']) {
         expect(find.text(label), findsNothing, reason: label);
       }
     });
@@ -164,11 +176,11 @@ void main() {
           onboarding: const {'SUBMITTED': 2, 'INVITED': 1},
         ),
       );
-      expect(find.text('PENDING APPROVALS'), findsOneWidget);
-      expect(find.text('Pending Approvals'), findsOneWidget);
-      expect(find.text('6'), findsOneWidget); // 3 leave + 2 awaiting HR + 1 with the candidate
-      expect(find.text('3 Leave'), findsOneWidget);
-      expect(find.text('Leave Request'), findsNWidgets(2));
+      expect(find.text('Waiting for you'), findsOneWidget);
+      // 3 leave + 2 awaiting HR review; the case waiting on the candidate is not HR's decision.
+      expect(find.text('5 awaiting your decision · 3 Leave · 2 Onboarding'), findsOneWidget);
+      expect(find.text('Leave request'), findsNWidgets(2));
+      expect(tester.getTopLeft(find.text('Waiting for you')).dy, lessThan(tester.getTopLeft(find.text('TOTAL EMPLOYEES')).dy), reason: 'what needs a decision comes first');
       expect(find.textContaining('Ravi K'), findsOneWidget);
       expect(find.textContaining('Asha Rao'), findsOneWidget);
       // Newest first.
@@ -181,8 +193,16 @@ void main() {
         const [dashboardCompanyView, leaveApplicationApprove, onboardingReview],
         _Repo(queues: {'leave': PendingQueue(total: 3, items: const [])}, onboarding: const {'SUBMITTED': 2}),
       );
-      expect(find.text('3'), findsOneWidget);
-      expect(find.text('Nothing pending.'), findsOneWidget);
+      expect(find.text('3 awaiting your decision · 3 Leave'), findsOneWidget);
+      expect(find.text('Open the Approvals inbox to see them.'), findsOneWidget);
+    });
+
+    testWidgets('a block that fails to load says so with a retry; a refused one is left out', (tester) async {
+      await _pump(tester, const [dashboardCompanyView, attendanceView, leaveApplicationApprove], _FailingRepo());
+      expect(find.text('Attendance Overview'), findsOneWidget);
+      expect(find.text('Waiting for you'), findsOneWidget);
+      expect(find.text('Couldn\'t load this.'), findsNWidgets(2));
+      expect(find.text('Leave Statistics'), findsNothing, reason: 'a 403 is "not for you", not a failure');
     });
 
     testWidgets('leave statistics switch between this month and this year', (tester) async {

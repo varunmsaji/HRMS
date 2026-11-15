@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../features/auth/presentation/widgets/auth_form_field.dart';
 import '../format.dart';
@@ -131,8 +132,14 @@ class _SpecFormState extends State<SpecForm> {
       case FieldKind.aadhaar:
         return TextInputType.number;
       case FieldKind.decimal:
-      case FieldKind.money:
         return const TextInputType.numberWithOptions(decimal: true, signed: true);
+      // An amount is never negative: no minus key (audit MOB-UX-025).
+      case FieldKind.money:
+        return const TextInputType.numberWithOptions(decimal: true);
+      case FieldKind.phone:
+        return TextInputType.phone;
+      case FieldKind.pincode:
+        return TextInputType.number;
       case FieldKind.email:
         return TextInputType.emailAddress;
       case FieldKind.multiline:
@@ -325,21 +332,64 @@ class _SpecFormState extends State<SpecForm> {
             keyboardType: _keyboard(f.kind),
             minLines: f.kind == FieldKind.multiline ? 3 : 1,
             maxLines: f.kind == FieldKind.multiline ? 6 : 1,
-            textCapitalization: (f.kind == FieldKind.pan || f.kind == FieldKind.upper) ? TextCapitalization.characters : TextCapitalization.none,
+            // The keyboard's action moves to the next field (audit MOB-UX-025).
+            textInputAction: f.kind == FieldKind.multiline ? TextInputAction.newline : TextInputAction.next,
+            textCapitalization: switch (f.kind) {
+              FieldKind.pan || FieldKind.upper => TextCapitalization.characters,
+              FieldKind.multiline => TextCapitalization.sentences,
+              _ => TextCapitalization.none,
+            },
+            autofillHints: switch (f.kind) {
+              FieldKind.phone => const [AutofillHints.telephoneNumber],
+              FieldKind.email => const [AutofillHints.email],
+              FieldKind.pincode => const [AutofillHints.postalCode],
+              _ => null,
+            },
+            inputFormatters: switch (f.kind) {
+              FieldKind.pincode => [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+              FieldKind.aadhaar => [FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')), LengthLimitingTextInputFormatter(14)],
+              FieldKind.phone => [FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ()-]')), LengthLimitingTextInputFormatter(20)],
+              _ => null,
+            },
             onChanged: (v) => _set(f.key, v),
           ),
         );
     }
   }
 
+  final _fieldKeys = <String, GlobalKey>{};
+
+  @override
+  void didUpdateWidget(covariant SpecForm old) {
+    super.didUpdateWidget(old);
+    // A failed submit brings the first field with an error into view, rather than leaving the
+    // person at the bottom of a long form looking for it (audit MOB-UX-027).
+    if (widget.errors.isNotEmpty && !_sameKeys(old.errors, widget.errors)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        for (final f in widget.spec.fields) {
+          final ctx = widget.errors.containsKey(f.key) ? _fieldKeys[f.key]?.currentContext : null;
+          if (ctx != null) {
+            Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 250), alignment: 0.1);
+            break;
+          }
+        }
+      });
+    }
+  }
+
+  static bool _sameKeys(Map<String, String> a, Map<String, String> b) => identical(a, b) || (a.length == b.length && a.keys.every(b.containsKey));
+
   @override
   Widget build(BuildContext context) {
     final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && (!f.editOnly || widget.editing) && fieldVisible(f, widget.values));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final f in visible) ...[_input(f), const SizedBox(height: 14)],
-      ],
+    return AutofillGroup(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final f in visible) ...[KeyedSubtree(key: _fieldKeys.putIfAbsent(f.key, GlobalKey.new), child: _input(f)), const SizedBox(height: 14)],
+        ],
+      ),
     );
   }
 }

@@ -59,22 +59,6 @@ class EmployeeHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
-  Timer? _ticker;
-
-  @override
-  void initState() {
-    super.initState();
-    // Drives the live "worked today" clock; cheap, only this screen rebuilds.
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _ticker?.cancel();
-    super.dispose();
-  }
 
   void _refreshAll(String employeeId, TodayKey key) {
     ref.read(unreadCountProvider.notifier).refresh();
@@ -694,6 +678,46 @@ class _Legend extends StatelessWidget {
   }
 }
 
+/// Rebuilds [builder] every second while [running]; otherwise builds once.
+class _Ticking extends StatefulWidget {
+  const _Ticking({required this.running, required this.builder});
+  final bool running;
+  final WidgetBuilder builder;
+
+  @override
+  State<_Ticking> createState() => _TickingState();
+}
+
+class _TickingState extends State<_Ticking> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(covariant _Ticking old) {
+    super.didUpdateWidget(old);
+    if (old.running != widget.running) _sync();
+  }
+
+  void _sync() {
+    _timer?.cancel();
+    _timer = widget.running ? Timer.periodic(const Duration(seconds: 1), (_) => setState(() {})) : null;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
+}
+
 /// The "worked today" card: status line, live clock, progress, and the punch button.
 class _PunchCard extends StatelessWidget {
   const _PunchCard({required this.state, required this.data, required this.zone, required this.shift, required this.canPunch, required this.faceKnown, required this.onPunch, required this.onRetry});
@@ -737,16 +761,50 @@ class _PunchCard extends StatelessWidget {
     return ins.isEmpty ? null : formatClock24(ins.first, zone);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final kind = state.kind;
-    final loading = kind == TodayStateKind.loading;
+  /// The clock, remaining time and progress bar. Only this part rebuilds each second, and only
+  /// while punched in; the rest of Home stays still (audit MOB-UX-023).
+  Widget _worked(BuildContext context) {
+    final loading = state.kind == TodayStateKind.loading;
     final secs = _workedSeconds();
     final scheduled = (state.day?.raw['scheduled_minutes'] as num?)?.toInt();
     final remainingMin = scheduled == null ? null : (scheduled - secs ~/ 60).clamp(0, scheduled);
     final progress = scheduled == null || scheduled == 0 ? 0.0 : (secs / 60 / scheduled).clamp(0.0, 1.0);
     String two(int n) => n.toString().padLeft(2, '0');
     final clock = '${two(secs ~/ 3600)}:${two(secs % 3600 ~/ 60)}:${two(secs % 60)}';
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('WORKED TODAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Dd.muted, letterSpacing: 0.6)),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                Text(loading ? '--:--:--' : clock, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Dd.navy, fontFeatures: [FontFeature.tabularFigures()])),
+                const SizedBox(width: 6),
+                const Text('hrs', style: TextStyle(fontSize: 13, color: Dd.blue, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          const Text('Remaining', style: TextStyle(fontSize: 11.5, color: Dd.muted, fontWeight: FontWeight.w500)),
+          Text(remainingMin == null ? '—' : '${remainingMin ~/ 60}h ${remainingMin % 60}m', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Dd.blue)),
+        ]),
+      ]),
+      const SizedBox(height: 14),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: LinearProgressIndicator(value: progress, minHeight: 6, backgroundColor: const Color(0xFFE3E8F2), valueColor: const AlwaysStoppedAnimation(Dd.navy)),
+      ),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = state.kind;
+    final loading = kind == TodayStateKind.loading;
 
     final (Color dot, String status) = switch (kind) {
       TodayStateKind.punchedIn => (Dd.green, 'Punched in${_since() == null ? '' : ' · Since ${_since()}'}'),
@@ -760,6 +818,7 @@ class _PunchCard extends StatelessWidget {
     };
 
     final dir = state.likely == LikelyPunch.punchOut ? 'OUT' : 'IN';
+    final other = dir == 'IN' ? 'OUT' : 'IN';
     final caption = state.likely == LikelyPunch.punchOut ? 'Punch out when you finish your shift' : 'Punch in to start your shift';
 
     return DdCard(
@@ -778,32 +837,7 @@ class _PunchCard extends StatelessWidget {
             child: TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
           ),
         const SizedBox(height: 18),
-        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('WORKED TODAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Dd.muted, letterSpacing: 0.6)),
-              const SizedBox(height: 4),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                  Text(loading ? '--:--:--' : clock, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Dd.navy, fontFeatures: [FontFeature.tabularFigures()])),
-                  const SizedBox(width: 6),
-                  const Text('hrs', style: TextStyle(fontSize: 13, color: Dd.blue, fontWeight: FontWeight.w600)),
-                ]),
-              ),
-            ]),
-          ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            const Text('Remaining', style: TextStyle(fontSize: 11.5, color: Dd.muted, fontWeight: FontWeight.w500)),
-            Text(remainingMin == null ? '—' : '${remainingMin ~/ 60}h ${remainingMin % 60}m', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Dd.blue)),
-          ]),
-        ]),
-        const SizedBox(height: 14),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(value: progress, minHeight: 6, backgroundColor: const Color(0xFFE3E8F2), valueColor: const AlwaysStoppedAnimation(Dd.navy)),
-        ),
+        _Ticking(running: kind == TodayStateKind.punchedIn, builder: _worked),
         if (canPunch) ...[
           const SizedBox(height: 16),
           Consumer(builder: (context, ref, _) {
@@ -822,7 +856,14 @@ class _PunchCard extends StatelessWidget {
                   label: Text(busy ? (punch.faceBusy ? 'Verifying…' : 'Recording punch…') : label),
                 ),
               ),
-              const SizedBox(height: 10),
+              // The other direction stays one tap away, as on the Attendance tab: if today's state
+              // is wrong (a forgotten punch-out), Home must not offer only the wrong one
+              // (audit MOB-UX-020).
+              if (!loading)
+                TextButton(
+                  onPressed: enabled ? () => onPunch(other) : null,
+                  child: Text('${punch.faceRequired && other == 'IN' ? 'Face punch' : 'Punch'} ${other == 'IN' ? 'in' : 'out'} instead'),
+                ),
               Text(faceKnown ? caption : 'Checking your punch options…', style: const TextStyle(fontSize: 12, color: Dd.ink, fontWeight: FontWeight.w500)),
             ]);
           }),

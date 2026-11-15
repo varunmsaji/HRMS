@@ -107,8 +107,10 @@ class CompanyBadge extends StatelessWidget {
 
 /// One headline figure: icon disc, small caps label, large value, one-line hint.
 class StatTile extends StatelessWidget {
-  const StatTile({super.key, required this.icon, required this.label, required this.value, this.hint, this.accent = dashBlue});
+  const StatTile({super.key, required this.icon, required this.label, required this.value, this.hint, this.accent = dashBlue, this.onTap});
 
+  /// Opens the list behind the figure (Present Today -> Team attendance).
+  final VoidCallback? onTap;
   final IconData icon;
   final String label;
   final String value;
@@ -119,9 +121,9 @@ class StatTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = EmployeeTokens.of(context);
     final theme = Theme.of(context);
-    return Container(
+    final radius = BorderRadius.circular(16);
+    final content = Padding(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: t.sheet, borderRadius: BorderRadius.circular(16), border: Border.all(color: t.line)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Container(
           width: 36,
@@ -135,6 +137,12 @@ class StatTile extends StatelessWidget {
         FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(value, style: theme.textTheme.headlineSmall?.copyWith(color: t.ink, fontWeight: FontWeight.w800))),
         if (hint != null) Text(hint!, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: t.inkSecondary)),
       ]),
+    );
+    return Material(
+      color: t.sheet,
+      shape: RoundedRectangleBorder(borderRadius: radius, side: BorderSide(color: t.line)),
+      clipBehavior: Clip.antiAlias,
+      child: onTap == null ? content : InkWell(onTap: onTap, child: Semantics(button: true, child: content)),
     );
   }
 }

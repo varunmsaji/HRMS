@@ -56,7 +56,7 @@ FormSpec branchSpec() => FormSpec(name: 'branch', label: 'Branch', fields: [
       const FieldSpec('address_line2', 'Address line 2'),
       const FieldSpec('city', 'City'),
       const FieldSpec('state_code', 'State code'),
-      const FieldSpec('pincode', 'PIN code'),
+      const FieldSpec('pincode', 'PIN code', kind: FieldKind.pincode),
       FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allTimeZones(), hint: "Leave unset to inherit the company's timezone."),
       const FieldSpec('latitude', 'Latitude', kind: FieldKind.decimal),
       const FieldSpec('longitude', 'Longitude', kind: FieldKind.decimal),

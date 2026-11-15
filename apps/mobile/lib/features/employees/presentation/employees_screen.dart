@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
@@ -113,6 +114,13 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     } finally {
       if (mounted && mine == _request) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshRow(String id) async {
+    try {
+      final fresh = await _repo.getEmployee(id);
+      if (mounted) setState(() => _items = [for (final e in _items) e.id == id ? fresh : e]);
+    } catch (_) {}
   }
 
   Future<void> _loadMore() async {
@@ -296,7 +304,9 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
             trailing: employee.isActive ? StatusChip.status(employee.status) : const StatusChip(label: 'Inactive'),
             onTap: () async {
               await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
-              _load();
+              // Only the person opened is re-read, in place: the loaded pages and the scroll
+              // position stay (audit MOB-UX-010).
+              _refreshRow(employee.id);
               _loadSummary();
             },
           );
@@ -536,6 +546,11 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     }
   }
 
+  Future<void> _contact(Uri uri) async {
+    final ok = await launchUrl(uri).catchError((_) => false);
+    if (!ok && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No app on this phone can open that.')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
@@ -550,17 +565,33 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
       ('Documents', EmployeeDocumentsPanel(employeeId: e.id)),
       if (permissions.contains(attendanceView)) ('Attendance', EmployeeAttendancePanel(employeeId: e.id, employeeLabel: e.fullName.isEmpty ? e.employeeCode : e.fullName)),
     ];
+    final mobile = e.personalMobile?.trim() ?? '';
+    final email = e.personalEmail?.trim() ?? '';
     final actions = <Widget>[
+      // Reaching the person is the most common reason to open a record on a phone (MOB-UX-046).
+      if (mobile.isNotEmpty) OutlinedButton.icon(icon: const Icon(Icons.call_outlined), label: const Text('Call'), onPressed: () => _contact(Uri(scheme: 'tel', path: mobile.replaceAll(' ', '')))),
+      if (email.isNotEmpty) OutlinedButton.icon(icon: const Icon(Icons.mail_outline_rounded), label: const Text('Email'), onPressed: () => _contact(Uri(scheme: 'mailto', path: email))),
       if (permissions.contains(employeeUpdate)) FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),
-      if (permissions.contains(employeeConfirm) && e.status == 'PROBATION') OutlinedButton(onPressed: _busy ? null : _confirmProbation, child: const Text('Confirm')),
+      // "Confirm" alone could mean anything (MOB-UX-045).
+      if (permissions.contains(employeeConfirm) && e.status == 'PROBATION') OutlinedButton(onPressed: _busy ? null : _confirmProbation, child: const Text('Confirm employment')),
       if (permissions.contains(employeeInvite)) OutlinedButton(onPressed: _busy ? null : _invite, child: const Text('Invite')),
-      if (permissions.contains(employeeDeactivate)) OutlinedButton(onPressed: _busy ? null : _toggleActive, child: Text(e.isActive ? 'Deactivate' : 'Reactivate')),
     ];
     return DefaultTabController(
       length: sections.length + extraTabs.length + 1,
       child: Scaffold(
         appBar: AppBar(
           title: Text(e.fullName.isEmpty ? e.employeeCode : e.fullName),
+          // Deactivating is kept away from Edit, in the overflow menu (audit MOB-UX-045). It still
+          // asks before it acts.
+          actions: [
+            if (permissions.contains(employeeDeactivate))
+              PopupMenuButton<String>(
+                tooltip: 'More actions',
+                enabled: !_busy,
+                onSelected: (_) => _toggleActive(),
+                itemBuilder: (_) => [PopupMenuItem(value: 'active', child: Text(e.isActive ? 'Deactivate employee' : 'Reactivate employee'))],
+              ),
+          ],
           bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,

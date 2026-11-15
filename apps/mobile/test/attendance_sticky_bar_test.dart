@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
+import 'package:hrms_mobile/core/time.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_self_screen.dart';
@@ -14,6 +15,7 @@ import 'support/test_themes.dart';
 
 class _Repo implements AttendanceRepository {
   List<Punch> punches = [];
+  List<AttendanceDay> days = [];
   Completer<void>? faceGate;
   var punchReads = 0;
   final punched = <String>[];
@@ -28,7 +30,7 @@ class _Repo implements AttendanceRepository {
   Future<GeofencePolicyMe> getMyGeofencePolicy() async => GeofencePolicyMe.disabled;
 
   @override
-  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => [];
+  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => days;
 
   @override
   Future<List<Punch>> listPunches({required String employeeId, required String dateFrom, required String dateTo}) async {
@@ -64,6 +66,20 @@ void main() {
     final barTop = tester.getTopLeft(find.text('Punch in')).dy;
     expect(panelTop, lessThan(monthTop));
     expect(barTop, greaterThan(monthTop));
+  });
+
+  testWidgets('on a leave day the bar is one line, and Punch anyway brings the buttons back (MOB-UX-021)', (tester) async {
+    final today = businessToday('Asia/Kolkata');
+    final repo = _Repo()
+      ..days = [
+        AttendanceDay.fromJson({'id': 'd-1', 'employee_id': 'e-1', 'attendance_date': today, 'attendance_status': 'LEAVE', 'timezone': 'Asia/Kolkata', 'worked_minutes': 0, 'is_locked': false, 'calculated_at': DateTime.now().toUtc().toIso8601String()}),
+      ];
+    await _pump(tester, repo);
+    expect(find.text('You\'re on leave today.'), findsOneWidget);
+    expect(find.text('Punch in'), findsNothing);
+    await tester.tap(find.text('Punch anyway'));
+    await tester.pumpAndSettle();
+    expect(find.text('Punch in'), findsOneWidget);
   });
 
   testWidgets('after an IN the likely action is Punch out, with Punch in still reachable', (tester) async {

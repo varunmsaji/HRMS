@@ -102,7 +102,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Edit draft'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, '10'), '15');
-    await tester.drag(find.byType(ListView).last, const Offset(0, -20000));
+    // Save is pinned below the form: no scrolling needed (MOB-UX-027).
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
     await tester.pumpAndSettle();

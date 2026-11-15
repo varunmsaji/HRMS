@@ -169,28 +169,48 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
       appBar: AppBar(title: Text(widget.title)),
       body: _loading
           ? const ListSkeleton(count: 4)
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                if (widget.intro != null) Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(widget.intro!)),
-                if (_banner != null) ...[InlineAlert(message: _banner!), const SizedBox(height: 16)],
-                SpecForm(
-                  spec: widget.spec,
-                  values: _values,
-                  errors: _errors,
-                  choices: _choices,
-                  unavailable: _unavailable,
-                  editing: _editing,
-                  readOnly: _saving,
-                  onChanged: () => setState(() => _dirty = true),
+          : Column(children: [
+              Expanded(
+                // Not a lazy ListView: the whole form stays built, so a failed submit can bring any
+                // field into view.
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    if (widget.intro != null) Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(widget.intro!)),
+                    if (_banner != null) ...[InlineAlert(message: _banner!), const SizedBox(height: 16)],
+                    SpecForm(
+                      spec: widget.spec,
+                      values: _values,
+                      errors: _errors,
+                      choices: _choices,
+                      unavailable: _unavailable,
+                      editing: _editing,
+                      readOnly: _saving,
+                      onChanged: () => setState(() => _dirty = true),
+                    ),
+                  ]),
                 ),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: _saving ? null : _submit,
-                  child: Text(_saving ? 'Saving…' : (widget.submitLabel ?? (_editing ? 'Save changes' : 'Create'))),
+              ),
+              // Pinned below the fields and above the keyboard, so a long form never has to be
+              // scrolled to the end to submit it (audit MOB-UX-027).
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 3,
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _saving ? null : _submit,
+                        child: Text(_saving ? 'Saving…' : (widget.submitLabel ?? (_editing ? 'Save changes' : 'Create'))),
+                      ),
+                    ),
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ]),
       ),
     );
   }

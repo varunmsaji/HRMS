@@ -87,12 +87,20 @@ void main() {
     });
 
     testWidgets('an administrator with broad grants sees the full structure', (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await _pump(tester, [
         dashboardCompanyView, employeeViewAll, attendanceViewAll, attendanceView, leaveBalanceView, payrollPayslipViewOwn,
         orgCompanyManage, orgDepartmentManage, settingsUserManage, payrollRunView, //
       ]);
       expect(_t('Quick links'), findsOneWidget);
       expect(_t('Employees'), findsOneWidget);
+      // Configuration is folded under one row until opened (MOB-UX-009).
+      expect(_t('Departments'), findsNothing);
+      await tester.tap(_t('Company setup'));
+      await tester.pumpAndSettle();
+      expect(_t('Departments'), findsOneWidget);
       await _search(tester, 'Departments');
       expect(_t('Departments'), findsOneWidget);
       await _search(tester, 'Payroll');

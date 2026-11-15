@@ -44,6 +44,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   List<LeaveApplication> _rows = const [];
   int _page = 1;
   bool _hasMore = false;
+  bool _moreFailed = false;
   bool _decisions = false;
   int _decisionsKey = 0;
   List<Choice> _employees = const [];
@@ -124,7 +125,10 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   }
 
   Future<void> _more() async {
-    setState(() => _loadingMore = true);
+    setState(() {
+      _loadingMore = true;
+      _moreFailed = false;
+    });
     try {
       final r = await _fetch(_page + 1);
       if (mounted) {
@@ -135,6 +139,8 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
         });
       }
     } catch (_) {
+      // Said at the end of the list, with a retry (audit MOB-UX-036).
+      if (mounted) setState(() => _moreFailed = true);
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -164,6 +170,18 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
         _status.isEmpty ? 'All statuses' : (leaveApplicationStatusLabels[_status] ?? _status),
         if (_team && _employee.isNotEmpty) _employeeName(_employee),
       ].join(' · ');
+
+  /// Back from a request: re-reads only that one and updates it where it is, keeping the loaded
+  /// pages and the scroll position (audit MOB-UX-010). Balances may have moved too.
+  Future<void> _refreshRow(String id) async {
+    _loadBalances();
+    try {
+      final fresh = await ref.read(leaveRepositoryProvider).getLeaveApplication(id);
+      if (mounted) setState(() => _rows = [for (final r in _rows) r.id == id ? fresh : r]);
+    } catch (_) {
+      // Keep the row as it was; pull to refresh reloads everything.
+    }
+  }
 
   String _title(LeaveApplication a) {
     final type = _typeNames[a.leaveTypeId] ?? 'Leave';
@@ -257,11 +275,16 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                                 trailing: _StatusChip(status: a.status),
                                 onTap: () async {
                                   await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a));
-                                  _load();
+                                  _refreshRow(a.id);
                                 },
                               ),
                             ),
-                          if (_hasMore) Center(child: TextButton(onPressed: _loadingMore ? null : _more, child: Text(_loadingMore ? 'Loading…' : 'Load more'))),
+                          if (_hasMore)
+                            Center(
+                              child: _moreFailed
+                                  ? TextButton.icon(onPressed: _more, icon: const Icon(Icons.refresh_rounded), label: const Text('Couldn\'t load more · Try again'))
+                                  : TextButton(onPressed: _loadingMore ? null : _more, child: Text(_loadingMore ? 'Loading…' : 'Load more')),
+                            ),
                         ],
                       ),
                     ),

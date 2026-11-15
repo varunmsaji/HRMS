@@ -23,6 +23,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   bool _unreadOnly = false;
   bool _loading = true;
   bool _loadingMore = false;
+  bool _moreFailed = false;
   bool _hasMore = false;
   int _page = 1;
   String? _error;
@@ -67,7 +68,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
   Future<void> _loadMore() async {
     if (_loadingMore || !_hasMore || _loading) return;
-    setState(() => _loadingMore = true);
+    setState(() {
+      _loadingMore = true;
+      _moreFailed = false;
+    });
     try {
       final env = await ref.read(notificationRepositoryProvider).list(page: _page + 1, perPage: _perPage, unreadOnly: _unreadOnly);
       if (!mounted) return;
@@ -78,7 +82,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         _hasMore = env.pagination != null && env.pagination!.page < env.pagination!.totalPages;
       });
     } catch (_) {
-      // Keep what is shown; the next scroll retries.
+      // Keep what is shown and say so at the end of the list (audit MOB-UX-036).
+      if (mounted) setState(() => _moreFailed = true);
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -163,10 +168,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           : ListView.separated(
               controller: _scroll,
               physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: _items.length + (_loadingMore ? 1 : 0),
+              itemCount: _items.length + (_loadingMore || _moreFailed ? 1 : 0),
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, i) => i == _items.length
-                  ? const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+                  ? (_moreFailed
+                      ? Center(child: TextButton.icon(onPressed: _loadMore, icon: const Icon(Icons.refresh_rounded), label: const Text('Couldn\'t load more · Try again')))
+                      : const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())))
                   : _NotificationTile(notification: _items[i], onTap: () => _open(_items[i])),
             ),
     );
