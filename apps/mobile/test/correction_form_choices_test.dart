@@ -40,7 +40,7 @@ Future<void> _pump(WidgetTester tester, FakeApiClient api, {List<String> permiss
 }
 
 Future<void> _openForm(WidgetTester tester) async {
-  await tester.tap(find.text('Regularization request'));
+  await tester.tap(find.text('Attendance correction'));
   await tester.pumpAndSettle();
 }
 
@@ -116,7 +116,7 @@ void main() {
       failing: {'/employees': ApiError(status: 500, code: 'X', message: 'no employees')},
     );
     await _pump(tester, api, permissions: const [attendanceRegularizationRequest, attendanceRegularizationApprove, attendanceRegularizationRequestOnBehalf]);
-    await tester.tap(find.text('Regularization request on behalf'));
+    await tester.tap(find.text('Attendance correction on behalf'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Could not load the options'), findsOneWidget);
   });

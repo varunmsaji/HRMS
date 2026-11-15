@@ -13,6 +13,7 @@ import 'package:hrms_mobile/features/leave/presentation/leave_applications_scree
 
 import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';
+import 'support/test_themes.dart';
 
 Map<String, dynamic> _app({String id = 'a1', String status = 'SUBMITTED', String employeeId = 'emp-2', String start = '2099-01-10', String end = '2099-01-11', int version = 3, String? stage = 'MANAGER', String? submittedBy, num lop = 0}) => {
       'id': id,
@@ -108,6 +109,8 @@ Future<void> _pump(WidgetTester tester, _FakeLeave repo, List<String> permission
 }
 
 void main() {
+  setUpAll(primeThemes);
+
   group('apply form rules', () {
     final self = leaveApplicationSpec(onBehalf: false);
     Map<String, dynamic> v(Map<String, dynamic> over) => rowFromWire(self, {'leave_type_id': 'lt-1', 'start_date': '2026-10-05', 'end_date': '2026-10-06', ...over});
@@ -160,7 +163,10 @@ void main() {
     testWidgets('the status filter is sent as application_status', (tester) async {
       final repo = _FakeLeave([_app()]);
       await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());
+      await tester.tap(find.text('Filter'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, 'Approved'));
+      await tester.tap(find.text('Show results'));
       await tester.pumpAndSettle();
       expect(repo.calls.last, contains(':APPROVED:'));
     });
@@ -170,9 +176,9 @@ void main() {
       await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());
       await tester.tap(find.text('Apply for leave'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Submit request'));
       await tester.pumpAndSettle();
-      expect(find.text('Leave type is required.'), findsOneWidget);
+      expect(find.text('Choose a leave type.'), findsOneWidget);
       expect(repo.calls.where((c) => c.startsWith('submit')), isEmpty);
     });
   });
@@ -219,16 +225,22 @@ void main() {
       expect(repo.calls.last, 'approve:3::lop=true');
     });
 
-    testWidgets('rejecting sends the comment and reason', (tester) async {
+    testWidgets('rejecting asks for one reason, required, and sends it as the rejection reason', (tester) async {
       final repo = _FakeLeave([_app()]);
       await _pump(tester, repo, [leaveApplicationApprove], const LeaveApplicationDetailScreen(applicationId: 'a1'));
       await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, 'Sorry');
-      await tester.enterText(find.byType(TextField).last, 'Peak season');
+      expect(find.byType(TextField), findsOneWidget, reason: 'one field, not a comment and a reason');
+
       await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
       await tester.pumpAndSettle();
-      expect(repo.calls.last, 'reject:3:Sorry:Peak season');
+      expect(find.text('Give the employee a reason.'), findsOneWidget);
+      expect(repo.calls.where((c) => c.startsWith('reject')), isEmpty);
+
+      await tester.enterText(find.byType(TextField), 'Peak season');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
+      await tester.pumpAndSettle();
+      expect(repo.calls.last, 'reject:3::Peak season');
     });
 
     testWidgets('the owner can withdraw a submitted application', (tester) async {

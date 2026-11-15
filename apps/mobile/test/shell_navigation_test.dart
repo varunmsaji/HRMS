@@ -54,12 +54,12 @@ void main() {
   group('employee surface', () {
     const employee = [attendancePunch, attendanceView];
 
-    testWidgets('has the employee tab icons: dashboard grid, fingerprint, event_available, account circle', (tester) async {
+    testWidgets('has the shared tab icons: home, fingerprint, event_available, account circle', (tester) async {
       await _pump(tester, employee);
       final icons = [for (final d in _bar(tester).destinations.cast<NavigationDestination>()) (d.icon as Icon).icon];
-      expect(icons, [Icons.grid_view_outlined, Icons.fingerprint_rounded, Icons.event_available_outlined, Icons.account_circle_outlined]);
+      expect(icons, [Icons.home_outlined, Icons.fingerprint_rounded, Icons.event_available_outlined, Icons.account_circle_outlined]);
       final selected = [for (final d in _bar(tester).destinations.cast<NavigationDestination>()) (d.selectedIcon as Icon).icon];
-      expect(selected, [Icons.grid_view_rounded, Icons.fingerprint_rounded, Icons.event_available_rounded, Icons.account_circle_rounded]);
+      expect(selected, [Icons.home_rounded, Icons.fingerprint_rounded, Icons.event_available_rounded, Icons.account_circle_rounded]);
     });
 
     testWidgets('selected tab follows the branch', (tester) async {
@@ -70,7 +70,7 @@ void main() {
       expect(find.text('LEAVE PAGE'), findsOneWidget);
       await _tapTab(tester, 'Profile');
       expect(_bar(tester).selectedIndex, 3);
-      await _tapTab(tester, 'Dashboard');
+      await _tapTab(tester, 'Home');
       expect(_bar(tester).selectedIndex, 0);
     });
 
@@ -113,11 +113,11 @@ void main() {
   group('administrator is unchanged', () {
     const admin = [dashboardCompanyView];
 
-    testWidgets('keeps the dashboard glyph and the shadow', (tester) async {
+    testWidgets('uses the same Home and Leave glyphs as employees, and keeps the shadow', (tester) async {
       await _pump(tester, admin);
       final first = _bar(tester).destinations.first as NavigationDestination;
-      expect((first.icon as Icon).icon, Icons.space_dashboard_outlined);
-      expect(((_bar(tester).destinations[2] as NavigationDestination).icon as Icon).icon, Icons.beach_access_outlined);
+      expect((first.icon as Icon).icon, Icons.home_outlined);
+      expect(((_bar(tester).destinations[2] as NavigationDestination).icon as Icon).icon, Icons.event_available_outlined);
       final box = tester.widget<DecoratedBox>(find.ancestor(of: find.byType(NavigationBar), matching: find.byType(DecoratedBox)).first);
       expect((box.decoration as BoxDecoration).boxShadow, isNotEmpty);
     });
@@ -132,7 +132,7 @@ void main() {
   group('user without an employee record', () {
     testWidgets('keeps the admin chrome and the platform Back behaviour', (tester) async {
       await _pump(tester, const [], employeeId: null);
-      expect(((_bar(tester).destinations.first as NavigationDestination).icon as Icon).icon, Icons.space_dashboard_outlined);
+      expect(((_bar(tester).destinations.first as NavigationDestination).icon as Icon).icon, Icons.home_outlined);
       expect(await tester.binding.handlePopRoute(), isFalse);
     });
   });

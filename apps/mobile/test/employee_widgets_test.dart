@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
 import 'package:hrms_mobile/core/widgets/employee/employee_status_chip.dart';
-import 'package:hrms_mobile/core/widgets/employee/filter_sheet.dart';
 import 'package:hrms_mobile/core/widgets/employee/interaction.dart';
 import 'package:hrms_mobile/core/widgets/employee/layout.dart';
 import 'package:hrms_mobile/core/widgets/employee/leave_balance_strip.dart';
@@ -57,7 +56,7 @@ void main() {
           ]),
         );
         expect(tester.takeException(), isNull);
-        expect(find.text('Submitted'), findsOneWidget);
+        expect(find.text('Awaiting approval'), findsOneWidget);
       });
 
       testWidgets('status header and empty state', (tester) async {
@@ -139,44 +138,6 @@ void main() {
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
       expect(result, isTrue);
-    });
-  });
-
-  group('filter sheet', () {
-    testWidgets('Apply returns the chosen status; Clear returns an empty filter; caption describes it', (tester) async {
-      EmployeeFilter? out;
-      await tester.pumpWidget(employeeHarness(Builder(
-        builder: (ctx) => TextButton(
-          onPressed: () async => out = await showEmployeeFilterSheet(ctx, initial: const EmployeeFilter(dateFrom: '2026-10-01'), statuses: const {'SUBMITTED': 'Submitted', 'APPROVED': 'Approved'}),
-          child: const Text('open'),
-        ),
-      )));
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Submitted'));
-      await tester.tap(find.text('Apply'));
-      await tester.pumpAndSettle();
-      expect(out, const EmployeeFilter(dateFrom: '2026-10-01', status: 'SUBMITTED'));
-      expect(out!.caption(statusLabels: const {'SUBMITTED': 'Submitted'}), '2026-10-01 – … · Submitted');
-
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Clear'));
-      await tester.pumpAndSettle();
-      expect(out, const EmployeeFilter());
-      expect(out!.caption(), 'All dates · All statuses');
-    });
-
-    testWidgets('dismissing returns null (keep the current filter)', (tester) async {
-      EmployeeFilter? out = const EmployeeFilter(status: 'X');
-      await tester.pumpWidget(employeeHarness(Builder(
-        builder: (ctx) => TextButton(onPressed: () async => out = await showEmployeeFilterSheet(ctx, initial: const EmployeeFilter()), child: const Text('open')),
-      )));
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-      await tester.tapAt(const Offset(10, 10));
-      await tester.pumpAndSettle();
-      expect(out, isNull);
     });
   });
 

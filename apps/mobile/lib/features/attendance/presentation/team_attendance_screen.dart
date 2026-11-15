@@ -8,7 +8,9 @@ import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
+import '../../../core/format.dart';
 import '../../../core/time.dart';
+import '../../../core/widgets/list_filter.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/punch_form.dart';
@@ -18,6 +20,23 @@ import 'attendance_widgets.dart';
 import '../../../core/widgets/ui.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
+
+/// The words for [attendanceStatuses], matching the employee surface's (`status_map.dart`).
+const attendanceStatusLabels = {
+  'NOT_JOINED': 'Not joined yet',
+  'EXITED': 'Left the company',
+  'NOT_EXPECTED': 'Not expected',
+  'PRESENT': 'Present',
+  'HALF_DAY': 'Half day',
+  'ABSENT': 'Absent',
+  'LEAVE': 'On leave',
+  'ON_DUTY': 'On duty',
+  'WFH': 'Work from home',
+  'INCOMPLETE': 'Incomplete',
+  'CONFIG_ERROR': 'Needs attention',
+};
+
+const _exceptionLabels = [('missing_punch', 'Missing punch'), ('config_error', 'Needs attention'), ('pending_approval', 'Awaiting approval')];
 
 /// Opens the on-behalf punch form. Pass [employeeId] to lock the employee.
 Future<bool> openPunchOnBehalf(BuildContext context, WidgetRef ref, {String? employeeId}) {
@@ -52,10 +71,11 @@ class TeamAttendanceScreen extends ConsumerStatefulWidget {
 
 class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   late String _date;
-  String _employeeId = '';
-  String _status = '';
+  ListFilter _filter = const ListFilter();
+  String get _employeeId => _filter.employee;
+  String get _status => _filter.group('status');
+  Set<String> get _exceptions => _filter.multi('exceptions');
   String? _bucket;
-  final _exceptions = <String>{};
   bool _loading = true;
   ApiError? _error;
   List<AttendanceDay> _days = const [];
@@ -105,6 +125,31 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     _load();
   }
 
+  Future<void> _openFilter() async {
+    final next = await showListFilterSheet(
+      context,
+      initial: _filter,
+      defaults: const ListFilter(),
+      dates: false,
+      employees: _employees,
+      groups: [
+        FilterGroup(key: 'status', label: 'Status', options: [for (final st in attendanceStatuses) (st, attendanceStatusLabels[st] ?? st)]),
+        const FilterGroup(key: 'exceptions', label: 'Only days with', options: _exceptionLabels, multi: true),
+      ],
+    );
+    if (next == null || next == _filter || !mounted) return;
+    final reload = next.employee != _filter.employee;
+    setState(() => _filter = next);
+    if (reload) _load();
+  }
+
+  String _filterSummary() => [
+        _status.isEmpty ? 'Everyone' : (attendanceStatusLabels[_status] ?? _status),
+        for (final (key, label) in _exceptionLabels)
+          if (_exceptions.contains(key)) label,
+        if (_employeeId.isNotEmpty) _name(_employeeId),
+      ].join(' · ');
+
   bool _matches(AttendanceDay d, String key) => switch (key) {
         'missing_punch' => d.raw['missing_punch'] == true,
         'config_error' => d.attendanceStatus == 'CONFIG_ERROR',
@@ -147,39 +192,15 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
-            Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(onPressed: _pickDate, icon: const Icon(Icons.calendar_today_outlined, size: 18), label: Text(_date)),
+            ListFilterBar(
+              leading: OutlinedButton.icon(
+                onPressed: _pickDate,
+                icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                label: Text(_date == businessToday(_zone) ? 'Today' : formatDayDate(_date)),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _status,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Status', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-                  items: [const DropdownMenuItem(value: '', child: Text('All')), for (final s in attendanceStatuses) DropdownMenuItem(value: s, child: Text(s.replaceAll('_', ' ')))],
-                  onChanged: (v) => setState(() => _status = v ?? ''),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _employeeId,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Employee', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-              items: [const DropdownMenuItem(value: '', child: Text('All employees')), for (final e in _employees) DropdownMenuItem(value: e.value, child: Text(e.label))],
-              onChanged: (v) {
-                setState(() => _employeeId = v ?? '');
-                _load();
-              },
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(spacing: 6, children: [
-                for (final (key, label) in const [('missing_punch', 'Missing punch'), ('config_error', 'Config error'), ('pending_approval', 'Pending approval')])
-                  FilterChip(label: Text(label), selected: _exceptions.contains(key), onSelected: (v) => setState(() => v ? _exceptions.add(key) : _exceptions.remove(key))),
-              ]),
+              summary: _filterSummary(),
+              activeCount: _filter.countAgainst(const ListFilter()),
+              onTap: _openFilter,
             ),
           ]),
         ),
@@ -187,7 +208,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance", message: _error!.message, actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
@@ -195,7 +216,15 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                         children: [
                           if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() => _bucket = b)),
                           const SizedBox(height: 8),
-                          if (visible.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.groups_outlined, title: 'Nothing to show', message: 'No attendance days match these filters.')),
+                          if (visible.isEmpty)
+                            SizedBox(
+                              height: 300,
+                              child: StateMessage(
+                                icon: Icons.groups_outlined,
+                                title: _days.isEmpty ? 'No attendance for this day' : 'Nobody matches these filters',
+                                message: _days.isEmpty ? 'Attendance appears here once people punch in, or once the day is worked out. Pick another day above.' : 'Change them with Filter, or tap a figure above to clear it.',
+                              ),
+                            ),
                           for (final d in visible)
                             AttendanceDayTile(
                               day: d,

@@ -21,7 +21,7 @@ from hrms.core.errors.auth import AccountLockedError, InvalidCredentialsError
 from hrms.core.errors.base import NotFoundError, ValidationError
 from hrms.core.links import mobile_link
 from hrms.core.rbac.types import DataScope
-from hrms.modules.account_invite.email_templates import build_account_invite_email
+from hrms.modules.account_invite.email_templates import LoginDetails, build_account_invite_email
 from hrms.modules.account_invite.exceptions import (
     AccountCreationConflictError,
     AccountInviteInvalidError,
@@ -83,6 +83,7 @@ class AccountInviteService:
         user_agent: str | None = None,
         scope: DataScope | None = None,
         caller_employee_id: UUID | None = None,
+        send_email: bool = True,
     ) -> AccountInviteRead:
         """`POST /employees/{id}/invite` — path 2 of Decision P2: on-demand invite for an
         employee who already exists (created before this feature shipped, or via manual entry /
@@ -91,7 +92,10 @@ class AccountInviteService:
         B12 (OBS-HRA-01): the target must be visible under the caller's `EMPLOYEE.INVITE` scope.
         An out-of-scope, foreign or unknown id is the one `NotFoundError`, raised before any
         invite is revoked or issued and before any email is prepared. `scope=None` is the
-        internal mode (the activation auto-issue) and checks company ownership only."""
+        internal mode (the activation auto-issue) and checks company ownership only.
+
+        `send_email=False` issues the invite without emailing it: onboarding activation puts the
+        returned `invite_url` into its own welcome email instead of sending two emails."""
         from hrms.modules.employee.repository import EmployeeRepository
         from hrms.modules.employee.service import EmployeeService
         from hrms.modules.organisation.service import EMPLOYEE_ROLE_CODE
@@ -122,9 +126,11 @@ class AccountInviteService:
             employee_id=employee.id,
             role_code=EMPLOYEE_ROLE_CODE,
             first_name=employee.first_name,
+            employee_code=employee.employee_code,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            send_email=send_email,
         )
 
     async def issue_for_user(
@@ -160,6 +166,8 @@ class AccountInviteService:
         actor_user_id: UUID | None,
         ip_address: str | None,
         user_agent: str | None,
+        employee_code: str | None = None,
+        send_email: bool = True,
     ) -> AccountInviteRead:
         if role_code not in ASSIGNABLE_ROLE_CODES:
             raise InvalidRoleCodeError(role_code)
@@ -203,40 +211,22 @@ class AccountInviteService:
 
         invite_url = f"{self._settings.web_app_base_url}/accept-invite/{raw_token}"
 
-        # Cross-module read only, same lazy-import convention as `onboarding.send_invite`.
-        from hrms.modules.organisation.service import OrganisationService
-
-        organisation = OrganisationService(self._session, self._settings)
-        company = await organisation.get_company_profile(company_id)
-
-        subject, html_body, text_body = build_account_invite_email(
-            first_name=first_name,
-            company_name=company.name,
-            invite_url=invite_url,
-            mobile_url=mobile_link(self._settings, "accept-invite", raw_token),
-        )
         # B13: the email is written to the transactional outbox in THIS transaction and delivered
         # by a worker after it commits - a rollback leaves nothing to deliver, a crash after the
-        # commit cannot lose it. `queued` is False only if the outbox write itself failed; a
-        # provider failure later is retried by the worker and never changes this response. The
-        # admin always has `invite_url`.
+        # commit cannot lose it. `queued` is False only if the outbox write itself failed (or the
+        # caller asked for no email); a provider failure later is retried by the worker and never
+        # changes this response. The admin always has `invite_url`.
         queued = False
-        try:
-            queued = await queue_email_after_commit(
-                self._session,
-                get_email_sender(self._settings),
-                to=email,
-                subject=subject,
-                html_body=html_body,
-                text_body=text_body,
-                failure_kind="account_invite",
-                message_key=f"account_invite:{invite.id}",
-                company_id=str(company_id),
-                invite_id=str(invite.id),
-            )
-        except Exception as exc:  # noqa: BLE001 — a queueing failure must not fail the request
-            log_email_failure(
-                "account_invite", exc, company_id=str(company_id), invite_id=str(invite.id)
+        if send_email:
+            queued = await self._queue_invite_email(
+                company_id,
+                invite_id=invite.id,
+                email=email,
+                first_name=first_name,
+                employee_code=employee_code if employee_id is not None else None,
+                for_employee=employee_id is not None,
+                invite_url=invite_url,
+                raw_token=raw_token,
             )
 
         await self._audit.record(
@@ -260,6 +250,54 @@ class AccountInviteService:
             email_queued=queued,
             email_delivery_status="QUEUED" if queued else "NOT_QUEUED",
         )
+
+    async def _queue_invite_email(
+        self,
+        company_id: UUID,
+        *,
+        invite_id: UUID,
+        email: str,
+        first_name: str | None,
+        employee_code: str | None,
+        for_employee: bool,
+        invite_url: str,
+        raw_token: str,
+    ) -> bool:
+        # Cross-module read only, same lazy-import convention as `onboarding.send_invite`.
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session, self._settings).get_company_profile(
+            company_id
+        )
+        subject, html_body, text_body = build_account_invite_email(
+            first_name=first_name,
+            company_name=company.name,
+            invite_url=invite_url,
+            mobile_url=mobile_link(self._settings, "accept-invite", raw_token),
+            login=LoginDetails(
+                email=email, company_code=company.login_code, employee_code=employee_code
+            )
+            if for_employee
+            else None,
+        )
+        try:
+            return await queue_email_after_commit(
+                self._session,
+                get_email_sender(self._settings),
+                to=email,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                failure_kind="account_invite",
+                message_key=f"account_invite:{invite_id}",
+                company_id=str(company_id),
+                invite_id=str(invite_id),
+            )
+        except Exception as exc:  # noqa: BLE001 — a queueing failure must not fail the request
+            log_email_failure(
+                "account_invite", exc, company_id=str(company_id), invite_id=str(invite_id)
+            )
+            return False
 
     async def resolve(self, raw_token: str) -> PublicAccountInviteRead:
         """`GET /public/account-invites/{token}` — shown before the accept form. Deliberately

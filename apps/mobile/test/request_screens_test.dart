@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/format.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
@@ -68,27 +69,37 @@ void main() {
       final call = api.listCalls.firstWhere((c) => c.path == '/regularizations');
       expect(call.filters!['employee_id'], 'emp-1');
       expect(DateTime.parse(call.filters!['date_to'] as String).difference(DateTime.parse(call.filters!['date_from'] as String)).inDays, 30);
-      expect(find.text('Missing punch · 2026-10-01'), findsOneWidget);
+      expect(find.text('Missed a punch (in or out) · ${formatDayDate('2026-10-01')}'), findsOneWidget);
       expect(find.text('Team'), findsNothing);
+    });
+
+    testWidgets('an open request stays in view however old it is: it is asked for without dates', (tester) async {
+      final api = _api(rows: [_reg(employeeId: 'emp-1')]);
+      await _pump(tester, api, [attendanceRegularizationRequest], RequestListScreen(config: regularizationConfig));
+      final calls = api.listCalls.where((c) => c.path == '/regularizations').toList();
+      expect(calls, hasLength(2));
+      expect(calls[1].filters, {'employee_id': 'emp-1', 'request_status': 'SUBMITTED'});
+      expect(find.text('Missed a punch (in or out) · ${formatDayDate('2026-10-01')}'), findsOneWidget, reason: 'the same request from both reads is shown once');
+      expect(find.text('Last 30 days, plus anything awaiting approval'), findsOneWidget);
     });
 
     testWidgets('an approver starts on Team, with the employee named, and can narrow by type and status', (tester) async {
       final api = _api(rows: [_reg()]);
       await _pump(tester, api, [attendanceRegularizationApprove], RequestListScreen(config: regularizationConfig));
       expect(api.listCalls.firstWhere((c) => c.path == '/regularizations').filters!.containsKey('employee_id'), isFalse);
-      expect(find.text('Ravi Iyer (E-2) · Missing punch · 2026-10-01'), findsOneWidget);
+      expect(find.text('Ravi Iyer (E-2) · Missed a punch (in or out) · ${formatDayDate('2026-10-01')}'), findsOneWidget);
 
-      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+      await tester.tap(find.text('Filter'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Approved').last);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Approved'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Wrong shift assigned'));
+      await tester.tap(find.text('Show results'));
       await tester.pumpAndSettle();
       expect(api.listCalls.last.filters!['request_status'], 'APPROVED');
-
-      await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Wrong shift').last);
-      await tester.pumpAndSettle();
       expect(api.listCalls.last.filters!['request_type'], 'WRONG_SHIFT');
+      expect(api.listCalls.where((c) => c.path == '/regularizations' && c.filters!['request_status'] == 'SUBMITTED' && !c.filters!.containsKey('date_from')).length, 1,
+          reason: 'with a status chosen, only the first load also asked for open requests');
+      expect(find.text('Filter (2)'), findsOneWidget);
     });
 
     testWidgets('the company account (no employee record) sees Team only, never an unfiltered "Mine"', (tester) async {
@@ -96,7 +107,7 @@ void main() {
       await _pump(tester, api, [attendanceRegularizationApprove, attendanceRegularizationRequestOnBehalf], RequestListScreen(config: regularizationConfig), employeeId: null);
       expect(find.text('Mine'), findsNothing);
       expect(find.text('Team'), findsNothing, reason: 'with one scope there is nothing to switch between');
-      expect(find.text('Ravi Iyer (E-2) · Missing punch · 2026-10-01'), findsOneWidget);
+      expect(find.text('Ravi Iyer (E-2) · Missed a punch (in or out) · ${formatDayDate('2026-10-01')}'), findsOneWidget);
     });
 
     testWidgets('Mine switches to the signed-in employee', (tester) async {
@@ -129,12 +140,12 @@ void main() {
     testWidgets('submitting posts the built body', (tester) async {
       final api = _api(rows: [_reg(employeeId: 'emp-1')]);
       await _pump(tester, api, [attendanceRegularizationRequest], RequestListScreen(config: regularizationConfig));
-      await tester.tap(find.text('Regularization request'));
+      await tester.tap(find.text('Attendance correction'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
       expect(find.text('Attendance date is required.'), findsOneWidget);
-      expect(find.text('Request type is required.'), findsOneWidget);
+      expect(find.text('Choose an option.'), findsOneWidget);
       expect(api.calls, isEmpty);
     });
   });
@@ -223,15 +234,20 @@ void main() {
       });
     });
 
-    testWidgets('rejecting sends comment and reason', (tester) async {
+    testWidgets('rejecting asks for one required reason and sends it as the rejection reason', (tester) async {
       final api = await pumpDetail(tester, _reg(), [attendanceRegularizationApprove]);
       await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, 'No');
-      await tester.enterText(find.byType(TextField).last, 'Not allowed');
+      expect(find.byType(TextField), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
       await tester.pumpAndSettle();
-      expect(api.calls.single.body, {'reviewer_comment': 'No', 'rejection_reason': 'Not allowed'});
+      expect(find.text('Give the employee a reason.'), findsOneWidget);
+      expect(api.calls, isEmpty);
+
+      await tester.enterText(find.byType(TextField), 'Not allowed');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
+      await tester.pumpAndSettle();
+      expect(api.calls.single.body, {'rejection_reason': 'Not allowed'});
     });
 
     testWidgets('you cannot review your own request, and a decided request has no actions', (tester) async {
@@ -296,11 +312,13 @@ void main() {
       await _pump(tester, api, [attendanceOvertimeApprove], RequestListScreen(config: overtimeConfig));
       expect(find.textContaining('Detected 2h 5m'), findsOneWidget);
       expect(find.text('Overtime record'), findsNothing);
-      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+      expect(api.listCalls.last.filters, {'record_status': 'PENDING'}, reason: 'open overtime is asked for without dates');
+      await tester.tap(find.text('Filter'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Pending').last);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Approved'));
+      await tester.tap(find.text('Show results'));
       await tester.pumpAndSettle();
-      expect(api.listCalls.last.filters!['record_status'], 'PENDING');
+      expect(api.listCalls.last.filters!['record_status'], 'APPROVED');
     });
 
     testWidgets('a pending record can be approved by someone else, never cancelled', (tester) async {

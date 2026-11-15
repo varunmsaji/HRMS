@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/widgets/ui.dart';
 import '../data/notification_repository.dart';
 import '../domain/app_notification.dart';
 import '../state/unread_count.dart';
@@ -141,27 +142,23 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    // The shared loading, error and empty visuals (audit MOB-UX-044).
+    if (_loading) return const ListSkeleton(count: 6);
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            OutlinedButton(onPressed: _reload, child: const Text('Try again')),
-          ]),
-        ),
-      );
+      return StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load notifications', message: _error, actionLabel: 'Try again', onAction: _reload);
     }
     return RefreshIndicator(
       onRefresh: _reload,
       child: _items.isEmpty
           ? ListView(controller: _scroll, physics: const AlwaysScrollableScrollPhysics(), children: [
-              const SizedBox(height: 120),
-              Icon(Icons.notifications_none_rounded, size: 48, color: Theme.of(context).disabledColor),
-              const SizedBox(height: 12),
-              Center(child: Text(_unreadOnly ? 'No unread notifications' : 'No notifications yet')),
+              SizedBox(
+                height: 360,
+                child: StateMessage(
+                  icon: Icons.notifications_none_rounded,
+                  title: _unreadOnly ? 'No unread notifications' : 'No notifications yet',
+                  message: _unreadOnly ? 'Everything here has been read.' : 'You\'ll be told here when a request is decided or something needs you.',
+                ),
+              ),
             ])
           : ListView.separated(
               controller: _scroll,

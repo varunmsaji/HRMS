@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/format.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
@@ -99,8 +100,8 @@ void main() {
 
   testWidgets('lists the requests for the day; an open one hides the button', (tester) async {
     await pump(tester, permissions: const [attendanceView, attendanceRegularizationRequest], employeeId: 'e-1', requests: [_request('SUBMITTED'), _request('REJECTED', date: '2026-10-02')]);
-    expect(find.text('Missing punch'), findsWidgets);
-    expect(find.text('Submitted'), findsOneWidget);
+    expect(find.text('Missed a punch (in or out)'), findsWidgets);
+    expect(find.text('Awaiting approval'), findsOneWidget);
     expect(find.text('Rejected'), findsNothing, reason: 'another date is not shown');
     expect(find.text('Request a correction'), findsNothing);
   });
@@ -109,12 +110,12 @@ void main() {
     final api = await pump(tester, permissions: const [attendanceView, attendanceRegularizationRequestOnBehalf], employeeId: 'e-9');
     await tester.tap(find.text('Request a correction'));
     await tester.pumpAndSettle();
-    expect(find.text('Raise a regularization request'), findsOneWidget);
+    expect(find.text('Attendance correction'), findsOneWidget);
     expect(find.text('Employee', findRichText: true), findsNothing, reason: 'the day fixes the employee');
-    expect(find.text('2026-10-01'), findsWidgets, reason: 'the date comes from the day');
+    expect(find.text(formatDayDate('2026-10-01')), findsWidgets, reason: 'the date comes from the day');
     await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Wrong status').last);
+    await tester.tap(find.text('Day marked wrongly').last);
     await tester.pumpAndSettle();
     final label = find.text('Check-in time', findRichText: true);
     final checkIn = find.descendant(of: find.ancestor(of: label, matching: find.byType(AuthFormField)).first, matching: find.byType(TextField));

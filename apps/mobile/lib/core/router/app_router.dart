@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/approvals/presentation/approvals_screen.dart';
 import '../../features/auth/presentation/accept_invite_screen.dart';
 import '../../features/auth/presentation/forgot_password_screen.dart';
 import '../../features/auth/presentation/login_screen.dart';
@@ -37,6 +38,7 @@ import '../nav/nav_entries.dart';
 import '../theme/employee_theme_scope.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/employees/presentation/employees_screen.dart';
+import '../../features/leave/presentation/leave_application_detail_screen.dart';
 import '../../features/leave/presentation/leave_applications_screen.dart';
 import '../../features/leave/presentation/leave_balances_screen.dart';
 import '../../features/leave/presentation/leave_year_setting_screen.dart';
@@ -44,7 +46,9 @@ import '../../features/onboarding/presentation/onboarding_cases_screen.dart';
 import '../../features/onboarding/presentation/setup_screen.dart';
 import '../../features/onboarding/presentation/users_screen.dart';
 import '../../features/payroll/presentation/my_payslips_screen.dart';
+import '../../features/onboarding/presentation/onboarding_case_route_screen.dart';
 import '../../features/payroll/presentation/pay_runs_screen.dart';
+import '../../features/payroll/presentation/payslip_screen.dart';
 import '../../features/payroll/presentation/statutory_rates_screen.dart';
 import '../../features/organisation/presentation/company_profile_screen.dart';
 import '../../features/organisation/presentation/work_calendar_setup_screen.dart';
@@ -82,6 +86,24 @@ class _AuthRefreshNotifier extends ChangeNotifier {
 
 final _authRefreshProvider = Provider<_AuthRefreshNotifier>((ref) => _AuthRefreshNotifier(ref));
 
+/// Where the user was when their session expired, and who they were. The login screen sends the
+/// same user back there after they sign in again, instead of to their landing page (MOB-UX-031).
+/// A plain holder, not reactive state: it is written during a redirect and read once at login.
+class ReturnPath {
+  String? path;
+  String? userId;
+
+  /// The remembered path if [userId] is the person it was saved for, then forgets it either way.
+  String? takeFor(String? userId) {
+    final match = path != null && this.userId != null && this.userId == userId ? path : null;
+    path = null;
+    this.userId = null;
+    return match;
+  }
+}
+
+final returnPathProvider = Provider<ReturnPath>((ref) => ReturnPath());
+
 /// The router's redirect rules as a pure function (so every user type can be tested without
 /// building screens). Returns the location to go to instead, or null to stay.
 String? appRedirect(AuthState auth, String location) {
@@ -112,7 +134,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/splash',
     refreshListenable: ref.watch(_authRefreshProvider),
-    redirect: (context, state) => appRedirect(ref.read(authControllerProvider), state.matchedLocation),
+    redirect: (context, state) {
+      final auth = ref.read(authControllerProvider);
+      final to = appRedirect(auth, state.matchedLocation);
+      if (to == '/login' && auth.sessionExpired && state.matchedLocation.startsWith('/app/')) {
+        ref.read(returnPathProvider)
+          ..path = state.uri.toString()
+          ..userId = auth.expiredUserId;
+      }
+      return to;
+    },
     routes: [
       GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
@@ -135,6 +166,30 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => PublicOnboardingScreen(token: state.pathParameters['token']!),
       ),
       GoRoute(path: '/app/notifications', builder: (context, state) => const EmployeeThemeScope(child: NotificationsScreen())),
+      // One item, opened from a link (notification, approvals inbox, dashboard row). These are the
+      // paths the API puts in `action_url`, so a tap lands on the item, not its list (MOB-UX-003).
+      GoRoute(
+        path: '/app/leave-applications/:id',
+        builder: (context, state) => EmployeeThemeScope(child: LeaveApplicationDetailScreen(applicationId: state.pathParameters['id']!)),
+      ),
+      GoRoute(
+        path: '/app/regularizations/:id',
+        builder: (context, state) => EmployeeThemeScope(child: RequestDetailScreen(config: regularizationConfig, requestId: state.pathParameters['id']!)),
+      ),
+      GoRoute(
+        path: '/app/overtime/:id',
+        builder: (context, state) => EmployeeThemeScope(child: RequestDetailScreen(config: overtimeConfig, requestId: state.pathParameters['id']!)),
+      ),
+      GoRoute(path: '/app/approvals', builder: (context, state) => const ApprovalsScreen()),
+      GoRoute(path: '/app/onboarding/:id', builder: (context, state) => OnboardingCaseRouteScreen(caseId: state.pathParameters['id']!)),
+      GoRoute(
+        path: '/app/me/payslips/:runId',
+        builder: (context, state) => EmployeeThemeScope(
+          child: Consumer(
+            builder: (context, ref, _) => PayslipScreen(load: () => ref.read(payrollRepositoryProvider).getMyPayslip(state.pathParameters['runId']!)),
+          ),
+        ),
+      ),
       GoRoute(path: '/app/me/calendar', builder: (context, state) => const EmployeeThemeScope(child: MyCalendarScreen())),
       GoRoute(path: '/app/attendance/face-setup', builder: (context, state) => const EmployeeThemeScope(child: FaceSetupScreen())),
       GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),

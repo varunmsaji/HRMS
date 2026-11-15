@@ -56,6 +56,10 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
   ApiError? _error;
   int _request = 0;
 
+  /// The headline figures start folded into one line, so the requests themselves begin near the
+  /// top of the screen (audit MOB-UX-016).
+  bool _showFigures = false;
+
   @override
   void initState() {
     super.initState();
@@ -88,7 +92,12 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
         children: [
-          if (data != null) _StatGrid(stats: widget.stats(data)),
+          if (data != null)
+            _StatSummary(
+              stats: widget.stats(data),
+              expanded: _showFigures,
+              onToggle: () => setState(() => _showFigures = !_showFigures),
+            ),
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 4, children: [
             for (final (key, label) in widget.tabs)
@@ -104,11 +113,13 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
           ]),
           const SizedBox(height: 12),
           if (_error != null)
-            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Retry', onAction: _load)
+            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Try again', onAction: _load)
           else if (_loading)
-            const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
+            const ListSkeleton(count: 3, embedded: true)
           else if (cards.isEmpty)
-            StateMessage(icon: widget.emptyIcon, title: 'No requests here.', message: 'Nothing to show for this tab.')
+            _tab == 'pending'
+                ? StateMessage(icon: widget.emptyIcon, tone: Tone.success, title: 'Nothing awaiting your decision', message: 'New requests appear here as soon as they are submitted.')
+                : StateMessage(icon: widget.emptyIcon, title: 'Nothing here yet', message: 'Requests appear here once they are decided.')
           else ...[
             for (final card in cards) Padding(padding: const EdgeInsets.only(bottom: 12), child: card),
             if (data != null && widget.count(data, _tab) > cards.length)
@@ -117,6 +128,48 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
         ],
       ),
     );
+  }
+}
+
+/// "5 pending requests · 2 on leave today", with the first figure's note, and a toggle that opens
+/// the full figures below.
+class _StatSummary extends StatelessWidget {
+  const _StatSummary({required this.stats, required this.expanded, required this.onToggle});
+  final List<DecisionStat> stats;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stats.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final line = [for (final s in stats.take(2)) '${s.value} ${s.label[0].toLowerCase()}${s.label.substring(1)}'].join(' · ');
+    final first = stats.first;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      AppCard(
+        onTap: onToggle,
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(line, style: const TextStyle(fontWeight: FontWeight.w700)),
+              if (first.note != null) ...[const SizedBox(height: 2), Text(first.note!, style: TextStyle(fontSize: 12, color: muted))],
+              if (first.needsAction) ...[
+                const SizedBox(height: 2),
+                Text('Action required', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: toneColors(context, Tone.warning).fg)),
+              ],
+            ]),
+          ),
+          Semantics(
+            label: expanded ? 'Hide figures' : 'Show all figures',
+            excludeSemantics: true,
+            child: Icon(expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: muted),
+          ),
+        ]),
+      ),
+      if (expanded) ...[const SizedBox(height: 10), _StatGrid(stats: stats)],
+    ]);
   }
 }
 
@@ -217,7 +270,8 @@ class DecisionCardFooter extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (onApprove != null) ...[
         Row(children: [
-          Expanded(child: OutlinedButton(onPressed: onDecline, child: const Text('Decline'))),
+          // "Reject", the same word the dialog and the detail screen use (MOB-UX-014).
+          Expanded(child: OutlinedButton(onPressed: onDecline, child: const Text('Reject'))),
           const SizedBox(width: 8),
           Expanded(child: FilledButton(onPressed: onApprove, child: Text(approveLabel))),
         ]),

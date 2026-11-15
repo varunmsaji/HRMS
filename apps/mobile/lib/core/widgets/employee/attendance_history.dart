@@ -86,7 +86,7 @@ class _DateBlock extends StatelessWidget {
         child: d == null
             ? Icon(Icons.event_outlined, size: 20, color: t.inkSecondary)
             : Column(mainAxisSize: MainAxisSize.min, children: [
-                Text(months[d.month - 1], style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.6, color: t.inkSecondary)),
+                Text(months[d.month - 1], style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6, color: t.inkSecondary)),
                 Text('${d.day}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, height: 1.15, color: t.ink)),
               ]),
       ),

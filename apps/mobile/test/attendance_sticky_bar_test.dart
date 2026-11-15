@@ -100,14 +100,14 @@ void main() {
     expect(repo.punchReads, greaterThan(before));
   });
 
-  testWidgets('the More icon is gone on the employee surface', (tester) async {
+  testWidgets('employees reach More from the Attendance tab too (MOB-UX-004)', (tester) async {
     await _pump(tester, _Repo());
-    expect(find.byTooltip('Settings & more'), findsNothing);
+    expect(find.byTooltip('More: settings and tools'), findsOneWidget);
   });
 
   testWidgets('...and stays for an administrator', (tester) async {
     await _pump(tester, _Repo(), permissions: const [dashboardCompanyView, attendancePunch, attendanceView]);
-    expect(find.byTooltip('Settings & more'), findsOneWidget);
+    expect(find.byTooltip('More: settings and tools'), findsOneWidget);
   });
 
   testWidgets('at 320 px and 2x text the punch labels are not clipped (the buttons grow)', (tester) async {

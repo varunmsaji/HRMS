@@ -221,9 +221,9 @@ class _PolicyFollowersSectionState extends ConsumerState<PolicyFollowersSection>
           StateMessage(
             icon: Icons.error_outline_rounded,
             tone: Tone.danger,
-            title: 'Something went wrong',
+            title: "Couldn't load who follows this",
             message: _error!.status == 403 ? 'You do not have permission to see who follows this policy.' : _error!.message,
-            actionLabel: 'Retry',
+            actionLabel: 'Try again',
             onAction: _load,
           )
         else if (rows == null)

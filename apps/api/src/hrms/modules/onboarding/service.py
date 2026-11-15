@@ -24,6 +24,7 @@ from hrms.core.links import mobile_link
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.storage import DocumentStorageService
+from hrms.modules.account_invite.email_templates import LoginDetails
 from hrms.modules.attendance.face_policy import FacePolicyService
 from hrms.modules.notification.producer import notify
 from hrms.modules.notification.types import ONBOARDING_PATH, ONBOARDING_SUBMITTED
@@ -1698,15 +1699,72 @@ class OnboardingActivationService:
         case.employee_id = employee.id
         await self._case_repo.set_status(self._session, case=case, status="ACTIVATED", now=now)
 
+        # Account-invite auto-issue — Decision P2 path 1 (`docs/modules/employee/
+        # 41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md`). Best-effort: a failure here
+        # (including "no actor" for a system-triggered activation) must never undo an activation
+        # that has already committed its Employee row. The invite is issued without its own email
+        # — its link goes into the single welcome email below.
+        #
+        # Inside a SAVEPOINT: without one, a database error in `issue_for_employee` left the
+        # request transaction aborted, so the audit write below (and the commit) failed and the
+        # activation *was* undone — the opposite of the stated intent. Rolling back to the
+        # savepoint discards only the invite's partial writes. The outcome is logged (LOG-06).
+        invite_url: str | None = None
+        if actor_user_id is not None:
+            from hrms.modules.account_invite.service import AccountInviteService
+
+            try:
+                async with self._session.begin_nested():
+                    invite = await AccountInviteService(
+                        self._session, self._settings
+                    ).issue_for_employee(
+                        company_id,
+                        employee.id,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        send_email=False,
+                    )
+                invite_url = invite.invite_url
+            except AppError as exc:
+                # An expected business outcome (e.g. the employee already has an account).
+                safe_log(
+                    _logger.warning,
+                    "account_invite.auto_issue_skipped",
+                    company_id=str(company_id),
+                    employee_id=str(employee.id),
+                    **safe_error(exc),
+                )
+            except Exception as exc:  # noqa: BLE001 — must not undo the activation
+                safe_log(
+                    _logger.error,
+                    "account_invite.auto_issue_failed",
+                    exc_info=exc,
+                    company_id=str(company_id),
+                    employee_id=str(employee.id),
+                    **safe_error(exc),
+                )
+
         # Cross-module read only, same lazy-import convention as `send_invite`.
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         company = await organisation.get_company_profile(company_id)
+        invite_token = invite_url.rsplit("/", 1)[-1] if invite_url else None
         subject, html_body, text_body = build_activated_email(
             candidate_first_name=case.candidate_first_name,
             company_name=company.name,
             employee_code=employee.employee_code,
+            login=LoginDetails(
+                email=case.personal_email.lower(),
+                company_code=company.login_code,
+                employee_code=employee.employee_code,
+            ),
+            set_password_url=invite_url,
+            mobile_url=mobile_link(self._settings, "accept-invite", invite_token)
+            if invite_token
+            else None,
+            sign_in_url=f"{self._settings.web_app_base_url}/login",
         )
         html_body = with_brand_header(html_body, brand_logo_url(self._settings.web_app_base_url))
         # Delivered only after the activation commits (B12 / DEF-B11-04): a failure anywhere
@@ -1728,47 +1786,6 @@ class OnboardingActivationService:
             log_email_failure(
                 "onboarding_activated", exc, company_id=str(company_id), case_id=str(case.id)
             )
-
-        # Account-invite auto-issue — Decision P2 path 1 (`docs/modules/employee/
-        # 41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md`). Best-effort, same as the
-        # activation email above: a failure here (including "no actor" for a system-triggered
-        # activation) must never undo an activation that has already committed its Employee row.
-        #
-        # Inside a SAVEPOINT: without one, a database error in `issue_for_employee` left the
-        # request transaction aborted, so the audit write below (and the commit) failed and the
-        # activation *was* undone — the opposite of the stated intent. Rolling back to the
-        # savepoint discards only the invite's partial writes. The outcome is now logged
-        # (LOG-06): previously this `except` swallowed every failure silently.
-        if actor_user_id is not None:
-            from hrms.modules.account_invite.service import AccountInviteService
-
-            try:
-                async with self._session.begin_nested():
-                    await AccountInviteService(self._session, self._settings).issue_for_employee(
-                        company_id,
-                        employee.id,
-                        actor_user_id=actor_user_id,
-                        ip_address=ip_address,
-                        user_agent=user_agent,
-                    )
-            except AppError as exc:
-                # An expected business outcome (e.g. the employee already has an account).
-                safe_log(
-                    _logger.warning,
-                    "account_invite.auto_issue_skipped",
-                    company_id=str(company_id),
-                    employee_id=str(employee.id),
-                    **safe_error(exc),
-                )
-            except Exception as exc:  # noqa: BLE001 — must not undo the activation
-                safe_log(
-                    _logger.error,
-                    "account_invite.auto_issue_failed",
-                    exc_info=exc,
-                    company_id=str(company_id),
-                    employee_id=str(employee.id),
-                    **safe_error(exc),
-                )
 
         read = onboarding_case_to_read(case)
         await self._audit.record(

@@ -14,13 +14,41 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { landingPathFor } from "@/lib/auth/landing";
-import { validateLoginForm, type LoginFormErrors } from "@/lib/auth/validate-login";
+import {
+  isEmailIdentifier,
+  toLoginRequest,
+  validateLoginForm,
+  type LoginFormErrors,
+} from "@/lib/auth/validate-login";
+
+/** The company code is remembered on this device after a successful employee-ID sign-in, so
+ * people only type their employee ID next time. A convenience only: storage may be unavailable. */
+const COMPANY_CODE_STORAGE_KEY = "hrms.login.companyCode";
+
+function readStoredCompanyCode(): string {
+  try {
+    return window.localStorage.getItem(COMPANY_CODE_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storeCompanyCode(code: string) {
+  try {
+    window.localStorage.setItem(COMPANY_CODE_STORAGE_KEY, code);
+  } catch {
+    // Not remembered — the field just starts empty next time.
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
 
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
+  // Read once on mount. The field only renders after the user types, so the server render (where
+  // storage is unavailable and this is "") never shows a different value than the client.
+  const [companyCode, setCompanyCode] = useState(readStoredCompanyCode);
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<LoginFormErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -30,13 +58,19 @@ export default function LoginPage() {
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
 
+  const trimmedIdentifier = identifier.trim();
+  // The company code box appears once the user has typed something that isn't an email.
+  const showCompanyCode = trimmedIdentifier !== "" && !isEmailIdentifier(trimmedIdentifier);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
     setUnverifiedEmail(null);
     setResendState("idle");
 
-    const nextErrors: LoginFormErrors = validateLoginForm({ email, password });
+    const values = { identifier, companyCode, password };
+    const nextErrors: LoginFormErrors = validateLoginForm(values);
+    const byEmail = isEmailIdentifier(trimmedIdentifier);
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
@@ -45,14 +79,19 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      const user = await login({ email: email.trim(), password });
+      const user = await login(toLoginRequest(values));
+      if (!byEmail) storeCompanyCode(companyCode.trim().toUpperCase());
       router.push(landingPathFor(user));
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === "EMAIL_NOT_VERIFIED") {
-          setUnverifiedEmail(email.trim());
+          if (byEmail) {
+            setUnverifiedEmail(trimmedIdentifier);
+          } else {
+            setFormError("Please verify your email address before signing in. Check your inbox for the verification link.");
+          }
         } else if (error.status === 401) {
-          setFormError("Invalid email or password.");
+          setFormError(byEmail ? "Invalid email or password." : "Invalid company code, employee ID or password.");
         } else if (error.status === 423) {
           setFormError("This account is temporarily locked. Try again later.");
         } else if (error.status === 429) {
@@ -123,20 +162,54 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        <FormField id="email" label="Email" required error={errors.email}>
+        <FormField
+          id="identifier"
+          label="Email or employee ID"
+          required
+          error={errors.identifier}
+          description={showCompanyCode ? undefined : "Use your email, or your employee ID (e.g. EMP-0007)."}
+        >
           <Input
-            type="email"
-            value={email}
+            type="text"
+            inputMode="email"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={identifier}
             onChange={(e) => {
-              setEmail(e.target.value);
-              setErrors((current) => ({ ...current, email: undefined }));
+              setIdentifier(e.target.value);
+              setErrors((current) => ({ ...current, identifier: undefined }));
             }}
-            autoComplete="email"
-            placeholder="you@company.com"
+            autoComplete="username"
+            placeholder="you@company.com or EMP-0007"
             className="h-11 bg-background px-3.5 md:text-base"
             disabled={submitting}
           />
         </FormField>
+
+        {showCompanyCode ? (
+          <FormField
+            id="company-code"
+            label="Company code"
+            required
+            error={errors.companyCode}
+            description="It's in your welcome email, or ask HR."
+          >
+            <Input
+              type="text"
+              autoCapitalize="characters"
+              spellCheck={false}
+              value={companyCode}
+              onChange={(e) => {
+                setCompanyCode(e.target.value);
+                setErrors((current) => ({ ...current, companyCode: undefined }));
+              }}
+              autoComplete="organization"
+              placeholder="e.g. ACME"
+              className="h-11 bg-background px-3.5 uppercase placeholder:normal-case md:text-base"
+              disabled={submitting}
+            />
+          </FormField>
+        ) : null}
 
         <FormField id="password" label="Password" required error={errors.password}>
           <PasswordInput

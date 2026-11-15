@@ -133,7 +133,9 @@ class EmployeeListRow extends StatelessWidget {
                   children: [
                     if (leading != null) ...[leading!, const SizedBox(width: 12)],
                     Expanded(child: _text(theme, t)),
-                    if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+                    // Flexible: a long status word ("Awaiting approval") shares the row with the
+                    // title instead of pushing past the edge on a narrow phone.
+                    if (trailing != null) ...[const SizedBox(width: 12), Flexible(child: trailing!)],
                     if (showChevron) ...[
                       const SizedBox(width: 4),
                       ExcludeSemantics(child: Icon(Icons.chevron_right_rounded, color: t.inkTertiary)),

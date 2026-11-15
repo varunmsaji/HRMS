@@ -38,7 +38,7 @@ describe("LoginPage", () => {
 
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByText(/email is required/i)).toBeInTheDocument();
+    expect(await screen.findByText(/email or employee id is required/i)).toBeInTheDocument();
     expect(loginMock).not.toHaveBeenCalled();
   });
 
@@ -47,7 +47,7 @@ describe("LoginPage", () => {
 
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/email or employee id/i), "user@example.com");
     await user.type(screen.getByLabelText(/^password/i), "secret123");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
@@ -60,7 +60,7 @@ describe("LoginPage", () => {
 
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/email or employee id/i), "user@example.com");
     await user.type(screen.getByLabelText(/^password/i), "wrong-password");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
@@ -76,7 +76,7 @@ describe("LoginPage", () => {
 
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.type(screen.getByLabelText(/email/i), "unverified@example.com");
+    await user.type(screen.getByLabelText(/email or employee id/i), "unverified@example.com");
     await user.type(screen.getByLabelText(/^password/i), "correcthorse9");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
@@ -91,5 +91,51 @@ describe("LoginPage", () => {
       { authenticated: false },
     );
     expect(await screen.findByText(/new verification email is on its way/i)).toBeInTheDocument();
+  });
+  it("signs in with an employee ID and company code, and remembers the code", async () => {
+    loginMock.mockResolvedValueOnce(undefined);
+    window.localStorage.removeItem("hrms.login.companyCode");
+
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    expect(screen.queryByLabelText(/company code/i)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/email or employee id/i), "EMP-0007");
+    await user.type(screen.getByLabelText(/company code/i), "acme");
+    await user.type(screen.getByLabelText(/^password/i), "secret123");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/app/dashboard"));
+    expect(loginMock).toHaveBeenCalledWith({
+      company_code: "acme",
+      employee_code: "EMP-0007",
+      password: "secret123",
+    });
+    expect(window.localStorage.getItem("hrms.login.companyCode")).toBe("ACME");
+  });
+
+  it("asks for the company code when signing in with an employee ID", async () => {
+    window.localStorage.removeItem("hrms.login.companyCode");
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.type(screen.getByLabelText(/email or employee id/i), "EMP-0007");
+    await user.type(screen.getByLabelText(/^password/i), "secret123");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByText(/company code is required/i)).toBeInTheDocument();
+    expect(loginMock).not.toHaveBeenCalled();
+  });
+
+  it("names the employee-ID fields in the invalid-credentials message", async () => {
+    loginMock.mockRejectedValueOnce(new ApiError({ status: 401, code: "INVALID_CREDENTIALS", message: "nope" }));
+    window.localStorage.setItem("hrms.login.companyCode", "ACME");
+
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.type(screen.getByLabelText(/email or employee id/i), "EMP-0007");
+    expect(screen.getByLabelText(/company code/i)).toHaveValue("ACME");
+    await user.type(screen.getByLabelText(/^password/i), "wrong-password");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByText(/invalid company code, employee id or password/i)).toBeInTheDocument();
   });
 });

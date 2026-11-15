@@ -383,7 +383,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     const SizedBox(width: 110),
-                    for (final d in dates) SizedBox(width: 22, child: Text(d.substring(8), textAlign: TextAlign.center, style: TextStyle(fontSize: 9, color: scheme.onSurfaceVariant))),
+                    for (final d in dates) SizedBox(width: 22, child: Text(d.substring(8), textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant))),
                   ]),
                   for (final r in rows)
                     Row(children: [
@@ -402,7 +402,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
               const SizedBox(height: 8),
               Wrap(spacing: 10, runSpacing: 4, children: [
                 for (final e in const [('Present', Colors.green), ('Remote', Colors.teal), ('On duty', Colors.blue), ('Half day', Colors.amber), ('Absent', Colors.red), ('Leave', Colors.purple), ('Incomplete', Colors.orange), ('Off/holiday', Colors.blueGrey)])
-                  Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 10, height: 10, color: e.$2), const SizedBox(width: 4), Text(e.$1, style: const TextStyle(fontSize: 10))]),
+                  Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 10, height: 10, color: e.$2), const SizedBox(width: 4), Text(e.$1, style: const TextStyle(fontSize: 11))]),
               ]),
             ]),
     );
@@ -806,7 +806,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     if (_loading) {
       body = const ListSkeleton();
     } else if (_error != null) {
-      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!, actionLabel: 'Retry', onAction: _load);
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load insights", message: _error!, actionLabel: 'Try again', onAction: _load);
     } else {
       body = RefreshIndicator(
         onRefresh: _load,

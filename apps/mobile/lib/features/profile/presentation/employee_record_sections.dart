@@ -12,6 +12,7 @@ import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../employees/domain/employee_forms.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/format.dart';
 
 enum RecordFormat { text, yesNo, money }
 
@@ -198,7 +199,7 @@ String _s(Map<String, dynamic> m, String k) => (m[k] ?? '').toString();
 
 String _range(Map<String, dynamic> m, String from, String to) {
   final end = m[to];
-  return '${_s(m, from)} → ${end == null ? 'present' : end.toString()}';
+  return formatPeriod(_s(m, from), end?.toString(), openEnd: 'present');
 }
 
 final employeeRecordSections = <RecordSection>[
@@ -543,7 +544,7 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const ListSkeleton(count: 3);
-    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this section", message: _error!.message, actionLabel: 'Try again', onAction: _load);
     final scheme = Theme.of(context).colorScheme;
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final actions = [

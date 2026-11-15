@@ -65,7 +65,7 @@ const employeeNavEntries = [
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances',
       anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),
   NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
-  NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Corrections', guarded: false),
+  NavEntry('Attendance Corrections', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], guarded: false),
@@ -74,6 +74,10 @@ const employeeNavEntries = [
 /// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the items not already in
 /// the bottom nav). Order is the existing hub order.
 const navQuickLinks = NavGroup('Quick links', [
+  // Every request this user may decide, in one place (MOB-UX-001). Each queue still checks its own
+  // approve permission, so holding any one of these is enough to open the screen.
+  NavEntry('Approvals', Icons.inbox_outlined, '/app/approvals',
+      anyOf: [leaveApplicationApprove, attendanceRegularizationApprove, attendanceOvertimeApprove, onboardingReview]),
   NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
   NavEntry('Employees', Icons.people_outline, '/app/employees', anyOf: [employeeViewAll]),
   NavEntry('Onboarding', Icons.person_add_alt, '/app/onboarding', anyOf: [onboardingView, onboardingCreate, onboardingReview, onboardingActivate]),
@@ -85,7 +89,7 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
   NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
   NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
-  NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], guarded: false),
+  NavEntry('Attendance Corrections', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances', anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),
   NavEntry('Payroll', Icons.payments_outlined, '/app/payroll/pay-runs', anyOf: [payrollRunView, payrollRunProcess]),

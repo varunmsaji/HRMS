@@ -12,6 +12,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
 import 'leave_applications_screen.dart' show LeaveStatusChip;
+import '../../../core/format.dart';
 
 /// One leave application — mirrors `apps/web/src/app/app/leave-applications/[id]/page.tsx`: the
 /// request, its day-by-day breakdown and action history, and the review (approve / reject) and
@@ -123,83 +124,13 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     }
   }
 
-  /// Approve or reject. A balance shortfall on approve offers approving the uncovered days as
-  /// loss of pay (the web dialog's second step).
+  /// Approve or reject, through [showLeaveReviewDialog].
   Future<void> _review(LeaveApplication a, {required bool approve}) async {
-    final comment = TextEditingController();
-    final rejection = TextEditingController();
-    String? formError;
-    Map<String, dynamic>? shortfall;
-    final done = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) {
-          Future<void> submit({bool lop = false}) async {
-            try {
-              final updated = approve
-                  ? await _repo.approveLeaveApplication(a.id, ifMatch: a.version.toString(), comment: comment.text.trim(), excessAsLop: lop)
-                  : await _repo.rejectLeaveApplication(a.id, ifMatch: a.version.toString(), comment: comment.text.trim(), reason: rejection.text.trim());
-              if (mounted) setState(() => _app = updated);
-              if (ctx.mounted) Navigator.of(ctx).pop(true);
-            } on ApiError catch (e) {
-              if (e.status == 403) {
-                setLocal(() => formError = e.code == 'LEAVE_APPLICATION_SELF_APPROVAL_NOT_ALLOWED'
-                    ? 'You cannot approve or reject your own application.'
-                    : e.code == 'LEAVE_APPLICATION_APPROVER_MISMATCH'
-                        ? "You are not the resolved approver for this application's current stage."
-                        : e.message);
-              } else if (e.code == 'LEAVE_APPLICATION_BALANCE_SHORTFALL') {
-                final ctxMap = e.details.isNotEmpty ? (e.details.first.context ?? const {}) : const <String, dynamic>{};
-                setLocal(() => shortfall = {'available': '${ctxMap['available'] ?? '0.00'}', 'shortfall': '${ctxMap['shortfall'] ?? ''}'});
-              } else if (e.status == 409) {
-                setLocal(() => formError = "This application has already moved on (approved, rejected, or cancelled by someone else), or one of its dates falls in an attendance period that's now closed. Refresh to see its current state.");
-              } else {
-                setLocal(() => formError = e.message);
-              }
-            } catch (_) {
-              setLocal(() => formError = 'Something went wrong.');
-            }
-          }
-
-          return AlertDialog(
-            title: Text(approve ? 'Approve leave application' : 'Reject leave application'),
-            content: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(approve ? 'Approving a stage moves the application on; the final approval books the leave.' : 'No balance or attendance change is made when an application is rejected.'),
-                const SizedBox(height: 12),
-                AuthFormField(label: 'Comment', description: 'Optional, visible to the employee.', child: TextField(controller: comment)),
-                if (!approve) ...[const SizedBox(height: 12), AuthFormField(label: 'Rejection reason', child: TextField(controller: rejection))],
-                if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
-                if (shortfall != null)
-                  Container(
-                    margin: const EdgeInsets.only(top: 12),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange)),
-                    child: Text(
-                      'Not enough leave balance. The balance now covers ${(num.tryParse(shortfall!['available']!) ?? 0) > 0 ? shortfall!['available'] : '0'} of ${a.totalDays} days — ${shortfall!['shortfall']} short. Reject it, or approve it with the uncovered days as loss of pay (unpaid leave); the latest days become loss of pay, whole days only.',
-                    ),
-                  ),
-              ]),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-              if (shortfall != null)
-                FilledButton(onPressed: () => submit(lop: true), child: const Text('Approve, uncovered days as loss of pay'))
-              else
-                FilledButton(
-                  style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
-                  onPressed: () => submit(),
-                  child: Text(approve ? 'Approve' : 'Reject'),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-    if (done == true && mounted) {
-      _toast(approve ? 'Leave application approved.' : 'Leave application rejected.');
-      _load();
-    }
+    final updated = await showLeaveReviewDialog(context, _repo, a, approve: approve);
+    if (updated == null || !mounted) return;
+    setState(() => _app = updated);
+    _toast(approve ? 'Leave application approved.' : 'Leave application rejected.');
+    _load();
   }
 
   Widget _section(String title, List<Widget> children, {IconData? icon}) => DetailSection(title: title, icon: icon, children: children);
@@ -256,7 +187,7 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
                 Row(children: [
                   const Icon(Icons.event_rounded, size: 16, color: Colors.white70),
                   const SizedBox(width: 6),
-                  Text('${a.startDate} → ${a.endDate}', style: const TextStyle(color: Colors.white70)),
+                  Text(formatDateRange(a.startDate, a.endDate), style: const TextStyle(color: Colors.white70)),
                 ]),
                 const SizedBox(height: 4),
                 Text('${s('total_days')} day(s)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
@@ -318,4 +249,104 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     }
     return Scaffold(appBar: AppBar(title: const Text('Leave application')), body: body);
   }
+}
+
+/// Approve or reject [a] in a dialog; resolves to the updated application, or null when the
+/// approver backed out. A balance shortfall on approve offers approving the uncovered days as loss
+/// of pay (the web dialog's second step).
+///
+/// One text field (audit MOB-UX-015): an optional comment when approving, a required reason when
+/// rejecting, both shown to the employee. Used by the detail screen and straight from the
+/// decision-centre cards, so approving from a card does not open the detail screen first (MOB-UX-014).
+Future<LeaveApplication?> showLeaveReviewDialog(BuildContext context, LeaveRepository repo, LeaveApplication a, {required bool approve}) async {
+  final note = TextEditingController();
+  String? formError;
+  String? noteError;
+  Map<String, dynamic>? shortfall;
+  LeaveApplication? updated;
+  final done = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setLocal) {
+        Future<void> submit({bool lop = false}) async {
+          final text = note.text.trim();
+          if (!approve && text.isEmpty) {
+            setLocal(() => noteError = 'Give the employee a reason.');
+            return;
+          }
+          try {
+            updated = approve
+                ? await repo.approveLeaveApplication(a.id, ifMatch: a.version.toString(), comment: text, excessAsLop: lop)
+                : await repo.rejectLeaveApplication(a.id, ifMatch: a.version.toString(), reason: text);
+            if (ctx.mounted) Navigator.of(ctx).pop(true);
+          } on ApiError catch (e) {
+            if (e.status == 403) {
+              setLocal(() => formError = e.code == 'LEAVE_APPLICATION_SELF_APPROVAL_NOT_ALLOWED'
+                  ? 'You cannot approve or reject your own application.'
+                  : e.code == 'LEAVE_APPLICATION_APPROVER_MISMATCH'
+                      ? "You are not the resolved approver for this application's current stage."
+                      : e.message);
+            } else if (e.code == 'LEAVE_APPLICATION_BALANCE_SHORTFALL') {
+              final ctxMap = e.details.isNotEmpty ? (e.details.first.context ?? const {}) : const <String, dynamic>{};
+              setLocal(() => shortfall = {'available': '${ctxMap['available'] ?? '0.00'}', 'shortfall': '${ctxMap['shortfall'] ?? ''}'});
+            } else if (e.status == 409) {
+              setLocal(() => formError = "This application has already moved on (approved, rejected, or cancelled by someone else), or one of its dates falls in an attendance period that's now closed. Refresh to see its current state.");
+            } else {
+              setLocal(() => formError = e.message);
+            }
+          } catch (_) {
+            setLocal(() => formError = 'Something went wrong.');
+          }
+        }
+
+        return AlertDialog(
+          title: Text(approve ? 'Approve leave application' : 'Reject leave application'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(approve ? 'Approving a stage moves the application on; the final approval books the leave.' : 'No balance or attendance change is made when an application is rejected.'),
+              const SizedBox(height: 12),
+              AuthFormField(
+                label: approve ? 'Comment' : 'Reason',
+                required: !approve,
+                description: approve ? 'Optional. Shown to the employee.' : 'Shown to the employee.',
+                errorText: noteError,
+                child: TextField(
+                  controller: note,
+                  minLines: 2,
+                  maxLines: 4,
+                  textCapitalization: TextCapitalization.sentences,
+                  onChanged: (_) {
+                    if (noteError != null) setLocal(() => noteError = null);
+                  },
+                ),
+              ),
+              if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
+              if (shortfall != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange)),
+                  child: Text(
+                    'Not enough leave balance. The balance now covers ${(num.tryParse(shortfall!['available']!) ?? 0) > 0 ? shortfall!['available'] : '0'} of ${a.totalDays} days — ${shortfall!['shortfall']} short. Reject it, or approve it with the uncovered days as loss of pay (unpaid leave); the latest days become loss of pay, whole days only.',
+                  ),
+                ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            if (shortfall != null)
+              FilledButton(onPressed: () => submit(lop: true), child: const Text('Approve, uncovered days as loss of pay'))
+            else
+              FilledButton(
+                style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+                onPressed: () => submit(),
+                child: Text(approve ? 'Approve' : 'Reject'),
+              ),
+          ],
+        );
+      },
+    ),
+  );
+  // Not disposed here: the dialog is still animating out and its fields still use them.
+  return done == true ? updated : null;
 }

@@ -19,22 +19,40 @@ abstract final class Dd {
 }
 
 class DdCard extends StatelessWidget {
-  const DdCard({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.gradient});
+  const DdCard({super.key, required this.child, this.padding = const EdgeInsets.all(16), this.gradient, this.onTap});
   final Widget child;
   final EdgeInsets padding;
   final Gradient? gradient;
 
+  /// Makes the whole card one button: a ripple, keyboard focus, and the button role for TalkBack
+  /// and VoiceOver (a bare `GestureDetector` gives none of these; MOB-UX-037).
+  final VoidCallback? onTap;
+
+  static const _radius = BorderRadius.all(Radius.circular(18));
+
   @override
-  Widget build(BuildContext context) => Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          gradient: gradient,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: const [BoxShadow(color: Color(0x0F0A1F5C), blurRadius: 14, offset: Offset(0, 4))],
+  Widget build(BuildContext context) {
+    final decoration = BoxDecoration(
+      color: Colors.white,
+      gradient: gradient,
+      borderRadius: _radius,
+      boxShadow: const [BoxShadow(color: Color(0x0F0A1F5C), blurRadius: 14, offset: Offset(0, 4))],
+    );
+    final tap = onTap;
+    if (tap == null) return Container(padding: padding, decoration: decoration, child: child);
+    return Semantics(
+      button: true,
+      container: true,
+      child: DecoratedBox(
+        decoration: decoration,
+        child: Material(
+          type: MaterialType.transparency,
+          borderRadius: _radius,
+          child: InkWell(borderRadius: _radius, onTap: tap, child: Padding(padding: padding, child: child)),
         ),
-        child: child,
-      );
+      ),
+    );
+  }
 }
 
 class DdPill extends StatelessWidget {
@@ -88,10 +106,8 @@ class DdStatTile extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: DdCard(
+  Widget build(BuildContext context) => DdCard(
+          onTap: onTap,
           padding: const EdgeInsets.all(14),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -114,7 +130,6 @@ class DdStatTile extends StatelessWidget {
               if (action != null) Text(action!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Dd.navy)),
             ]),
           ]),
-        ),
       );
 }
 
@@ -177,7 +192,7 @@ class _DonutPainter extends CustomPainter {
   bool shouldRepaint(_DonutPainter old) => old.segments != segments;
 }
 
-/// A row in "Needs attention".
+/// A row in Home's "Waiting for approval".
 class DdAttentionRow extends StatelessWidget {
   const DdAttentionRow({super.key, required this.icon, required this.iconColor, required this.iconBackground, required this.title, required this.badge, required this.badgeColor, required this.badgeBackground, required this.caption, required this.onTap});
   final IconData icon;
@@ -191,10 +206,8 @@ class DdAttentionRow extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: DdCard(
+  Widget build(BuildContext context) => DdCard(
+          onTap: onTap,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           child: Row(children: [
             Container(
@@ -216,7 +229,6 @@ class DdAttentionRow extends StatelessWidget {
             ),
             const Icon(Icons.chevron_right, color: Dd.ink, size: 22),
           ]),
-        ),
       );
 }
 
@@ -230,10 +242,8 @@ class DdQuickAction extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: DdCard(
+  Widget build(BuildContext context) => DdCard(
+          onTap: onTap,
           padding: const EdgeInsets.all(12),
           child: Row(children: [
             Container(
@@ -247,10 +257,9 @@ class DdQuickAction extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Dd.ink)),
                 const SizedBox(height: 2),
-                Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Dd.muted, fontWeight: FontWeight.w500)),
+                Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Dd.muted, fontWeight: FontWeight.w500)),
               ]),
             ),
           ]),
-        ),
       );
 }

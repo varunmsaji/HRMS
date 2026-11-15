@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 import '../../../features/shell/more_action.dart';
+import '../../auth/presentation/confirm_sign_out.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../employees/presentation/employees_screen.dart' show EmployeeDetailScreen;
 import '../data/employee_repository.dart';
@@ -93,7 +94,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               icon: const Icon(Icons.logout_rounded),
               label: const Text('Sign out'),
               style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
-              onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+              onPressed: () => confirmSignOut(context, ref),
             ),
           ],
         ));

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error.dart' show describeApiError;
 import '../../../core/requests/decision_center_view.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
@@ -23,7 +24,7 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final me = ref.watch(authControllerProvider).user?.employeeId;
     return DecisionCenterView<LeaveDecisionCenter>(
-      tabs: const [('pending', 'Pending approvals'), ('approved', 'Approved leaves'), ('declined', 'Declined & cancelled')],
+      tabs: const [('pending', 'Awaiting approval'), ('approved', 'Approved'), ('declined', 'Rejected or cancelled')],
       load: (tab) => ref.read(leaveRepositoryProvider).getDecisionCenter(tab),
       count: (d, tab) => d.counts[tab] ?? 0,
       forbiddenMessage: 'You do not have permission to review leave requests.',
@@ -32,7 +33,7 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
       stats: (d) {
         final byType = d.onLeaveTodayByType.map((t) => '${t.$2} ${t.$1.replaceFirst(RegExp(r' Leave$'), '')}').join(', ');
         return [
-          DecisionStat('Pending requests', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
+          DecisionStat('Awaiting your decision', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
           DecisionStat('On leave today', '${d.onLeaveToday}', note: '${byType.isEmpty ? 'Everyone is in' : byType} · ${d.activeStaff} active staff'),
           DecisionStat('Approved starts, next 7 days', '${d.upcomingStarts7d}', note: d.peakDay == null ? 'No approved leave in the next 7 days' : 'Peak absence: ${d.peakDay} (${d.peakDayAway} away)'),
           DecisionStat('Staff available today', d.availablePct == null ? '—' : '${d.availablePct!.round()}%', note: '${d.onLeaveToday} of ${d.activeStaff} on leave'),
@@ -50,8 +51,27 @@ class _LeaveCard extends StatelessWidget {
   final DateTime? now;
   final VoidCallback reload;
 
-  Future<void> _open(BuildContext context, {bool? review}) async {
-    await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: item.id, reviewOnOpen: review));
+  Future<void> _open(BuildContext context) async {
+    await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: item.id));
+    reload();
+  }
+
+  /// Approve or reject from the card itself: reads the application (for its current version) and
+  /// opens the decision dialog over this list, with no detail screen in between (MOB-UX-014).
+  Future<void> _decide(BuildContext context, {required bool approve}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = ProviderScope.containerOf(context, listen: false).read(leaveRepositoryProvider);
+    final LeaveApplication application;
+    try {
+      application = await repo.getLeaveApplication(item.id);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(describeApiError(e))));
+      return;
+    }
+    if (!context.mounted) return;
+    final updated = await showLeaveReviewDialog(context, repo, application, approve: approve);
+    if (updated == null) return;
+    messenger.showSnackBar(SnackBar(content: Text(approve ? 'Leave application approved.' : 'Leave application rejected.')));
     reload();
   }
 
@@ -75,7 +95,7 @@ class _LeaveCard extends StatelessWidget {
           name: item.employeeName,
           code: item.employeeCode,
           lines: [where.isEmpty ? '—' : where, 'Submitted ${relativeTime(item.submittedAt, now: now)}'],
-          status: StatusChip(label: item.isPending ? 'Pending approval' : humanize(item.status), tone: item.isPending ? Tone.warning : toneForStatus(item.status)),
+          status: StatusChip.request(item.status),
         ),
         const SizedBox(height: 12),
         DecisionBlock(title: 'Leave particulars', children: [
@@ -108,8 +128,8 @@ class _LeaveCard extends StatelessWidget {
           detailsLabel: 'View details',
           onDetails: () => _open(context),
           approveLabel: 'Approve leave',
-          onDecline: item.isPending && canReview ? () => _open(context, review: false) : null,
-          onApprove: item.isPending && canReview ? () => _open(context, review: true) : null,
+          onDecline: item.isPending && canReview ? () => _decide(context, approve: false) : null,
+          onApprove: item.isPending && canReview ? () => _decide(context, approve: true) : null,
         ),
       ]),
     );

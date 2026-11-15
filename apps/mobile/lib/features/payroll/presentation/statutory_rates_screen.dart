@@ -10,6 +10,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/payroll_resources.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/format.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -172,7 +173,7 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load statutory rates", message: _error!.message, actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
@@ -197,7 +198,7 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
                                   const StatusChip(label: 'Unverified', tone: Tone.warning),
                               ]),
                               const SizedBox(height: 2),
-                              Text('${r['effective_from']} → ${r['effective_to'] ?? 'open'}${r['is_seeded'] == true ? ' · seeded' : ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
+                              Text('${formatPeriod(r['effective_from'] as String?, r['effective_to'] as String?)}${r['is_seeded'] == true ? ' · seeded' : ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
                               const SizedBox(height: 6),
                               Text(summariseStatutoryRate(r)),
                               if (r['notes'] != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${r['notes']}', style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12))),

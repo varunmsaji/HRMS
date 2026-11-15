@@ -296,10 +296,10 @@ void main() {
     testWidgets('a past rate is hidden until asked for', (tester) async {
       final past = {...pf(), 'id': 'r0', 'effective_to': '2026-03-31'};
       await pump(tester, [pf(), past], const []);
-      expect(find.textContaining('2026-03-31'), findsNothing);
+      expect(find.textContaining('31 Mar 2026'), findsNothing);
       await tester.tap(find.text('Show past rates'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('2026-03-31'), findsOneWidget);
+      expect(find.textContaining('31 Mar 2026'), findsOneWidget);
     });
   });
 }

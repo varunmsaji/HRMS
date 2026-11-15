@@ -1,24 +1,29 @@
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/requests/request_config.dart';
+import '../../../core/status_words.dart';
 import '../../../core/time.dart';
+import '../../../core/format.dart';
 
 /// Regularization requests and overtime records — the attendance module's approval workflows,
 /// configured on the shared request framework. Mirrors `apps/web/src/app/app/{regularizations,overtime}`.
 
+/// Plain-language names for what went wrong, so an employee can pick without knowing the policy
+/// terms (audit MOB-UX-018). The API codes are unchanged.
 const regularizationTypeLabels = {
-  'MISSING_PUNCH': 'Missing punch',
-  'WRONG_PUNCH': 'Wrong punch time',
-  'WRONG_SHIFT': 'Wrong shift',
-  'WRONG_STATUS': 'Wrong status',
-  'WFH': 'Work from home',
-  'ON_DUTY': 'On duty',
-  'EXCESS_BREAK': 'Excess break',
-  'FULL_DAY': 'Full day correction',
-  'EARLY_DEPARTURE_APPROVAL': 'Early departure pre-approval',
+  'MISSING_PUNCH': 'Missed a punch (in or out)',
+  'WRONG_PUNCH': 'A punch time is wrong',
+  'WRONG_SHIFT': 'Wrong shift assigned',
+  'WRONG_STATUS': 'Day marked wrongly',
+  'WFH': 'Worked from home',
+  'ON_DUTY': 'On duty elsewhere',
+  'EXCESS_BREAK': 'Break ran over',
+  'FULL_DAY': 'Count the full day',
+  'EARLY_DEPARTURE_APPROVAL': 'Leaving early (ask in advance)',
 };
 
-const requestStatusLabels = {'SUBMITTED': 'Submitted', 'APPROVED': 'Approved', 'REJECTED': 'Rejected', 'CANCELLED': 'Cancelled'};
+/// The shared request status words (`core/status_words.dart`).
+const requestStatusLabels = requestStatusWords;
 
 String _s(Map<String, dynamic> r, String k) => (r[k] ?? '—').toString();
 
@@ -37,12 +42,12 @@ Map<String, String> _validateRegularization(Map<String, dynamic> v) {
 
 FormSpec regularizationSpec(bool onBehalf) => FormSpec(
       name: 'regularization',
-      label: 'Regularization request',
+      label: 'Attendance correction',
       extraValidate: _validateRegularization,
       fields: [
         if (onBehalf) const FieldSpec('employee_id', 'Employee', kind: FieldKind.choice, choiceKey: 'employees', required: true),
         const FieldSpec('attendance_date', 'Attendance date', kind: FieldKind.date, required: true),
-        const FieldSpec('request_type', 'Request type', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'WFH', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
+        const FieldSpec('request_type', 'What needs correcting?', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'WFH', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
         const FieldSpec('correct_shift', 'Correct the assigned shift instead of punch times', kind: FieldKind.toggle),
         const FieldSpec('requested_shift_id', 'Correct shift', kind: FieldKind.choice, choiceKey: 'shifts', showWhen: 'correct_shift'),
         const FieldSpec('punch_in_time', 'Check-in time', kind: FieldKind.time, showWhen: '!correct_shift'),
@@ -105,19 +110,21 @@ List<DetailSection> _regularizationSections(Map<String, dynamic> r, String tz) {
 }
 
 final regularizationConfig = RequestConfig(
-  title: 'Regularizations',
-  singular: 'Regularization request',
+  title: 'Attendance corrections',
+  singular: 'Attendance correction',
   path: '/regularizations',
   statuses: const ['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'],
   statusLabels: requestStatusLabels,
   statusParam: 'request_status',
+  openStatus: 'SUBMITTED',
+  emptyHint: 'No corrections in the last 30 days. Raise one from any attendance day.',
   filters: [
     RequestFilter(param: 'request_type', label: 'Type', options: [for (final e in regularizationTypeLabels.entries) (e.key, e.value)]),
   ],
   approvePermission: attendanceRegularizationApprove,
   submitPermission: attendanceRegularizationRequest,
   onBehalfPermission: attendanceRegularizationRequestOnBehalf,
-  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${regularizationTypeLabels[r['request_type']] ?? r['request_type']} · ${r['attendance_date']}',
+  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${regularizationTypeLabels[r['request_type']] ?? r['request_type']} · ${formatDayDate('${r['attendance_date']}')}',
   rowSubtitle: (r) => r['reason'] as String?,
   createSpec: regularizationSpec,
   // `GET /shifts` needs ORG.SHIFT.MANAGE, which an employee does not hold: optional, so a 403 only
@@ -168,8 +175,10 @@ final overtimeConfig = RequestConfig(
   path: '/overtime',
   statuses: const ['PENDING', 'AUTO_APPROVED', 'APPROVED', 'REJECTED'],
   statusParam: 'record_status',
+  openStatus: 'PENDING',
+  emptyHint: 'No overtime in the last 30 days. Overtime appears here when you work past your shift.',
   approvePermission: attendanceOvertimeApprove,
-  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${r['attendance_date']}',
+  rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${formatDayDate('${r['attendance_date']}')}',
   rowSubtitle: (r) => 'Detected ${formatMinutes(r['minutes_detected'] as int?)}${(r['minutes_approved'] as int? ?? 0) > 0 ? ' · approved ${formatMinutes(r['minutes_approved'] as int?)}' : ''}',
   sections: _overtimeSections,
   isPending: (r) => r['status'] == 'PENDING',

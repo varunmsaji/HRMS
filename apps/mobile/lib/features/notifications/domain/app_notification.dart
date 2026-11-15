@@ -57,25 +57,11 @@ String? safeNotificationPath(String? url) {
 /// Web paths whose screen lives at a different path in this app.
 const _mobileAliases = {'/app/rosters/schedule': '/app/shift-swaps'};
 
-/// List screens that have a web detail page (`<list>/<id>`) but no detail route here: a
-/// notification about one item opens the list it sits in.
-const _listOnlyOnMobile = [
-  '/app/leave-applications',
-  '/app/regularizations',
-  '/app/overtime',
-  '/app/onboarding',
-  '/app/me/payslips',
-];
-
-/// A notification's `action_url` is the web path; this maps it onto a route this app has.
-String mobileRouteFor(String path) {
-  final alias = _mobileAliases[path];
-  if (alias != null) return alias;
-  for (final list in _listOnlyOnMobile) {
-    if (path.startsWith('$list/') && !path.substring(list.length + 1).contains('/')) return list;
-  }
-  return path;
-}
+/// A notification's `action_url` is the web path; this maps it onto a route this app has. Item
+/// paths (`/app/leave-applications/<id>`, `/app/regularizations/<id>`, `/app/overtime/<id>`,
+/// `/app/onboarding/<id>`, `/app/me/payslips/<run id>`) have the same route here, so they open the
+/// item itself (MOB-UX-003).
+String mobileRouteFor(String path) => _mobileAliases[path] ?? path;
 
 /// "just now", "5m ago", "3h ago", "2d ago", then a short date.
 String notificationAge(String iso, {DateTime? now}) {

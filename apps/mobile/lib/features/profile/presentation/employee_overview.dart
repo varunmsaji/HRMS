@@ -182,7 +182,7 @@ class _OverviewSection extends StatelessWidget {
                     children: [
                       Text(
                         field.label.toUpperCase(),
-                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant, letterSpacing: 0.6),
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant, letterSpacing: 0.6),
                       ),
                       const SizedBox(height: 3),
                       Text(

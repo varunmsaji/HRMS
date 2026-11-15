@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/validation.dart';
+import '../../../core/router/app_router.dart' show returnPathProvider;
+import '../../../core/widgets/ui.dart' show Tone, toneColors;
+import '../data/login_prefs.dart';
 import '../state/auth_controller.dart';
 import '../state/auth_state.dart';
 import 'widgets/auth_form_field.dart';
@@ -22,9 +25,11 @@ enum _ResendState { idle, sending, sent }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
+  final _companyCodeController = TextEditingController();
   final _passwordController = TextEditingController();
 
   String? _emailError;
+  String? _companyCodeError;
   String? _passwordError;
   String? _formError;
   String? _unverifiedEmail;
@@ -32,8 +37,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _submitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    _prefill();
+  }
+
+  /// Fills in the identifier and company code from the last successful sign-in on this device, so
+  /// a returning employee types only their password (MOB-UX-030). Never overwrites typing.
+  Future<void> _prefill() async {
+    final saved = await ref.read(loginPrefsProvider).read();
+    if (!mounted) return;
+    setState(() {
+      if (_emailController.text.isEmpty && saved.identifier != null) _emailController.text = saved.identifier!;
+      if (_companyCodeController.text.isEmpty && saved.companyCode != null) _companyCodeController.text = saved.companyCode!;
+    });
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
+    _companyCodeController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -45,15 +68,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _resendState = _ResendState.idle;
     });
 
-    final email = _emailController.text;
+    final identifier = _emailController.text.trim();
+    final companyCode = _companyCodeController.text.trim();
     final password = _passwordController.text;
-    final nextEmailError = email.trim().isEmpty
-        ? 'Email is required.'
-        : (!isValidEmail(email) ? 'Enter a valid email address.' : null);
+    final byEmail = _isEmail(identifier);
+    final nextEmailError = identifier.isEmpty
+        ? 'Email or employee ID is required.'
+        : (byEmail && !isValidEmail(identifier) ? 'Enter a valid email address.' : null);
+    final nextCompanyCodeError = identifier.isNotEmpty && !byEmail && companyCode.isEmpty
+        ? 'Company code is required to sign in with an employee ID.'
+        : null;
     final nextPasswordError = password.isEmpty ? 'Password is required.' : null;
-    if (nextEmailError != null || nextPasswordError != null) {
+    if (nextEmailError != null || nextCompanyCodeError != null || nextPasswordError != null) {
       setState(() {
         _emailError = nextEmailError;
+        _companyCodeError = nextCompanyCodeError;
         _passwordError = nextPasswordError;
       });
       return;
@@ -61,16 +90,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     setState(() => _submitting = true);
     try {
-      final user =
-          await ref.read(authControllerProvider.notifier).login(email: email.trim(), password: password);
+      final auth = ref.read(authControllerProvider.notifier);
+      final user = byEmail
+          ? await auth.login(email: identifier, password: password)
+          : await auth.login(companyCode: companyCode, employeeCode: identifier, password: password);
       if (!mounted) return;
-      context.go(landingPathFor(user));
+      await ref.read(loginPrefsProvider).remember(identifier: identifier, companyCode: byEmail ? null : companyCode);
+      if (!mounted) return;
+      // Back to where an expired session interrupted this same user; otherwise the landing page.
+      context.go(ref.read(returnPathProvider).takeFor(user?.id) ?? landingPathFor(user));
     } catch (error) {
       if (error is ApiError) {
         if (error.code == 'EMAIL_NOT_VERIFIED') {
-          setState(() => _unverifiedEmail = email.trim());
+          setState(() {
+            if (byEmail) {
+              _unverifiedEmail = identifier;
+            } else {
+              _formError = 'Please verify your email address before signing in. '
+                  'Check your inbox for the verification link.';
+            }
+          });
         } else if (error.status == 401) {
-          setState(() => _formError = 'Invalid email or password.');
+          setState(() => _formError =
+              byEmail ? 'Invalid email or password.' : 'Invalid company code, employee ID or password.');
         } else if (error.status == 423) {
           setState(() => _formError = 'This account is temporarily locked. Try again later.');
         } else if (error.status == 429) {
@@ -84,6 +126,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// Anything with an `@` is an email; otherwise it is an employee ID, which
+  /// needs the company code too.
+  static bool _isEmail(String identifier) => identifier.contains('@');
+
+  bool get _showCompanyCode {
+    final identifier = _emailController.text.trim();
+    return identifier.isNotEmpty && !_isEmail(identifier);
   }
 
   Future<void> _resendVerification() async {
@@ -143,7 +194,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          OutlinedButton.icon(
+          // Most people on this screen are employees signing in; registering a company is the rare
+          // case, so it is a link rather than a second large button competing with Sign in.
+          TextButton.icon(
             onPressed: _submitting ? null : () => context.go('/register'),
             icon: const Icon(Icons.domain_add_outlined, size: 20),
             label: const Text('Register your company'),
@@ -160,6 +213,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (ref.watch(authControllerProvider.select((a) => a.sessionExpired)) && _formError == null) ...[
+              const _SessionEndedNote(),
+              const SizedBox(height: 16),
+            ],
             if (_formError != null) ...[
               InlineAlert(message: _formError!),
               const SizedBox(height: 16),
@@ -171,11 +228,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   padding: const EdgeInsets.only(top: 4),
                   child: _resendState == _ResendState.sent
                       ? const Text('If that address has an account, a new verification email is on its way.')
-                      : GestureDetector(
-                          onTap: _resendState == _ResendState.sending ? null : _resendVerification,
-                          child: Text(
-                            _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
-                            style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _resendState == _ResendState.sending ? null : _resendVerification,
+                            style: TextButton.styleFrom(minimumSize: const Size(48, 48), padding: EdgeInsets.zero, foregroundColor: Theme.of(context).colorScheme.onErrorContainer),
+                            child: Text(
+                              _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
+                              style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                            ),
                           ),
                         ),
                 ),
@@ -183,22 +244,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               const SizedBox(height: 16),
             ],
             AuthFormField(
-              label: 'Work email',
+              label: 'Email or employee ID',
               errorText: _emailError,
               child: TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 autocorrect: false,
-                autofillHints: const [AutofillHints.email],
+                autofillHints: const [AutofillHints.username],
                 enabled: !_submitting,
                 onChanged: (_) => setState(() => _emailError = null),
                 decoration: const InputDecoration(
-                  hintText: 'you@company.com',
-                  prefixIcon: Icon(Icons.mail_outline_rounded),
+                  hintText: 'you@company.com or EMP-0007',
+                  prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
               ),
             ),
+            if (_showCompanyCode) ...[
+              const SizedBox(height: 18),
+              AuthFormField(
+                label: 'Company code',
+                errorText: _companyCodeError,
+                child: TextField(
+                  controller: _companyCodeController,
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.next,
+                  autocorrect: false,
+                  enabled: !_submitting,
+                  onChanged: (_) => setState(() => _companyCodeError = null),
+                  decoration: const InputDecoration(
+                    hintText: 'e.g. ACME — it\'s in your welcome email',
+                    prefixIcon: Icon(Icons.business_outlined),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             AuthFormField(
               label: 'Password',
@@ -226,6 +306,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             PrimaryButton(label: _submitting ? 'Signing in…' : 'Sign in', loading: _submitting, onPressed: _submit),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shown when the app signed the user out because their session ran out, so the login screen is
+/// not a mystery (MOB-UX-031). Informational, not an error.
+class _SessionEndedNote extends StatelessWidget {
+  const _SessionEndedNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = toneColors(context, Tone.info);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: c.bg, borderRadius: BorderRadius.circular(12)),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.info_outline_rounded, size: 18, color: c.fg),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Your session ended. Sign in again to continue where you left off.', style: TextStyle(color: c.fg, fontSize: 13, height: 1.35))),
+        ]),
       ),
     );
   }

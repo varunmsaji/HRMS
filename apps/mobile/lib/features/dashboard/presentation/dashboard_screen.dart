@@ -56,7 +56,7 @@ class _Pending {
 }
 
 /// Web's pending row titles and the queue each opens.
-const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Regularization', 'overtime': 'Overtime'};
+const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Attendance correction', 'overtime': 'Overtime'};
 const _pendingRoute = {'leave': '/app/leave-applications', 'regularization': '/app/regularizations', 'overtime': '/app/overtime'};
 const _pendingIcon = {'leave': Icons.event_busy_outlined, 'regularization': Icons.schedule_outlined, 'overtime': Icons.more_time_outlined};
 
@@ -408,7 +408,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               DashPanel(
                 title: 'Pending Approvals',
                 actionLabel: 'View all',
-                onAction: () => context.push('/app/leave-applications'),
+                // Every kind in one place, not just leave (MOB-UX-001).
+                onAction: () => context.push('/app/approvals'),
                 child: _pending.newest.isEmpty
                     ? Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text('Nothing pending.', style: Theme.of(context).textTheme.bodySmall))
                     : Column(children: [
@@ -417,7 +418,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                             icon: _pendingIcon[p.kind]!,
                             title: _pendingTitle[p.kind]!,
                             caption: '${_names[p.employeeId] ?? 'Employee'}${p.at.isEmpty ? '' : ' · ${relativeTime(p.at)}'}',
-                            onTap: () => context.push(_pendingRoute[p.kind]!),
+                            // The request itself, not its list (MOB-UX-003).
+                            onTap: () => context.push('${_pendingRoute[p.kind]!}/${p.id}'),
                           ),
                       ]),
               ),

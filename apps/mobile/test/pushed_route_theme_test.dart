@@ -49,6 +49,23 @@ void main() {
     expect(await _openFrom(tester, [dashboardCompanyView], inScope: true), isTrue);
   });
 
+  testWidgets('in dark mode the administrator\'s Attendance/Leave/Profile tabs stay dark (no light flash between tabs)', (tester) async {
+    late Brightness inside;
+    await tester.pumpWidget(ProviderScope(
+      overrides: [fakeAuth([dashboardCompanyView], employeeId: 'e-1')],
+      child: MaterialApp(
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: ThemeMode.dark,
+        home: EmployeeThemeScope(child: Builder(builder: (ctx) {
+          inside = Theme.of(ctx).brightness;
+          return const SizedBox();
+        })),
+      ),
+    ));
+    expect(inside, Brightness.dark);
+  });
+
   testWidgets('the same administrator opening a detail from an administrator screen keeps the administrator theme', (tester) async {
     expect(await _openFrom(tester, [dashboardCompanyView], inScope: false), isFalse);
   });

@@ -5,7 +5,8 @@ import '../data/notification_repository.dart';
 
 /// The bell's unread badge. The count always comes from the server; it is fetched when the
 /// signed-in user changes (app start, login), and re-fetched by [refresh] (app resume, opening the
-/// notification screen, Home pull-to-refresh). No polling. A failed read keeps the last count.
+/// notification screen, Home pull-to-refresh), and kept current by the foreground check in
+/// `NotificationPopupController`. A failed read keeps the last count.
 class UnreadCountNotifier extends StateNotifier<int> {
   UnreadCountNotifier(this._repo, {required bool signedIn}) : super(0) {
     if (signedIn) refresh();

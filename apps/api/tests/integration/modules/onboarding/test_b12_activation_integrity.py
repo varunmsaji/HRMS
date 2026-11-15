@@ -77,8 +77,10 @@ ONE = {
     "compensation": 0,  # pay is set by HR afterwards, never from the candidate
     "invite": 1,
     "audit_activated": 1,
+    # One email per activation: the welcome email carries the login details and the
+    # set-password link, so the account invite is issued without an email of its own.
     "mail_activation": 1,
-    "mail_account_invite": 1,
+    "mail_account_invite": 0,
 }
 NONE = dict.fromkeys(ONE, 0)
 
@@ -289,6 +291,6 @@ async def test_invite_savepoint_rollback_drops_only_the_invite_email(
         monkeypatch.setattr(AuditService, "record", flaky)
         r = await _activate(client, headers, case["id"])
         assert r.status_code == 200, r.text
-        assert await graph(company_id) == {**ONE, "invite": 0, "mail_account_invite": 0}
+        assert await graph(company_id) == {**ONE, "invite": 0}
     finally:
         await _full_teardown(company_id=company_id, user_id=user_id)

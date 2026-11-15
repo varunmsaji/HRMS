@@ -80,7 +80,7 @@ class _CompanyProfileScreenState extends ConsumerState<CompanyProfileScreen> {
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? 'You do not have permission to view the company profile.' : _error!.message, actionLabel: 'Retry', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the company profile", message: _error!.status == 403 ? 'You do not have permission to view the company profile.' : _error!.message, actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(onRefresh: _load, child: _view(_profile!)),
     );
   }

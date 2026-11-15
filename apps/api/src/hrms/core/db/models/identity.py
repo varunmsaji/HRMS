@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import (
     Boolean,
     DateTime,
+    FetchedValue,
     ForeignKey,
     Integer,
     SmallInteger,
@@ -39,6 +40,11 @@ class Company(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200))
     legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     subdomain: Mapped[str | None] = mapped_column(String(63), nullable=True)
+    # Short code employees type on the login page alongside their employee ID (migration
+    # 20261114090000). Filled from the company name by a database trigger when left empty.
+    login_code: Mapped[str | None] = mapped_column(
+        String(12), nullable=True, server_default=FetchedValue()
+    )
     industry_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     country_code: Mapped[str] = mapped_column(String(2), default="IN")
     currency: Mapped[str] = mapped_column(String(3), default="INR")

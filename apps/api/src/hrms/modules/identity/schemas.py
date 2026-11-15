@@ -1,16 +1,40 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
 from hrms.shared.pagination import ResponseMeta
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    """Sign in with an email, or with a company code plus employee ID (e.g. `ACME` +
+    `EMP-0007`). Exactly one of the two must be given."""
+
+    email: EmailStr | None = None
+    company_code: str | None = Field(default=None, min_length=1, max_length=12)
+    employee_code: str | None = Field(default=None, min_length=1, max_length=30)
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
     company_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_identifier(self) -> "LoginRequest":
+        by_employee = self.company_code is not None or self.employee_code is not None
+        if self.email is not None and by_employee:
+            raise ValueError("Sign in with either an email or a company code and employee ID")
+        if self.email is None:
+            if not (self.company_code and self.company_code.strip()):
+                raise ValueError("Company code is required to sign in with an employee ID")
+            if not (self.employee_code and self.employee_code.strip()):
+                raise ValueError("Email or employee ID is required")
+        return self
+
+    @property
+    def login_subject(self) -> str:
+        """What the caller typed, for rate limiting and failed-login logging (hashed there)."""
+        if self.email is not None:
+            return str(self.email)
+        return f"{(self.company_code or '').strip()}/{(self.employee_code or '').strip()}".lower()
 
 
 class RefreshRequest(BaseModel):

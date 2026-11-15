@@ -5,6 +5,7 @@ import 'choice_sources.dart';
 import '../../features/auth/presentation/widgets/auth_form_field.dart' show InlineAlert;
 import 'form_spec.dart';
 import 'spec_form.dart';
+import '../widgets/employee/interaction.dart' show confirmDestructive;
 import '../widgets/ui.dart';
 import '../theme/employee_theme_scope.dart';
 
@@ -58,6 +59,23 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
   bool _loading = true;
   bool _saving = false;
   String? _banner;
+
+  /// Set once the user changes any field. Leaving a changed form asks first (MOB-UX-024).
+  bool _dirty = false;
+
+  /// Back with unsaved changes: ask, and leave only on "Discard".
+  Future<void> _confirmLeave() async {
+    final discard = await confirmDestructive(
+      context,
+      title: 'Discard changes?',
+      body: 'What you entered on this form has not been saved.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+    );
+    if (!discard || !mounted) return;
+    setState(() => _dirty = false);
+    Navigator.of(context).pop();
+  }
 
   bool get _editing => widget.initial != null;
 
@@ -114,7 +132,10 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
     setState(() => _saving = true);
     try {
       await widget.onSubmit(payload, changed);
-      if (mounted) Navigator.of(context).pop(true);
+      if (!mounted) return;
+      // Saved: nothing left to lose, so the guard must not ask on the way out.
+      setState(() => _dirty = false);
+      Navigator.of(context).pop(true);
     } on SubmitCancelled {
       // Back on the form, as the user left it.
     } on ApiError catch (e) {
@@ -139,7 +160,12 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmLeave();
+      },
+      child: Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: _loading
           ? const ListSkeleton(count: 4)
@@ -156,7 +182,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
                   unavailable: _unavailable,
                   editing: _editing,
                   readOnly: _saving,
-                  onChanged: () => setState(() {}),
+                  onChanged: () => setState(() => _dirty = true),
                 ),
                 const SizedBox(height: 8),
                 FilledButton(
@@ -165,6 +191,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
                 ),
               ],
             ),
+      ),
     );
   }
 }

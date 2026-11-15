@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/format.dart';
 import 'package:hrms_mobile/core/api/api_client.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/api/envelope.dart';
@@ -327,7 +328,7 @@ void main() {
       await tester.tap(find.bySemanticsLabel('Add roster entry for Person 1 on 2026-11-02'));
       await tester.pumpAndSettle();
       expect(find.text('New roster entry'), findsOneWidget);
-      expect(find.text('2026-11-02'), findsOneWidget);
+      expect(find.text(formatDayDate('2026-11-02')), findsOneWidget);
     });
 
     testWidgets('a manager taps a filled cell to edit it', (tester) async {

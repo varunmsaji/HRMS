@@ -89,9 +89,19 @@ class AuthRepository {
 
   final ApiClient _client;
 
-  Future<TokenResponseData> login({required String email, required String password}) => _client.post(
+  /// Sign in with [email], or with [companyCode] + [employeeCode] (employee
+  /// IDs repeat across companies, so the company code picks the account).
+  Future<TokenResponseData> login({
+    String? email,
+    String? companyCode,
+    String? employeeCode,
+    required String password,
+  }) =>
+      _client.post(
         '/auth/login',
-        body: {'email': email, 'password': password},
+        body: email != null
+            ? {'email': email, 'password': password}
+            : {'company_code': companyCode, 'employee_code': employeeCode, 'password': password},
         authenticated: false,
         parse: (data) => TokenResponseData.fromJson(data as Map<String, dynamic>),
       );

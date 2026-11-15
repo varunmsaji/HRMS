@@ -13,6 +13,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import 'attendance_period_detail_screen.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/format.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -133,7 +134,7 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance periods", message: _error!.message, actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
@@ -156,8 +157,8 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
                           padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                           child: ListRowCard(
                             leading: IconBadge(icon: p['status'] == 'CLOSED' ? Icons.lock_outline_rounded : Icons.lock_open_rounded, tone: p['status'] == 'CLOSED' ? Tone.success : Tone.warning),
-                            title: p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}',
-                            subtitle: '${_entityName(p['legal_entity_id'] as String)} · ${p['period_start']} → ${p['period_end']}',
+                            title: p['label'] as String? ?? formatDateRange('${p['period_start']}', '${p['period_end']}'),
+                            subtitle: '${_entityName(p['legal_entity_id'] as String)} · ${formatDateRange('${p['period_start']}', '${p['period_end']}')}',
                             trailing: StatusChip(label: p['status'] == 'CLOSED' ? 'Closed & locked' : 'Open', tone: p['status'] == 'CLOSED' ? Tone.success : Tone.warning),
                             onTap: () async {
                               await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(periodId: p['id'] as String, initial: p)));

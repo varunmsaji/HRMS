@@ -32,6 +32,9 @@ export interface CompanyProfile {
   legal_name: string | null;
   registration_number: string | null;
   subdomain: string | null;
+  /** What employees type in the "Company code" box to sign in with their employee ID. Optional
+   * because older API responses don't carry it. */
+  login_code?: string | null;
   contact: { email: string | null; phone: string | null; website: string | null } | null;
   address: {
     line1: string | null;

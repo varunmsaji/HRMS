@@ -207,7 +207,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
           decoration: BoxDecoration(border: line),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text(top, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color ?? scheme.onSurfaceVariant)),
-            if (bottom != null) Text(bottom, style: TextStyle(fontSize: 10, color: color ?? scheme.onSurfaceVariant)),
+            if (bottom != null) Text(bottom, style: TextStyle(fontSize: 11, color: color ?? scheme.onSurfaceVariant)),
           ]),
         );
 

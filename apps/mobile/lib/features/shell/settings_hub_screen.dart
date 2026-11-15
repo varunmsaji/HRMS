@@ -6,6 +6,7 @@ import '../../core/auth/surface.dart';
 import '../../core/nav/nav_entries.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/ui.dart';
+import '../auth/presentation/confirm_sign_out.dart';
 import '../auth/state/auth_controller.dart';
 
 class SettingsHubScreen extends ConsumerStatefulWidget {
@@ -18,20 +19,7 @@ class SettingsHubScreen extends ConsumerStatefulWidget {
 class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
   String _query = '';
 
-  Future<void> _confirmSignOut() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign out?'),
-        content: const Text('You will need to sign in again to use the app.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out')),
-        ],
-      ),
-    );
-    if (ok == true) await ref.read(authControllerProvider.notifier).logout();
-  }
+  Future<void> _confirmSignOut() => confirmSignOut(context, ref);
 
   @override
   Widget build(BuildContext context) {

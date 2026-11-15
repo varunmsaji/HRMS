@@ -160,8 +160,8 @@ void main() {
       expect(issueDates.take(2), ['8 Oct', '6 Oct']);
       expect(find.text('Missing punch'), findsWidgets);
       expect(find.text('Config error'), findsWidgets);
-      expect(find.text('REGULARIZATION REQUESTS'), findsOneWidget);
-      expect(find.text('Submitted'), findsOneWidget);
+      expect(find.text('ATTENDANCE CORRECTIONS'), findsOneWidget);
+      expect(find.text('Awaiting approval'), findsOneWidget);
     });
 
     testWidgets('requests that fail to load say so; the rest still shows', (tester) async {
@@ -177,7 +177,7 @@ void main() {
         child: MaterialApp(theme: AppTheme.employee, home: EmployeeAttendanceProfileScreen(employeeId: 'e-1', employeeLabel: 'Asha Rao', now: _now)),
       ));
       await tester.pumpAndSettle();
-      expect(find.text("Regularization requests couldn't be loaded."), findsOneWidget);
+      expect(find.text("Correction requests couldn't be loaded."), findsOneWidget);
       expect(find.text('No attendance issues this month.'), findsOneWidget);
     });
   });

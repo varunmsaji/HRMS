@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error.dart' show describeApiError;
 import '../../../core/providers.dart';
 import '../../../core/requests/decision_center_view.dart';
 import '../../../core/requests/request_screens.dart';
@@ -10,6 +11,7 @@ import '../../../core/widgets/ui.dart';
 import '../../auth/state/auth_controller.dart';
 import '../domain/regularization_decision_center.dart';
 import '../domain/request_resources.dart';
+import '../../../core/format.dart';
 
 /// The approver's attendance-correction screen — mirrors the web
 /// `regularization/decision-center.tsx`: what the system recorded beside what is being asked for.
@@ -25,15 +27,15 @@ class RegularizationDecisionCenterPanel extends ConsumerWidget {
     final me = ref.watch(authControllerProvider).user?.employeeId;
     final zone = ref.watch(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
     return DecisionCenterView<RegularizationDecisionCenter>(
-      tabs: const [('pending', 'Pending review'), ('approved', 'Approved history'), ('declined', 'Declined')],
+      tabs: const [('pending', 'Awaiting approval'), ('approved', 'Approved'), ('declined', 'Rejected')],
       load: (tab) => ref.read(apiClientProvider).get('/regularizations/decision-center?tab=$tab', parse: (d) => RegularizationDecisionCenter.fromJson(d as Map<String, dynamic>)),
       count: (d, tab) => d.counts[tab] ?? 0,
       forbiddenMessage: 'You do not have permission to review regularizations.',
       narrowHint: 'Use Team to filter further.',
       emptyIcon: Icons.edit_note,
       stats: (d) => [
-        DecisionStat('Pending decisions', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
-        DecisionStat('Regularization rate (last 30 days)', d.windowRatePct == null ? '—' : '${d.windowRatePct}%', note: '${d.windowRegularizedDays} of ${d.windowExpectedDays} working days regularized'),
+        DecisionStat('Awaiting your decision', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
+        DecisionStat('Correction rate (last 30 days)', d.windowRatePct == null ? '—' : '${d.windowRatePct}%', note: '${d.windowRegularizedDays} of ${d.windowExpectedDays} working days corrected'),
         DecisionStat('Approved / declined', '${d.counts['approved'] ?? 0} / ${d.counts['declined'] ?? 0}', note: 'All time, within your access'),
       ],
       cards: (context, d, reload) => [for (final item in d.items) _RegularizationCard(item: item, canReview: item.employeeId != me, zone: item.timezone ?? zone, now: now, reload: reload)],
@@ -49,8 +51,27 @@ class _RegularizationCard extends StatelessWidget {
   final DateTime? now;
   final VoidCallback reload;
 
-  Future<void> _open(BuildContext context, {bool? review}) async {
-    await pushKeepingTheme<void>(context, (_) => RequestDetailScreen(config: regularizationConfig, requestId: item.id, reviewOnOpen: review));
+  Future<void> _open(BuildContext context) async {
+    await pushKeepingTheme<void>(context, (_) => RequestDetailScreen(config: regularizationConfig, requestId: item.id));
+    reload();
+  }
+
+  /// Approve or reject from the card itself: reads the request (for its current version) and opens
+  /// the decision dialog over this list, with no detail screen in between (MOB-UX-014).
+  Future<void> _decide(BuildContext context, {required bool approve}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final client = ProviderScope.containerOf(context, listen: false).read(apiClientProvider);
+    final Map<String, dynamic> request;
+    try {
+      request = await client.get<Map<String, dynamic>>('${regularizationConfig.path}/${item.id}', parse: (d) => d as Map<String, dynamic>);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(describeApiError(e))));
+      return;
+    }
+    if (!context.mounted) return;
+    final updated = await showRequestReviewDialog(context, client, regularizationConfig, request, approve: approve);
+    if (updated == null) return;
+    messenger.showSnackBar(SnackBar(content: Text(approve ? 'Attendance correction approved.' : 'Attendance correction rejected.')));
     reload();
   }
 
@@ -79,10 +100,10 @@ class _RegularizationCard extends StatelessWidget {
           code: item.employeeCode,
           lines: [
             where.isEmpty ? '—' : where,
-            'Dispute: ${item.attendanceDate}${item.shiftName == null ? '' : ' · Shift: ${item.shiftName}'}',
+            'Dispute: ${formatDayDate(item.attendanceDate)}${item.shiftName == null ? '' : ' · Shift: ${item.shiftName}'}',
             'Submitted ${relativeTime(item.submittedAt, now: now)}',
           ],
-          status: StatusChip(label: item.isPending ? item.stageLabel : humanize(item.status), tone: item.isPending ? Tone.warning : toneForStatus(item.status)),
+          status: item.isPending ? StatusChip(label: item.stageLabel, tone: Tone.warning) : StatusChip.request(item.status),
         ),
         const SizedBox(height: 12),
         DecisionBlock(title: 'Recorded by system', children: [
@@ -113,8 +134,8 @@ class _RegularizationCard extends StatelessWidget {
           detailsLabel: 'View full audit trail',
           onDetails: () => _open(context),
           approveLabel: 'Approve',
-          onDecline: item.isPending && canReview ? () => _open(context, review: false) : null,
-          onApprove: item.isPending && canReview ? () => _open(context, review: true) : null,
+          onDecline: item.isPending && canReview ? () => _decide(context, approve: false) : null,
+          onApprove: item.isPending && canReview ? () => _decide(context, approve: true) : null,
         ),
       ]),
     );

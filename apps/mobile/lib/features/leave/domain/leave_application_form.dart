@@ -1,4 +1,5 @@
 import '../../../core/forms/form_spec.dart';
+import '../../../core/status_words.dart';
 
 /// Applying for leave — mirrors `LeaveApplicationCreate` (`apps/api/.../leave/schemas.py`) and the
 /// web dialog's validation. [onBehalf] adds the employee picker (HR / manager submitting for
@@ -32,4 +33,5 @@ FormSpec leaveApplicationSpec({required bool onBehalf}) => FormSpec(
 
 const leaveApplicationStatuses = ['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'];
 
-const leaveApplicationStatusLabels = {'SUBMITTED': 'Submitted', 'APPROVED': 'Approved', 'REJECTED': 'Rejected', 'CANCELLED': 'Cancelled'};
+/// The shared request status words (`core/status_words.dart`).
+const leaveApplicationStatusLabels = requestStatusWords;

@@ -240,7 +240,7 @@ class _EmployeeDocumentsPanelState extends ConsumerState<EmployeeDocumentsPanel>
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canManage = permissions.contains(employeeUpdateSensitive);
     if (_loading) return const ListSkeleton(count: 3);
-    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? "You do not have permission to view this employee's documents." : _error!.message, actionLabel: 'Retry', onAction: _load);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load documents", message: _error!.status == 403 ? "You do not have permission to view this employee's documents." : _error!.message, actionLabel: 'Try again', onAction: _load);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(

@@ -161,7 +161,7 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
     final theme = Theme.of(context);
     final s = AttendanceRangeSummary.compute(_monthDays);
     final issues = [for (final d in _monthDays) if (hasAttendanceException(d)) d]..sort((a, b) => b.attendanceDate.compareTo(a.attendanceDate));
-    final note = _regsLoading ? 'Loading requests…' : (_regsFailed ? "Regularization requests couldn't be loaded." : null);
+    final note = _regsLoading ? 'Loading requests…' : (_regsFailed ? "Correction requests couldn't be loaded." : null);
     return [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -192,11 +192,11 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
               ]),
             ),
         ]),
-      EmployeeSectionHeader('Regularization requests', actionLabel: 'All requests →', onAction: () => context.push('/app/regularizations')),
+      EmployeeSectionHeader('Attendance corrections', actionLabel: 'All requests →', onAction: () => context.push('/app/regularizations')),
       if (note != null)
         Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text(note, style: theme.textTheme.bodyMedium))
       else if (_regs.isEmpty)
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('No regularization requests.', style: theme.textTheme.bodyMedium))
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('No attendance corrections.', style: theme.textTheme.bodyMedium))
       else
         EmployeeListGroup(children: [
           for (final r in _regs.take(8))

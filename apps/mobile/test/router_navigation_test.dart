@@ -6,6 +6,10 @@ import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/nav/nav_entries.dart';
 import 'package:hrms_mobile/core/router/app_router.dart';
+import 'package:hrms_mobile/core/providers.dart';
+import 'package:hrms_mobile/core/requests/request_screens.dart' show RequestDetailScreen;
+import 'package:hrms_mobile/features/approvals/presentation/approvals_screen.dart';
+import 'package:hrms_mobile/features/leave/presentation/leave_application_detail_screen.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
 import 'package:hrms_mobile/core/theme/employee_theme_scope.dart';
 import 'package:hrms_mobile/core/theme/employee_tokens.dart';
@@ -14,6 +18,7 @@ import 'package:hrms_mobile/features/auth/state/auth_state.dart';
 import 'package:hrms_mobile/features/shell/settings_hub_screen.dart';
 import 'package:hrms_mobile/main.dart';
 
+import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';
 import 'support/test_themes.dart';
 
@@ -264,14 +269,68 @@ void main() {
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/attendance');
 
-      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Dashboard')));
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Home')));
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/home');
 
-      // On the redesigned Home the profile avatar in the header opens the More hub.
-      await tester.tap(find.byIcon(Icons.person));
+      // The avatar looks like "me", so it opens Profile; the labelled More button opens the hub.
+      await tester.tap(find.byTooltip('My profile'));
+      await tester.pumpAndSettle();
+      expect(router.routeInformationProvider.value.uri.path, '/app/me');
+
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Home')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('More'));
       await tester.pumpAndSettle();
       expect(find.byType(SettingsHubScreen), findsOneWidget);
+    });
+  });
+
+  group('item links (notifications, approvals inbox) open the item, not its list', () {
+    Future<GoRouter> start(WidgetTester tester, List<String> permissions) async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          fakeAuth(permissions, employeeId: 'e-1'),
+          attendanceRepositoryProvider.overrideWithValue(_AttendanceRepo()),
+          apiClientProvider.overrideWithValue(FakeApiClient(objects: {
+            '/regularizations/r-1': {'id': 'r-1', 'employee_id': 'e-2', 'attendance_date': '2026-11-11', 'request_type': 'MISSING_PUNCH', 'status': 'SUBMITTED', 'version': 1},
+            '/overtime/o-1': {'id': 'o-1', 'employee_id': 'e-2', 'attendance_date': '2026-11-11', 'minutes_detected': 60, 'status': 'PENDING', 'version': 1},
+          })),
+        ],
+        child: const HrmsApp(),
+      ));
+      await tester.pumpAndSettle();
+      return ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).read(appRouterProvider);
+    }
+
+    testWidgets('leave, correction and overtime paths open their detail screens', (tester) async {
+      final router = await start(tester, [attendanceView, leaveApplicationSubmit]);
+      router.go('/app/leave-applications/a-1');
+      await tester.pumpAndSettle();
+      expect(find.byType(LeaveApplicationDetailScreen), findsOneWidget);
+
+      router.go('/app/regularizations/r-1');
+      await tester.pumpAndSettle();
+      expect(find.byType(RequestDetailScreen), findsOneWidget);
+
+      router.go('/app/overtime/o-1');
+      await tester.pumpAndSettle();
+      expect(find.byType(RequestDetailScreen), findsOneWidget);
+    });
+
+    testWidgets('the approvals inbox is for approvers; anyone else lands on their Home', (tester) async {
+      final employee = await start(tester, [attendanceView]);
+      employee.go('/app/approvals');
+      await tester.pumpAndSettle();
+      expect(employee.routeInformationProvider.value.uri.path, '/app/home');
+      expect(find.byType(ApprovalsScreen), findsNothing);
+    });
+
+    testWidgets('an approver opens the inbox', (tester) async {
+      final manager = await start(tester, [attendanceView, leaveApplicationApprove]);
+      manager.go('/app/approvals');
+      await tester.pumpAndSettle();
+      expect(find.byType(ApprovalsScreen), findsOneWidget);
     });
   });
 

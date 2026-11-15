@@ -234,6 +234,8 @@ class CompanyProfileRead(BaseModel):
     legal_name: str | None
     registration_number: str | None
     subdomain: str | None
+    # What employees type in the "Company code" box to sign in with their employee ID.
+    login_code: str | None = None
     contact: ContactInfoSchema
     address: AddressSchema
     industry_code: str | None
@@ -346,6 +348,7 @@ def company_to_profile_read(company: Company) -> CompanyProfileRead:
         legal_name=company.legal_name,
         registration_number=company.registration_number,
         subdomain=company.subdomain,
+        login_code=company.login_code,
         contact=ContactInfoSchema(
             email=company.contact_email,
             phone=company.contact_phone,

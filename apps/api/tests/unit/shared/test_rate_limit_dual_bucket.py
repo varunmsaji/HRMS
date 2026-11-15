@@ -171,3 +171,38 @@ async def test_plain_rate_limit_still_recovers_after_window_expires() -> None:
     finally:
         await client.delete("ratelimit:test-refresh-window:9.9.9.202")
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_employee_id_login_is_counted_per_company_and_employee_code() -> None:
+    """Employee-ID login has no `email`; the (company code, employee code) pair is the account
+    bucket instead, case-insensitively, so it can't be sprayed from many IPs either."""
+    from hrms.shared.rate_limit import _extract_login_identity
+
+    def _employee_request(client_ip: str, company_code: str, employee_code: str) -> Request:
+        body = json.dumps({"company_code": company_code, "employee_code": employee_code}).encode()
+
+        async def receive() -> dict:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return Request({"type": "http", "client": (client_ip, 555), "headers": []}, receive=receive)
+
+    assert await _extract_login_identity(_employee_request("1.1.1.1", " Acme ", "emp-0001")) == (
+        "acme/emp-0001"
+    )
+
+    dep = rate_limit_by_ip_and_email("test-dual-employee-id", limit=3, window_seconds=60)
+    client = redis.from_url(get_settings().redis_url, decode_responses=True)
+    attacker_ips = [f"9.9.8.{10 + i}" for i in range(4)]
+    try:
+        for i, ip in enumerate(attacker_ips[:3]):
+            await dep(_employee_request(ip, "ACME", "EMP-0001" if i % 2 else "emp-0001"))
+        with pytest.raises(RateLimitExceededError):
+            await dep(_employee_request(attacker_ips[3], "acme", "EMP-0001"))
+    finally:
+        await _clear(
+            client,
+            "ratelimit:test-dual-employee-id:email:acme/emp-0001",
+            *(f"ratelimit:test-dual-employee-id:ip:{ip}" for ip in attacker_ips),
+        )
+        await client.aclose()

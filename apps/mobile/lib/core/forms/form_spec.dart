@@ -300,7 +300,8 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
       continue;
     }
     if (f.required && f.kind != FieldKind.toggle && text.isEmpty) {
-      errors[f.key] = '${f.label} is required.';
+      // A question label ("What needs correcting?") reads badly as "… is required".
+      errors[f.key] = f.label.endsWith('?') ? 'Choose an option.' : '${f.label} is required.';
       continue;
     }
     if (text.isEmpty) continue;

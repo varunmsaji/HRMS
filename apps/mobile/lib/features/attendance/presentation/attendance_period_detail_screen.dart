@@ -11,6 +11,7 @@ import '../../../core/time.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/format.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -18,7 +19,7 @@ const periodBlockingReasonLabels = {
   'EMPLOYEES_WITHOUT_ATTENDANCE': 'Employees missing calculated attendance',
   'CONFIG_ERROR': 'Unresolved configuration errors',
   'INCOMPLETE_ATTENDANCE': 'Incomplete attendance requiring manual resolution',
-  'PENDING_REGULARIZATION': 'Pending regularization requests',
+  'PENDING_REGULARIZATION': 'Pending attendance corrections',
   'PENDING_OVERTIME_APPROVAL': 'Pending overtime approvals',
   'UNPUBLISHED_ROSTER': 'Unpublished (DRAFT) roster entries',
   'PAID_LOP_MISMATCH': 'Days whose paid, loss-of-pay and unpaid-off shares do not add up to one day',
@@ -252,7 +253,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
     if (p == null && _loading) {
       body = const ListSkeleton();
     } else if (p == null) {
-      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Retry', onAction: _load);
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this period", message: _error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
     } else {
       final open = p['status'] == 'OPEN';
       final actions = ((p['actions'] as List?) ?? const []).cast<Rec>();
@@ -266,11 +267,11 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
             HeroCard(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  Expanded(child: Text(p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 19))),
+                  Expanded(child: Text(p['label'] as String? ?? formatDateRange('${p['period_start']}', '${p['period_end']}'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 19))),
                   StatusChip(label: open ? 'Open' : 'Closed & locked', tone: open ? Tone.warning : Tone.success),
                 ]),
                 const SizedBox(height: 6),
-                Text('${_entityName ?? 'Legal entity'} · ${p['period_start']} → ${p['period_end']}', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
+                Text('${_entityName ?? 'Legal entity'} · ${formatDateRange('${p['period_start']}', '${p['period_end']}')}', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
               ]),
             ),
             const SizedBox(height: 12),

@@ -501,7 +501,6 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
     .kx .hdr{animation:kHdr auto linear both;animation-timeline:scroll(block root);animation-range:0px 140px}
     .kx .hdr-in{animation:kHdrIn auto linear both;animation-timeline:scroll(block root);animation-range:0px 140px}
     .kx .aurora{animation:kDrift auto linear both;animation-timeline:scroll(block root);animation-range:0px 900px}
-    .kx .win-rise{transform-origin:50% 0;animation:kRise auto linear both;animation-timeline:scroll(block root);animation-range:0px 460px}
   }
   @supports ((animation-timeline:view()) and (animation-range:entry)){
     .kx .strip-row{animation:kStrip auto linear both;animation-timeline:view();animation-range:cover}
@@ -512,7 +511,6 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
 @keyframes kHdr{from{background-color:rgba(255,255,255,0);border-bottom-color:transparent;box-shadow:0 0 0 0 rgba(10,18,48,0)}to{background-color:rgba(255,255,255,.86);border-bottom-color:var(--line);box-shadow:0 14px 30px -24px rgba(10,18,48,.5)}}
 @keyframes kHdrIn{from{height:72px}to{height:60px}}
 @keyframes kDrift{to{translate:0 140px;scale:1.12}}
-@keyframes kRise{from{transform:perspective(1600px) rotateX(11deg) scale(.95)}to{transform:none}}
 @keyframes kStrip{from{translate:7% 0}to{translate:-7% 0}}
 @keyframes kStripRev{from{translate:-7% 0}to{translate:7% 0}}
 

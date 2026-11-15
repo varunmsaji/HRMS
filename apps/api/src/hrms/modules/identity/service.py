@@ -66,16 +66,33 @@ class IdentityService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> TokenResponseData:
-        user = await self._repo.get_user_by_email(self._session, body.email.lower())
+        subject = body.login_subject
+        # The company an employee-ID login belongs to. An email login leaves it `None` and picks
+        # the company from `body.company_id` / the primary membership below.
+        employee_company_id: UUID | None = None
+        if body.email is not None:
+            user = await self._repo.get_user_by_email(self._session, body.email.lower())
+        else:
+            match = await self._repo.find_employee_login(
+                self._session,
+                company_code=body.company_code or "",
+                employee_code=body.employee_code or "",
+            )
+            user = (
+                await self._repo.get_user_by_id(self._session, match.user_id)
+                if match is not None
+                else None
+            )
+            employee_company_id = match.company_id if match is not None else None
         if user is None or not user.password_hash:
             # LOG-07 — operational security events below never reach the client (identical
             # INVALID_CREDENTIALS answer either way) and never carry the address or password.
-            self._login_failed("unknown_account", None, body.email, ip_address)
+            self._login_failed("unknown_account", None, subject, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         now = datetime.now(UTC)
         if user.locked_until and user.locked_until > now:
-            self._login_failed("account_locked", user.id, body.email, ip_address)
+            self._login_failed("account_locked", user.id, subject, ip_address)
             raise AccountLockedError("Account is temporarily locked")
 
         if not verify_password(user.password_hash, body.password):
@@ -85,7 +102,7 @@ class IdentityService:
             # silently discard this increment and make lockout impossible — persist it first.
             await self._session.commit()
             self._login_failed(
-                "bad_password", user.id, body.email, ip_address, failed_attempts=failed_attempts
+                "bad_password", user.id, subject, ip_address, failed_attempts=failed_attempts
             )
             if locked_until is not None and locked_until > now:
                 security_event(
@@ -104,7 +121,7 @@ class IdentityService:
         # is not disclosed, and (like the email-verified check below) only after the password is
         # confirmed so it cannot act as an account-existence oracle.
         if user.status != "ACTIVE":
-            self._login_failed("inactive_account", user.id, body.email, ip_address)
+            self._login_failed("inactive_account", user.id, subject, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         # SEC-09 (RELEASE_HARDENING_PHASE_3A) — checked only after the password itself is
@@ -114,12 +131,12 @@ class IdentityService:
         # both issue tokens via `issue_tokens_for` directly, never through this method — only a
         # subsequent login attempt.
         if user.email_verified_at is None:
-            self._login_failed("email_not_verified", user.id, body.email, ip_address)
+            self._login_failed("email_not_verified", user.id, subject, ip_address)
             raise EmailNotVerifiedError("Please verify your email address before signing in")
 
         memberships = await self._repo.list_user_companies_for_login(self._session, user.id)
         if not memberships:
-            self._login_failed("no_membership", user.id, body.email, ip_address)
+            self._login_failed("no_membership", user.id, subject, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         company_summaries: list[CompanySummary] = []
@@ -130,12 +147,19 @@ class IdentityService:
                     CompanySummary(id=company.id, name=company.name, is_primary=m.is_primary)
                 )
 
-        active_company_id = body.company_id
+        if (
+            employee_company_id is not None
+            and body.company_id is not None
+            and body.company_id != employee_company_id
+        ):
+            self._login_failed("company_not_member", user.id, subject, ip_address)
+            raise InvalidCredentialsError("Invalid email or password")
+        active_company_id = body.company_id or employee_company_id
         if active_company_id is None:
             primary = next((m for m in memberships if m.is_primary), memberships[0])
             active_company_id = primary.company_id
         elif not any(m.company_id == active_company_id for m in memberships):
-            self._login_failed("company_not_member", user.id, body.email, ip_address)
+            self._login_failed("company_not_member", user.id, subject, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         # Platform console: a REJECTED / TERMINATED company cannot sign in. Checked only here,
@@ -172,7 +196,7 @@ class IdentityService:
     def _login_failed(
         reason: str,
         user_id: UUID | None,
-        email: str,
+        subject: str,
         ip_address: str | None,
         **extra: object,
     ) -> None:
@@ -181,7 +205,7 @@ class IdentityService:
             level="warning",
             reason=reason,
             user_id=str(user_id) if user_id else None,
-            subject_hash=None if user_id else subject_hash(email),
+            subject_hash=None if user_id else subject_hash(subject),
             client_ip=ip_address,
             **extra,
         )

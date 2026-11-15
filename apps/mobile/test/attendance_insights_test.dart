@@ -78,8 +78,8 @@ void main() {
         blockedPeriods: 1,
       );
       expect(items.first.severity, Severity.critical);
-      expect(items.map((i) => i.label), containsAll(['Configuration errors', 'Late arrivals', 'Regularization pending', 'Payroll period blocked']));
-      expect(items.firstWhere((i) => i.label == 'Regularization pending').route, '/app/regularizations');
+      expect(items.map((i) => i.label), containsAll(['Configuration errors', 'Late arrivals', 'Corrections pending', 'Payroll period blocked']));
+      expect(items.firstWhere((i) => i.label == 'Corrections pending').route, '/app/regularizations');
     });
 
     test('repeat absences need the threshold and the heatmap keeps the last 14 days', () {
@@ -117,7 +117,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Needs attention'), findsOneWidget);
-    expect(find.text('Regularization pending'), findsOneWidget);
+    expect(find.text('Corrections pending'), findsOneWidget);
     expect(find.text('Attendance trend'), findsOneWidget);
     expect(find.text('Leave & absence'), findsOneWidget);
     expect(find.text('Work hours'), findsOneWidget);

@@ -537,11 +537,12 @@ async def test_activation_outbox_is_atomic_with_the_business_state_and_survives_
         ok = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert ok.status_code == 200, ok.text
         rows = await outbox(company_id)
-        # exactly the two messages one activation owns, in the same commit as the business rows
+        # exactly the one message an activation owns (the welcome email carries the account
+        # invite's set-password link), in the same commit as the business rows
         assert [m for m, _ in rows if m.startswith("onboarding_activated:")] == [
             f"onboarding_activated:{case['id']}"
         ]
-        assert sum(1 for m, _ in rows if m.startswith("account_invite:")) == 1
+        assert not any(m.startswith("account_invite:") for m, _ in rows)
         assert all(s == "PENDING" for _, s in rows)
         employees = await scalar(company_id, "SELECT count(*) FROM employee WHERE company_id=:cid")
         assert employees == 1
@@ -556,10 +557,10 @@ async def test_activation_outbox_is_atomic_with_the_business_state_and_survives_
 
         # provider outage: delivery fails permanently; the business state is untouched and exactly
         # one employee / invite exists - a failed or retried message can never recreate records
-        down = Recorder([permanent(), permanent()])
+        down = Recorder([permanent()])
         await ob.deliver_due(sender=down)
         statuses = {m.split(":")[0]: s for m, s in await outbox(company_id)}
-        assert statuses == {"onboarding_activated": "FAILED", "account_invite": "FAILED"}
+        assert statuses == {"onboarding_activated": "FAILED"}
         assert await scalar(company_id, "SELECT count(*) FROM employee WHERE company_id=:cid") == 1
         assert (
             await scalar(company_id, "SELECT count(*) FROM account_invite WHERE company_id=:cid")

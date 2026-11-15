@@ -370,7 +370,7 @@ void main() {
       failing: {'/shifts': ApiError(status: 403, code: 'PERMISSION_DENIED', message: 'denied')},
     )),
   ], beforeShot: (tester) async {
-    await tester.tap(find.text('Regularization request'));
+    await tester.tap(find.text('Attendance correction'));
     await tester.pumpAndSettle();
   });
 }
