@@ -783,6 +783,28 @@ class InvalidShiftVersionDutyBlockSequenceError(ValidationError):
         )
 
 
+class InvalidShiftVersionDutyBlockSpanError(ValidationError):
+    """SPLIT shift type (SH-04): duty blocks, placed one after another in sequence order, must
+    all fit within 24 hours of the first block's start."""
+
+    code = "INVALID_SHIFT_VERSION_DUTY_BLOCK_SPAN"
+
+    def __init__(
+        self,
+        message: str = "duty blocks, taken in sequence, must fit within 24 hours",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "duty_blocks",
+                    "code": "INVALID_SHIFT_VERSION_DUTY_BLOCK_SPAN",
+                    "message": message,
+                }
+            ],
+        )
+
+
 class InvalidShiftVersionDutyBlockOverlapError(ValidationError):
     """SPLIT shift type: duty blocks must not overlap one another (midnight-crossing blocks
     compared as wrapped intervals)."""

@@ -69,7 +69,12 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: to that day (a night worker's rostered week-off is no longer INCOMPLETE).
 #: 12 = a day with an IN and no complete pair (checked in, not yet out) records that IN as
 #: `actual_first_in`, so the overview counts a mid-shift employee as present.
-ENGINE_VERSION = 12
+#: 13 = shift remediation (`docs/audits/SHIFT_REMEDIATION_PLAN_2026-11-15.md`): split-shift blocks
+#: placed in sequence with scheduled minutes from the blocks (SH-04); punch ownership replaces the
+#: fixed two-hour pad (SH-01/02); a shift operating on an off day makes it a working day (SH-03);
+#: no-shift days off are not expected and worked no-shift days use hour bands (SH-08); breaks
+#: matched by overlap and automatic deduction not stacked on a punched break (SH-10/SH-12).
+ENGINE_VERSION = 13
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -294,6 +299,10 @@ class AttendanceCalculationInput:
     # date (an overnight shift). Resolved by `service.py`, and only used when this date has no
     # shift: punches at or before it belong to the previous date, not to this one.
     prior_day_window_end: datetime | None = None
+    # Invariant B (engine 13) — the `[start, end)` ownership window of this date's claim
+    # (`punch_ownership.py`). Recorded in the snapshot only: `punches` already holds exactly the
+    # punches this date owns, so the engine never filters by it.
+    ownership_window: tuple[datetime, datetime] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,6 +484,35 @@ def local_time_to_utc(attendance_date: date, local_time: time, tz_name: str) -> 
     return _local_to_utc(attendance_date, local_time, ZoneInfo(tz_name))
 
 
+def place_duty_blocks(
+    *, attendance_date: date, tz_name: str, blocks: list[ShiftDutyBlockData]
+) -> list[tuple[datetime, datetime]]:
+    """SH-04 — the UTC span of each SPLIT duty block, in sequence order. The first block starts
+    on the attendance date; each later block starts at the first occurrence of its start time at
+    or after the previous block's end, so a 01:00 block after a 20:00-23:00 block falls on the
+    next calendar day. A block ending at or before its start crosses midnight."""
+    tz = ZoneInfo(tz_name)
+    placed: list[tuple[datetime, datetime]] = []
+    cursor: datetime | None = None
+    for block in sorted(blocks, key=lambda b: b.sequence):
+        day = attendance_date if cursor is None else cursor.astimezone(tz).date()
+        start = _local_to_utc(day, block.start_time, tz)
+        if cursor is not None and start < cursor:
+            start = _local_to_utc(day + timedelta(days=1), block.start_time, tz)
+        start_day = start.astimezone(tz).date()
+        end = _local_to_utc(start_day, block.end_time, tz)
+        if end <= start:
+            end = _local_to_utc(start_day + timedelta(days=1), block.end_time, tz)
+        placed.append((start, end))
+        cursor = end
+    return placed
+
+
+def split_scheduled_minutes(placed: list[tuple[datetime, datetime]]) -> int:
+    """SH-04 — a split shift's scheduled minutes are the sum of its duty blocks."""
+    return sum(int((end - start).total_seconds() // 60) for start, end in placed)
+
+
 @dataclass(frozen=True, slots=True)
 class ScheduleWindow:
     scheduled_start: datetime | None
@@ -514,15 +552,10 @@ def resolve_schedule_window(
         )
 
     if shift.shift_type == "SPLIT" and shift.duty_blocks:
-        first_block = min(shift.duty_blocks, key=lambda b: b.sequence)
-        last_block = max(shift.duty_blocks, key=lambda b: b.sequence)
-        sched_start = _local_to_utc(attendance_date, first_block.start_time, tz)
-        end_date = (
-            attendance_date + timedelta(days=1) if last_block.crosses_midnight else attendance_date
+        placed = place_duty_blocks(
+            attendance_date=attendance_date, tz_name=tz_name, blocks=shift.duty_blocks
         )
-        sched_end = _local_to_utc(end_date, last_block.end_time, tz)
-        if sched_end <= sched_start:
-            sched_end += timedelta(days=1)
+        sched_start, sched_end = placed[0][0], placed[-1][1]
         return ScheduleWindow(
             scheduled_start=sched_start,
             scheduled_end=sched_end,
@@ -1639,6 +1672,11 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             "prior_day_window_end": (
                 inputs.prior_day_window_end.isoformat() if inputs.prior_day_window_end else None
             ),
+            "ownership_window": (
+                [inputs.ownership_window[0].isoformat(), inputs.ownership_window[1].isoformat()]
+                if inputs.ownership_window
+                else None
+            ),
             "on_duty_approved": inputs.on_duty_approved,
             "weekly_off_fraction": inputs.weekly_off_fraction,
             "pay_basis": inputs.pay_basis,
@@ -2493,16 +2531,12 @@ def _evaluate_split(
     paid_minutes = totals.paid_minutes
     worked_minutes = presence.worked_minutes
 
-    tz = ZoneInfo(inputs.timezone)
+    placed = place_duty_blocks(
+        attendance_date=inputs.attendance_date, tz_name=inputs.timezone, blocks=shift.duty_blocks
+    )
+    split_minutes = split_scheduled_minutes(placed)
     missed_blocks = 0
-    for block in shift.duty_blocks:
-        block_start = _local_to_utc(inputs.attendance_date, block.start_time, tz)
-        block_end_date = (
-            inputs.attendance_date + timedelta(days=1)
-            if block.crosses_midnight
-            else inputs.attendance_date
-        )
-        block_end = _local_to_utc(block_end_date, block.end_time, tz)
+    for block_start, block_end in placed:
         overlapped = any(
             in_p.punch_time < block_end and out_p.punch_time > block_start
             for in_p, out_p in pairing.pairs
@@ -2542,23 +2576,17 @@ def _evaluate_split(
     worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
     worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
 
-    # W7 (WD-29 decision 5) — SPLIT shifts previously never detected overtime at all. No input
-    # is actually missing here: `scheduled_minutes=shift.required_minutes` is the same fallback
-    # `_evaluate_fixed_or_flex` uses whenever no `scheduled_start`/`scheduled_end` is set, so the
-    # detection call is wired in identically to that path.
-    ot_scheduled_minutes = (
-        max(
-            0,
-            shift.required_minutes
-            - scheduled_unpaid_break_minutes(
-                shift,
-                attendance_date=inputs.attendance_date,
-                tz_name=inputs.timezone,
-                scheduled_start=inputs.scheduled_start,
-            ),
-        )
-        if shift.required_minutes is not None
-        else None
+    # SH-04 — the schedule is the sum of the duty blocks (a SPLIT version carries no
+    # `required_minutes`; before engine 13 this left the schedule unknown and OT always zero).
+    ot_scheduled_minutes: int | None = max(
+        0,
+        split_minutes
+        - scheduled_unpaid_break_minutes(
+            shift,
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+            scheduled_start=inputs.scheduled_start,
+        ),
     )
     ot_scheduled_minutes = _off_day_overtime_basis(
         inputs, day_type, not_expected, ot_scheduled_minutes
@@ -2611,7 +2639,7 @@ def _evaluate_split(
         holiday_on_weekly_off=inputs.holiday_on_weekly_off,
         scheduled_start=inputs.scheduled_start,
         scheduled_end=inputs.scheduled_end,
-        scheduled_minutes=shift.required_minutes,
+        scheduled_minutes=split_minutes,
         unpaid_off_fraction=unpaid_off_fraction,
         actual_first_in=presence.recorded_first_in,
         actual_last_out=last_out,

@@ -66,6 +66,7 @@ from hrms.modules.organisation.exceptions import (
     InvalidShiftVersionDutyBlockCountError,
     InvalidShiftVersionDutyBlockOverlapError,
     InvalidShiftVersionDutyBlockSequenceError,
+    InvalidShiftVersionDutyBlockSpanError,
     InvalidShiftVersionEffectiveFromError,
     InvalidShiftVersionFlexWindowError,
     InvalidShiftVersionTimeRangeError,
@@ -2794,6 +2795,20 @@ class OrganisationService:
                     a_start, a_end, a.crosses_midnight, b_start, b_end, b.crosses_midnight
                 ):
                     raise InvalidShiftVersionDutyBlockOverlapError(index=b.sequence)
+        # SH-04 — blocks are placed in sequence order (the engine's `place_duty_blocks`): each
+        # starts at the first occurrence of its start time after the previous block ends. The
+        # whole sequence must fit in one day, or one date's shift would run into the next's.
+        elapsed = 0
+        previous_end: int | None = None
+        for block in ordered:
+            start_min = self._time_to_minutes(_format_time(block.start_time) or "00:00")
+            end_min = self._time_to_minutes(_format_time(block.end_time) or "00:00")
+            if previous_end is not None:
+                elapsed += (start_min - previous_end) % 1440
+            elapsed += (end_min - start_min) % 1440 or 1440
+            previous_end = end_min
+        if elapsed > 1440:
+            raise InvalidShiftVersionDutyBlockSpanError()
 
     def _validate_breaks_boundaries_for_publish(
         self,
