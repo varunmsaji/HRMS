@@ -1,6 +1,7 @@
 "use client";
 
-import { Mail, Phone } from "lucide-react";
+import { ArrowLeft, MoreHorizontal, Pencil, Power, Send, UserCheck } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,18 +13,20 @@ import { CompensationPanel } from "@/components/employee/compensation-panel";
 import { DocumentPanel } from "@/components/employee/document-panel";
 import { SalaryPanel } from "@/components/payroll/salary-panel";
 import { EmployeeForm } from "@/components/employee/employee-form";
-import { EmployeeAvatar } from "@/components/employee/employee-identity";
 import { EmployeeOverview } from "@/components/employee/employee-overview";
-import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
+import { EmployeeProfileHero } from "@/components/employee/employee-profile-hero";
+import {
+  EmployeeSectionNav,
+  isEmployeeSection,
+  type EmployeeSectionKey,
+} from "@/components/employee/employee-section-nav";
 import { EmploymentPanel } from "@/components/employee/employment-panel";
 import { IdentityPanel } from "@/components/employee/identity-panel";
 import { RecordListPanel } from "@/components/employee/record-list-panel";
 import { StatutoryPanel } from "@/components/employee/statutory-panel";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
-import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -34,6 +37,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -47,38 +56,7 @@ import {
   type EmployeeFormValues,
 } from "@/lib/employee/validate-employee";
 import { DEPENDENTS_SECTION, EDUCATION_SECTION, EXPERIENCE_SECTION } from "@/lib/employee/record-sections";
-import { cn } from "@/lib/utils";
-
-type TabKey =
-  | "overview"
-  | "employment"
-  | "assignment"
-  | "compensation"
-  | "salary"
-  | "statutory"
-  | "banking"
-  | "identity"
-  | "experience"
-  | "education"
-  | "dependents"
-  | "documents"
-  | "attendance";
-
-const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" },
-  { key: "employment", label: "Employment" },
-  { key: "assignment", label: "Assignment" },
-  { key: "compensation", label: "Compensation" },
-  { key: "salary", label: "Salary" },
-  { key: "statutory", label: "Statutory" },
-  { key: "banking", label: "Banking" },
-  { key: "identity", label: "Identity" },
-  { key: "experience", label: "Experience" },
-  { key: "education", label: "Education" },
-  { key: "dependents", label: "Dependents" },
-  { key: "documents", label: "Documents" },
-  { key: "attendance", label: "Attendance" },
-];
+import { useEmployeeWorkSummary } from "@/lib/employee/use-employee-work-summary";
 
 function employeeName(employee: Employee): string {
   return employeeFullName(employee);
@@ -92,7 +70,24 @@ export default function EmployeeDetailPage() {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTabState] = useState<EmployeeSectionKey>("overview");
+  const work = useEmployeeWorkSummary(employee?.id ?? null);
+
+  // The open section lives in ?tab= so a reload or a shared link lands on the same section.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("tab");
+    if (isEmployeeSection(fromUrl)) setTabState(fromUrl);
+  }, []);
+
+  function setTab(next: EmployeeSectionKey) {
+    // Employment and Assignment edit what the header and Overview show; refresh on the way out.
+    if (next !== tab && (tab === "employment" || tab === "assignment")) work.reload();
+    setTabState(next);
+    const url = new URL(window.location.href);
+    if (next === "overview") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    window.history.replaceState(window.history.state, "", url);
+  }
 
   const [editing, setEditing] = useState(false);
   const [formValues, setFormValues] = useState<EmployeeFormValues | null>(null);
@@ -341,78 +336,65 @@ export default function EmployeeDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        backHref="/app/employees"
-        backLabel="Employees"
-        title={employee ? employeeName(employee) || employee.employee_code : "Employee"}
-        description={employee ? `Employee code ${employee.employee_code}` : undefined}
-        badge={
-          employee ? (
-            <>
-              <EmployeeStatusBadge status={employee.status} />
-              <Badge variant={employee.is_active ? "secondary" : "outline"}>
-                {employee.is_active ? "Active" : "Inactive"}
-              </Badge>
-            </>
-          ) : undefined
-        }
-        meta={
-          employee && (employee.personal_email || employee.personal_mobile) ? (
-            <>
-              {employee.personal_email ? (
-                <span className="inline-flex items-center gap-1">
-                  <Mail className="h-3.5 w-3.5 text-foreground-muted" aria-hidden="true" />
-                  {employee.personal_email}
-                </span>
-              ) : null}
-              {employee.personal_email && employee.personal_mobile ? (
-                <span aria-hidden="true">·</span>
-              ) : null}
-              {employee.personal_mobile ? (
-                <span className="inline-flex items-center gap-1 tabular-nums">
-                  <Phone className="h-3.5 w-3.5 text-foreground-muted" aria-hidden="true" />
-                  {employee.personal_mobile}
-                </span>
-              ) : null}
-            </>
-          ) : undefined
-        }
-        actions={
-          employee && !editing ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {canConfirm && employee.status === "PROBATION" ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setConfirmProbationOpen(true)}
-                >
-                  Confirm
-                </Button>
-              ) : null}
-              {canInvite ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void handleInvite()}
-                  disabled={inviting}
-                >
-                  {inviting ? "Inviting…" : "Invite"}
-                </Button>
-              ) : null}
-              {canDeactivate ? (
-                <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
-                  {employee.is_active ? "Deactivate" : "Reactivate"}
-                </Button>
-              ) : null}
-              {canUpdate ? (
-                <Button type="button" onClick={startEditing}>
-                  Edit
-                </Button>
-              ) : null}
-            </div>
-          ) : null
-        }
-      />
+      <Link
+        href="/app/employees"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+        <span>Employees</span>
+      </Link>
+
+      {employee ? (
+        <EmployeeProfileHero
+          employee={employee}
+          work={work.data}
+          workLoading={work.loading}
+          actions={
+            !editing ? (
+              <>
+                {canConfirm && employee.status === "PROBATION" ? (
+                  <Button type="button" variant="outline" onClick={() => setConfirmProbationOpen(true)}>
+                    <UserCheck className="h-4 w-4" aria-hidden="true" />
+                    Confirm
+                  </Button>
+                ) : null}
+                {canUpdate ? (
+                  <Button type="button" onClick={startEditing}>
+                    <Pencil className="h-4 w-4" aria-hidden="true" />
+                    Edit
+                  </Button>
+                ) : null}
+                {canInvite || canDeactivate ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" size="icon" aria-label="More actions">
+                        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[12rem]">
+                      {canInvite ? (
+                        <DropdownMenuItem disabled={inviting} onSelect={() => void handleInvite()}>
+                          <Send className="h-4 w-4" aria-hidden="true" />
+                          {inviting ? "Inviting…" : "Invite to log in"}
+                        </DropdownMenuItem>
+                      ) : null}
+                      {canDeactivate ? (
+                        <DropdownMenuItem
+                          onSelect={() => setConfirmOpen(true)}
+                          className={employee.is_active ? "text-danger focus:text-danger" : undefined}
+                        >
+                          <Power className="h-4 w-4" aria-hidden="true" />
+                          {employee.is_active ? "Deactivate" : "Reactivate"}
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </>
+            ) : null
+          }
+        />
+      ) : null}
 
       {loading ? (
         <Card>
@@ -468,32 +450,17 @@ export default function EmployeeDetailPage() {
       ) : null}
 
       {!loading && !error && employee && !editing ? (
-        <div className="space-y-5">
-          <div
-            className="flex gap-1 overflow-x-auto border-b border-border"
-            role="tablist"
-            aria-label="Employee profile sections"
-          >
-            {TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === item.key}
-                onClick={() => setTab(item.key)}
-                className={cn(
-                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  tab === item.key
-                    ? "border-primary text-primary"
-                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          {tab === "overview" ? <EmployeeOverview employee={employee} /> : null}
+        <div className="grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6">
+          <EmployeeSectionNav value={tab} onChange={setTab} />
+          <div className="min-w-0 space-y-5">
+          {tab === "overview" ? (
+            <EmployeeOverview
+              employee={employee}
+              work={work.data}
+              workLoading={work.loading}
+              workError={work.error}
+            />
+          ) : null}
           {tab === "employment" ? <EmploymentPanel employeeId={employee.id} /> : null}
           {tab === "assignment" ? <AssignmentPanel employeeId={employee.id} /> : null}
           {tab === "compensation" ? <CompensationPanel employeeId={employee.id} /> : null}
@@ -511,6 +478,7 @@ export default function EmployeeDetailPage() {
               employeeLabel={employeeName(employee)}
             />
           ) : null}
+          </div>
         </div>
       ) : null}
 

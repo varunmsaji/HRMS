@@ -22,6 +22,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { employeeFullName } from "@/lib/employee/names";
 import type { Employee } from "@/lib/employee/types";
+import { useEmployeeWorkSummary } from "@/lib/employee/use-employee-work-summary";
 import { cn } from "@/lib/utils";
 
 type TabKey =
@@ -52,6 +53,7 @@ export default function MyProfilePage() {
   const { can } = usePermissions();
 
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const work = useEmployeeWorkSummary(employee?.id ?? null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [tab, setTab] = useState<TabKey>("overview");
@@ -157,7 +159,14 @@ export default function MyProfilePage() {
             ))}
           </div>
 
-          {tab === "overview" ? <EmployeeOverview employee={employee} /> : null}
+          {tab === "overview" ? (
+            <EmployeeOverview
+              employee={employee}
+              work={work.data}
+              workLoading={work.loading}
+              workError={work.error}
+            />
+          ) : null}
           {tab === "employment" ? <EmploymentPanel employeeId={employee.id} /> : null}
           {tab === "assignment" ? <AssignmentPanel employeeId={employee.id} /> : null}
           {tab === "compensation" ? <CompensationPanel employeeId={employee.id} /> : null}
