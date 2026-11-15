@@ -189,8 +189,10 @@ class SectionHeader extends StatelessWidget {
         children: [
           Expanded(child: Text(title, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700))),
           if (action != null)
-            GestureDetector(
-              onTap: onAction,
+            // A real button with a 48 dp target, announced as one (MOB-UX-037).
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48), padding: const EdgeInsets.symmetric(horizontal: 8)),
               child: Text(
                 action!,
                 style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600),

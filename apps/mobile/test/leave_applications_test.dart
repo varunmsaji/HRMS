@@ -170,7 +170,7 @@ void main() {
       await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());
       await tester.tap(find.text('Apply for leave'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Submit request'));
       await tester.pumpAndSettle();
       expect(find.text('Leave type is required.'), findsOneWidget);
       expect(repo.calls.where((c) => c.startsWith('submit')), isEmpty);

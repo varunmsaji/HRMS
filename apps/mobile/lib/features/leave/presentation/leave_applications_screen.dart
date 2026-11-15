@@ -123,15 +123,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   }
 
   Future<void> _apply() async {
-    final onBehalf = _team || _decisions;
-    final client = ref.read(apiClientProvider);
-    final saved = await openSpecForm(
-      context,
-      title: onBehalf ? 'Apply on behalf' : 'Apply for leave',
-      spec: leaveApplicationSpec(onBehalf: onBehalf),
-      loadChoices: () => loadChoices(client, [if (onBehalf) 'employees', 'leave_types']),
-      onSubmit: (payload, _) async => ref.read(leaveRepositoryProvider).submitLeaveApplication(payload),
-    );
+    final saved = await openLeaveApplicationForm(context, ref, onBehalf: _team || _decisions);
     if (saved && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Leave application submitted.')));
       setState(() => _decisionsKey++);
@@ -291,6 +283,21 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
       ]),
     );
   }
+}
+
+/// Opens the apply-for-leave form ([onBehalf] adds the employee picker). Resolves to true once a
+/// request was submitted. Shared by the Leave tab and Home's "Apply Leave" shortcut, which opens
+/// the form directly rather than the list (MOB-UX-007).
+Future<bool> openLeaveApplicationForm(BuildContext context, WidgetRef ref, {bool onBehalf = false}) {
+  final client = ref.read(apiClientProvider);
+  return openSpecForm(
+    context,
+    title: onBehalf ? 'Apply on behalf' : 'Apply for leave',
+    spec: leaveApplicationSpec(onBehalf: onBehalf),
+    submitLabel: 'Submit request',
+    loadChoices: () => loadChoices(client, [if (onBehalf) 'employees', 'leave_types']),
+    onSubmit: (payload, _) async => ref.read(leaveRepositoryProvider).submitLeaveApplication(payload),
+  );
 }
 
 IconData _iconFor(String status) => switch (status) {

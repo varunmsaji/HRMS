@@ -14,6 +14,10 @@ import '../../attendance/data/attendance_repository.dart';
 import '../../attendance/domain/today_state.dart';
 import '../../attendance/presentation/context_punch_ui.dart';
 import '../../attendance/presentation/face_enrollment_screen.dart';
+import '../../attendance/presentation/raise_correction.dart';
+import '../../approvals/data/approvals_repository.dart' show canApproveAnything;
+import '../../approvals/presentation/approvals_screen.dart' show pendingApprovalsCountProvider;
+import '../../leave/presentation/leave_applications_screen.dart' show openLeaveApplicationForm;
 import '../../../core/api/api_error.dart';
 import '../../attendance/state/punch_controller.dart';
 import '../../attendance/state/today_provider.dart';
@@ -80,6 +84,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     ref.invalidate(homeLatestPayslipProvider(employeeId));
     ref.invalidate(homeWorkProfileProvider(employeeId));
     ref.invalidate(homeMonthDaysProvider((employeeId: employeeId, zone: key.zone)));
+    ref.invalidate(pendingApprovalsCountProvider);
   }
 
   void _punch(String direction, TodayKey key) {
@@ -129,6 +134,8 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     final payslip = canSeePayslip ? ref.watch(homeLatestPayslipProvider(employeeId)).valueOrNull : null;
     final face = canPunch ? ref.watch(homeFaceStatusProvider(employeeId)) : null;
     final typeNames = {for (final b in balances ?? const <LeaveBalance>[]) b.leaveTypeId: b.leaveTypeName};
+    // A manager's own queue: requests waiting for *their* decision (MOB-UX-001).
+    final approvalsWaiting = canApproveAnything(permissions) ? ref.watch(pendingApprovalsCountProvider).valueOrNull : null;
 
     final pendingLeave = [for (final a in leaveApps ?? const <LeaveApplication>[]) if (a.status == 'SUBMITTED') a];
     final pendingCorrections = corrections ?? const <HomeCorrection>[];
@@ -175,6 +182,13 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                       const SizedBox(height: 16),
                       FaceSetupCard(status: face.valueOrNull!, onChanged: () => ref.invalidate(homeFaceStatusProvider(employeeId))),
                     ],
+                    if (approvalsWaiting != null && approvalsWaiting > 0) ...[
+                      const SizedBox(height: 16),
+                      _ApprovalsCard(count: approvalsWaiting, onTap: () async {
+                        await context.push('/app/approvals');
+                        if (mounted) ref.invalidate(pendingApprovalsCountProvider);
+                      }),
+                    ],
                     const SizedBox(height: 16),
                     _tiles(
                       context,
@@ -196,7 +210,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                     const SizedBox(height: 20),
                     const Text('Quick Actions', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Dd.ink)),
                     const SizedBox(height: 10),
-                    _quickActions(context, permissions, payslip),
+                    _quickActions(context, permissions, payslip, monthDays, todayDate, employeeId),
                   ],
                 ),
               ),
@@ -279,10 +293,11 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           badgeColor: Dd.amberFg,
           badgeBackground: Dd.amberBg,
           value: known ? '$pending' : '—',
-          unit: known ? 'with HR' : null,
+          // Waiting on an approver, not on HR specifically, and not on the employee.
+          unit: known ? 'awaiting approval' : null,
           caption: !known ? '—' : (pendingParts.isEmpty ? 'Nothing waiting' : pendingParts.join(' · ')),
-          captionColor: pendingParts.isEmpty ? Dd.muted : Dd.red,
-          onTap: () => context.go('/app/leave-applications'),
+          captionColor: pendingParts.isEmpty ? Dd.muted : Dd.amberFg,
+          onTap: () => _openPending(context, hasLeave: pendingLeave > 0 || pendingCorrections == 0),
         ),
       if (showHours)
         DdStatTile(
@@ -359,7 +374,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
             const Icon(Icons.info_outline, size: 16, color: Dd.navy),
             const SizedBox(width: 8),
             Expanded(child: Text('${month.weeklyOffs} weekly offs · ${month.holidays} public ${month.holidays == 1 ? 'holiday' : 'holidays'}', style: const TextStyle(fontSize: 12, color: Dd.ink, fontWeight: FontWeight.w500))),
-            GestureDetector(onTap: () => context.go('/app/attendance'), child: const Text('View logs', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Dd.navy))),
+            _HomeLink(label: 'View logs', onTap: () => context.go('/app/attendance')),
           ]),
         ),
       ]),
@@ -392,16 +407,18 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           badgeColor: Dd.amberFg,
           badgeBackground: Dd.amberBg,
           caption: [c.title, if (c.caption != null) _shortDate(c.caption!), if (_ago(c.submittedAt) case final ago?) ago].join(' · '),
-          onTap: () => context.push('/app/regularizations'),
+          onTap: () => context.push('/app/regularizations/${c.id}'),
         ),
     ].take(3).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        const Flexible(child: Text('Needs attention', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Dd.ink))),
+        // These are the employee's own requests, waiting on an approver: nothing for them to do yet,
+        // so the heading says what they are waiting for (MOB-UX-006).
+        const Flexible(child: Text('Waiting for approval', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Dd.ink))),
         const SizedBox(width: 8),
         Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: Dd.amberBg, borderRadius: BorderRadius.circular(10)), child: Text('$count', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Dd.amberFg))),
         const Spacer(),
-        Flexible(child: GestureDetector(onTap: () => context.go('/app/leave-applications'), child: Text('View all ($count)', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Dd.navy)))),
+        Flexible(child: _HomeLink(label: 'View all ($count)', onTap: () => _openPending(context, hasLeave: leave.isNotEmpty))),
       ]),
       const SizedBox(height: 10),
       for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 10), child: r),
@@ -410,14 +427,86 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
 
   // ---- quick actions --------------------------------------------------------------------------
 
-  Widget _quickActions(BuildContext context, List<String> permissions, PayslipSummary? payslip) {
+  /// Each shortcut does what its label says (MOB-UX-007): the leave and correction forms open
+  /// directly, the payslip tile opens the latest payslip, and "My Calendar" opens the calendar.
+  Widget _quickActions(BuildContext context, List<String> permissions, PayslipSummary? payslip, List<AttendanceDay>? monthDays, String todayDate, String employeeId) {
+    final flagged = _lastFlaggedDay(monthDays, todayDate);
     final items = <Widget>[
-      if (permissions.contains(leaveApplicationSubmit)) DdQuickAction(icon: Icons.flight_takeoff, iconColor: const Color(0xFF0369A1), iconBackground: const Color(0xFFE0F2FE), title: 'Apply Leave', subtitle: 'Quick balance slip', onTap: () => context.go('/app/leave-applications')),
-      if (permissions.contains(attendanceRegularizationRequest)) DdQuickAction(icon: Icons.history_toggle_off, iconColor: Dd.navy, iconBackground: const Color(0xFFE3E8FB), title: 'Correction', subtitle: 'Fix missed punch', onTap: () => context.push('/app/regularizations')),
-      if (widget.payroll && permissions.contains(payrollPayslipViewOwn)) DdQuickAction(icon: Icons.receipt_long_outlined, iconColor: Dd.green, iconBackground: const Color(0xFFDCFCE7), title: 'Payslips', subtitle: payslip == null ? 'Download payslip' : 'Download ${_payMonth(payslip.month, withYear: false)} slip', onTap: () => context.push('/app/me/payslips')),
-      if (permissions.contains(attendanceView)) DdQuickAction(icon: Icons.calendar_month_outlined, iconColor: Dd.navy, iconBackground: const Color(0xFFE8EEF9), title: 'My Shifts', subtitle: 'Upcoming roster', onTap: () => context.go('/app/attendance')),
+      if (permissions.contains(leaveApplicationSubmit))
+        DdQuickAction(
+          icon: Icons.flight_takeoff,
+          iconColor: const Color(0xFF0369A1),
+          iconBackground: const Color(0xFFE0F2FE),
+          title: 'Apply Leave',
+          subtitle: 'Pick dates and submit',
+          onTap: () => _applyLeave(employeeId),
+        ),
+      if (permissions.contains(attendanceRegularizationRequest))
+        DdQuickAction(
+          icon: Icons.history_toggle_off,
+          iconColor: Dd.navy,
+          iconBackground: const Color(0xFFE3E8FB),
+          title: 'Correction',
+          subtitle: flagged == null ? 'Fix a missed punch' : 'Fix ${_shortDate(flagged)}',
+          onTap: () => _raiseCorrection(employeeId, flagged),
+        ),
+      if (widget.payroll && permissions.contains(payrollPayslipViewOwn))
+        DdQuickAction(
+          icon: Icons.receipt_long_outlined,
+          iconColor: Dd.green,
+          iconBackground: const Color(0xFFDCFCE7),
+          title: 'Payslips',
+          subtitle: payslip == null ? 'All your payslips' : 'View ${_payMonth(payslip.month, withYear: false)} slip',
+          onTap: () => payslip == null ? context.push('/app/me/payslips') : _openPayslip(payslip),
+        ),
+      if (permissions.contains(attendanceView))
+        DdQuickAction(
+          icon: Icons.calendar_month_outlined,
+          iconColor: Dd.navy,
+          iconBackground: const Color(0xFFE8EEF9),
+          title: 'My Calendar',
+          subtitle: 'Shifts, leave and holidays',
+          onTap: () => context.push('/app/me/calendar'),
+        ),
     ];
     return _TwoColumnGrid(children: items);
+  }
+
+  /// The latest past day this month that the server flagged as needing a correction (a missing
+  /// punch or an incomplete day), to prefill the correction form. Null when there is none.
+  static String? _lastFlaggedDay(List<AttendanceDay>? days, String today) {
+    String? latest;
+    for (final d in days ?? const <AttendanceDay>[]) {
+      if (d.attendanceDate.compareTo(today) >= 0) continue;
+      final flagged = d.raw['missing_punch'] == true || d.attendanceStatus == 'INCOMPLETE';
+      if (flagged && (latest == null || d.attendanceDate.compareTo(latest) > 0)) latest = d.attendanceDate;
+    }
+    return latest;
+  }
+
+  Future<void> _applyLeave(String employeeId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (!await openLeaveApplicationForm(context, ref) || !mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('Leave application submitted.')));
+    ref.invalidate(homeLeaveProvider(employeeId));
+    ref.invalidate(homeBalancesProvider(employeeId));
+  }
+
+  Future<void> _raiseCorrection(String employeeId, String? date) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (!await raiseOwnCorrection(context, ref, date: date) || !mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('Correction request submitted.')));
+    ref.invalidate(homeSubmittedCorrectionsProvider(employeeId));
+  }
+
+  /// "Pending" and "View all" open the list the waiting requests are in: leave when there is any
+  /// pending leave, otherwise the corrections list.
+  void _openPending(BuildContext context, {required bool hasLeave}) {
+    if (hasLeave) {
+      context.go('/app/leave-applications');
+    } else {
+      context.push('/app/regularizations');
+    }
   }
 
   void _openPayslip(PayslipSummary p) => Navigator.of(context).push(MaterialPageRoute(
@@ -531,9 +620,13 @@ class _Header extends StatelessWidget {
               const SizedBox(width: 10),
               const Expanded(child: Text('Krewoxa', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white, height: 1.1))),
               NotificationBell(onPressed: onBell, color: Colors.white),
-              GestureDetector(
-                onTap: onProfile,
-                child: const CircleAvatar(radius: 19, backgroundColor: Colors.white, child: Icon(Icons.person, size: 20, color: Dd.navy)),
+              // A 48 dp button with a name, not a bare tappable picture (MOB-UX-037).
+              IconButton(
+                onPressed: onProfile,
+                tooltip: 'Settings and more',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: const CircleAvatar(radius: 19, backgroundColor: Colors.white, child: Icon(Icons.person, size: 20, color: Dd.navy)),
               ),
             ]),
           ),
@@ -807,4 +900,74 @@ class FaceSetupCardState extends ConsumerState<FaceSetupCard> {
       ]),
     );
   }
+}
+
+/// "Waiting for your decision": shown to anyone who approves requests, above the employee's own
+/// figures, so pending approvals are visible on the first screen (MOB-UX-001).
+class _ApprovalsCard extends StatelessWidget {
+  const _ApprovalsCard({required this.count, required this.onTap});
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count == 1 ? '1 request is waiting for your decision' : '$count requests are waiting for your decision';
+    return Semantics(
+      button: true,
+      label: '$label. Open approvals.',
+      excludeSemantics: true,
+      child: Material(
+        color: Dd.amberBg,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 56),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(children: [
+                const Icon(Icons.inbox_outlined, color: Dd.amberFg),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('Approvals', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Dd.ink)),
+                    const SizedBox(height: 2),
+                    Text(label, style: const TextStyle(fontSize: 13, color: Dd.ink)),
+                  ]),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: Dd.amberFg, borderRadius: BorderRadius.circular(12)),
+                  child: Text('$count', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded, color: Dd.ink),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A text link on Home ("View logs", "View all"): a real button with a 48 dp touch target, so it is
+/// easy to hit and is announced as a button (MOB-UX-037).
+class _HomeLink extends StatelessWidget {
+  const _HomeLink({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+        onPressed: onTap,
+        style: TextButton.styleFrom(
+          foregroundColor: Dd.navy,
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        ),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      );
 }

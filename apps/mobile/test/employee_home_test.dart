@@ -341,14 +341,14 @@ void main() {
       await _pump(tester, repo, api: api);
       expect(find.textContaining('Asha'), findsOneWidget);
       expect(find.text('Cas 8.5'), findsOneWidget);
-      expect(find.text('Needs attention'), findsOneWidget);
+      expect(find.text('Waiting for approval'), findsOneWidget);
       expect(find.text('Casual leave'), findsOneWidget);
       expect(find.text('2–3 Nov · 2 days'), findsOneWidget);
     });
 
-    testWidgets('no requests: the "Needs attention" section is not drawn at all', (tester) async {
+    testWidgets('no requests: the "Waiting for approval" section is not drawn at all', (tester) async {
       await _pump(tester, _Repo());
-      expect(find.text('Needs attention'), findsNothing);
+      expect(find.text('Waiting for approval'), findsNothing);
     });
 
     testWidgets('the latest payslip shows its month and net pay', (tester) async {
@@ -421,6 +421,72 @@ void main() {
       repoA.days = [];
       final b = await container.read(todayDataProvider((employeeId: 'e-2', zone: _zone)).future);
       expect(b.todayRow, isNull, reason: 'a different employee id is a different provider; nothing carried over');
+    });
+  });
+
+  group('shortcuts and approvals (audit phase 1)', () {
+    final waitingFromColleague = {'id': 'a-9', 'employee_id': 'e-2', 'leave_type_id': 'lt-1', 'start_date': '2026-11-20', 'end_date': '2026-11-20', 'total_days': '1', 'status': 'SUBMITTED', 'version': 1};
+
+    testWidgets('an approver sees on Home how many requests wait for their decision', (tester) async {
+      await _pump(tester, _Repo(), permissions: [..._full, leaveApplicationApprove], api: _api(leaveApps: [waitingFromColleague]));
+      expect(find.text('1 request is waiting for your decision'), findsOneWidget);
+    });
+
+    testWidgets('someone who approves nothing gets no approvals card and no approvals reads', (tester) async {
+      final api = _api(leaveApps: [waitingFromColleague]);
+      await _pump(tester, _Repo(), api: api);
+      expect(find.textContaining('waiting for your decision'), findsNothing);
+      expect(api.listCalls.where((c) => c.filters?['application_status'] == 'SUBMITTED'), isEmpty);
+    });
+
+    testWidgets('Apply Leave opens the leave form itself, with a submit button that says so', (tester) async {
+      await _pump(tester, _Repo(), permissions: [..._full, leaveApplicationSubmit]);
+      await tester.tap(find.text('Apply Leave'));
+      await tester.pumpAndSettle();
+      expect(find.text('Apply for leave'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Submit request'), findsOneWidget);
+    });
+
+    testWidgets('Correction opens the correction form on the last day that needs one', (tester) async {
+      final yesterday = businessDayOffset(_zone, -1);
+      final repo = _Repo()..days = [AttendanceDay.fromJson({..._day(status: 'INCOMPLETE'), 'id': 'd-0', 'attendance_date': yesterday, 'missing_punch': true})];
+      await _pump(tester, repo, permissions: [..._full, attendanceRegularizationRequest]);
+      await tester.tap(find.text('Correction'));
+      await tester.pumpAndSettle();
+      expect(find.text('Attendance correction'), findsOneWidget);
+      expect(find.text(yesterday), findsOneWidget, reason: 'the flagged day is prefilled');
+      expect(find.widgetWithText(FilledButton, 'Submit request'), findsOneWidget);
+    });
+
+    testWidgets('leaving a filled form asks first; an untouched form just closes', (tester) async {
+      await _pump(tester, _Repo(), permissions: [..._full, leaveApplicationSubmit]);
+      await tester.tap(find.text('Apply Leave'));
+      await tester.pumpAndSettle();
+
+      // Untouched: Back closes it without a question.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Discard changes?'), findsNothing);
+      expect(find.text('Apply for leave'), findsNothing);
+
+      await tester.tap(find.text('Apply Leave'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.maxLines == 6), 'Family function'); // Reason
+      await tester.pump(); // the frame that rebuilds the form with its changes pending
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Discard changes?'), findsOneWidget);
+
+      await tester.tap(find.text('Keep editing'));
+      await tester.pumpAndSettle();
+      expect(find.text('Apply for leave'), findsOneWidget, reason: 'still on the form');
+      expect(find.text('Family function'), findsOneWidget, reason: 'nothing typed was lost');
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Discard'));
+      await tester.pumpAndSettle();
+      expect(find.text('Apply for leave'), findsNothing);
     });
   });
 

@@ -41,3 +41,20 @@ int? rupeesToMinor(String value) {
   if (!RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(cleaned)) return null;
   return (double.parse(cleaned) * 100).round();
 }
+
+const _shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// "2026-11-12" -> "12 Nov". Anything that is not a date comes back unchanged.
+String formatShortDate(String iso) {
+  final d = DateTime.tryParse(iso);
+  return d == null ? iso : '${d.day} ${_shortMonths[d.month - 1]}';
+}
+
+/// "12 Nov", "12–13 Nov", or "30 Oct – 2 Nov" for an inclusive range of ISO dates.
+String formatDateRange(String start, String end) {
+  final s = DateTime.tryParse(start), e = DateTime.tryParse(end);
+  if (s == null || e == null) return start == end ? start : '$start – $end';
+  if (start == end) return formatShortDate(start);
+  if (s.year == e.year && s.month == e.month) return '${s.day}–${e.day} ${_shortMonths[e.month - 1]}';
+  return '${formatShortDate(start)} – ${formatShortDate(end)}';
+}

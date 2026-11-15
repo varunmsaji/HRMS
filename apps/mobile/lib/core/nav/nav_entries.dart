@@ -74,6 +74,10 @@ const employeeNavEntries = [
 /// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the items not already in
 /// the bottom nav). Order is the existing hub order.
 const navQuickLinks = NavGroup('Quick links', [
+  // Every request this user may decide, in one place (MOB-UX-001). Each queue still checks its own
+  // approve permission, so holding any one of these is enough to open the screen.
+  NavEntry('Approvals', Icons.inbox_outlined, '/app/approvals',
+      anyOf: [leaveApplicationApprove, attendanceRegularizationApprove, attendanceOvertimeApprove, onboardingReview]),
   NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
   NavEntry('Employees', Icons.people_outline, '/app/employees', anyOf: [employeeViewAll]),
   NavEntry('Onboarding', Icons.person_add_alt, '/app/onboarding', anyOf: [onboardingView, onboardingCreate, onboardingReview, onboardingActivate]),

@@ -199,11 +199,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   padding: const EdgeInsets.only(top: 4),
                   child: _resendState == _ResendState.sent
                       ? const Text('If that address has an account, a new verification email is on its way.')
-                      : GestureDetector(
-                          onTap: _resendState == _ResendState.sending ? null : _resendVerification,
-                          child: Text(
-                            _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
-                            style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _resendState == _ResendState.sending ? null : _resendVerification,
+                            style: TextButton.styleFrom(minimumSize: const Size(48, 48), padding: EdgeInsets.zero, foregroundColor: Theme.of(context).colorScheme.onErrorContainer),
+                            child: Text(
+                              _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
+                              style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                            ),
                           ),
                         ),
                 ),
