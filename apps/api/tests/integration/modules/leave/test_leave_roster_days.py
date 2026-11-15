@@ -123,3 +123,124 @@ async def test_a_rostered_working_day_on_a_weekly_off_is_charged(
         await _drop_rosters(company_id)
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def _assign_shift(
+    client: AsyncClient,
+    headers: dict[str, str],
+    employee_id: str,
+    legal_entity_id: str,
+    **flags: Any,
+) -> None:
+    """Assign the employee a published 09:00-18:00 shift carrying `flags`."""
+    shift = (await client.post("/v1/shifts", headers=headers, json={"name": "OPS"})).json()["data"]
+    draft_id = shift["draft_version_id"]
+    patched = await client.patch(
+        f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+        headers={**headers, "If-Match": "1"},
+        json={
+            "shift_type": "FIXED",
+            "effective_from": "2026-01-01",
+            "start_time": "09:00",
+            "end_time": "18:00",
+            "timezone": "UTC",
+            **flags,
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    published = await client.post(
+        f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+        headers={**headers, "If-Match": "2"},
+        json={},
+    )
+    assert published.status_code == 200, published.text
+    branch = (
+        await client.post(
+            "/v1/branches",
+            headers=headers,
+            json={"legal_entity_id": legal_entity_id, "name": "HQ", "timezone": "Asia/Kolkata"},
+        )
+    ).json()["data"]
+    department = (
+        await client.post(
+            "/v1/departments", headers=headers, json={"name": "Ops", "branch_id": branch["id"]}
+        )
+    ).json()["data"]
+    designation = (
+        await client.post(
+            "/v1/designations",
+            headers=headers,
+            json={"title": "Operator", "department_id": department["id"]},
+        )
+    ).json()["data"]
+    assignment = await client.post(
+        f"/v1/employees/{employee_id}/assignments",
+        headers=headers,
+        json={
+            "effective_from": "2026-01-01",
+            "change_type": "INITIAL",
+            "branch_id": branch["id"],
+            "department_id": department["id"],
+            "designation_id": designation["id"],
+            "shift_id": shift["id"],
+        },
+    )
+    assert assignment.status_code == 201, assignment.text
+
+
+async def _drop_shifts(company_id: Any) -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        for table in ("shift_version", "shift"):
+            await session.execute(
+                text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
+            )
+        await session.commit()
+
+
+@pytest.mark.parametrize(
+    ("operates", "total"),
+    [
+        (True, "1.00"),  # SH-03: the shift works Sundays, so Sunday is an ordinary working day
+        (False, None),  # an ordinary weekly off still consumes no leave (must not change)
+    ],
+)
+async def test_a_weekly_off_the_shift_operates_on_is_charged(
+    client: AsyncClient, seeded_plan_catalogue: None, operates: bool, total: str | None
+) -> None:
+    """SH-03 / owner decision P-02: a shift with `operates_on_weekly_off` turns Sunday (the
+    calendar's weekly off) into a working day, so leave on that Sunday charges a day."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup_full(client, headers, balance="10.00")
+        employee_id, leave_type_id = ctx["employee"]["id"], ctx["leave_type"]["id"]
+        await _assign_shift(
+            client,
+            headers,
+            employee_id,
+            ctx["legal_entity"]["id"],
+            operates_on_weekly_off=operates,
+        )
+
+        submitted = await _submit(
+            client,
+            headers,
+            employee_id=employee_id,
+            leave_type_id=leave_type_id,
+            start_date="2026-09-13",
+            end_date="2026-09-13",
+        )
+        if total is None:
+            # A leave of only days off is refused; nothing is charged.
+            assert submitted.status_code != 201, submitted.text
+            assert await _get_balance(client, headers, employee_id) == "10.00"
+        else:
+            assert submitted.status_code == 201, submitted.text
+            data = submitted.json()["data"]
+            assert data["total_days"] == total
+            assert [d["calendar_date"] for d in data["days"]] == ["2026-09-13"]
+    finally:
+        await _teardown(company_id=company_id)
+        await _drop_shifts(company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

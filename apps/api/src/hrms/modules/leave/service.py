@@ -2620,21 +2620,41 @@ class LeaveApplicationService:
         policy A): the day's working share from the same calendar rule attendance reads - 1.00 on
         a working day, 0.50 on a half-day weekly off (the off half is already a paid day off),
         0.00 on a full weekly off, holiday or shutdown. Fails closed when a date's calendar does
-        not resolve."""
+        not resolve.
+
+        Precedence (SH-03): roster week-off -> 0, roster "working this holiday" -> 1, a shift that
+        operates on the holiday / weekly off -> 1, then the calendar. The roster loop below runs
+        last, so it wins."""
         from hrms.modules.attendance.service import ShiftRosterService
+        from hrms.modules.attendance.work_schedule import WorkScheduleResolver
         from hrms.modules.organisation.calendar_resolution import (
             CalendarResolutionService,
             working_fraction_of,
         )
 
         resolver = CalendarResolutionService(self._session)
+        schedules = WorkScheduleResolver(self._session)
         working: dict[date, Decimal] = {}
         one_date = date_from
         while one_date <= date_to:
             resolved = await resolver.resolve_for_employee(company_id, employee_id, one_date)
             if resolved.config_incomplete or resolved.day_type is None:
                 raise LeaveApplicationCalendarNotResolvedError()
-            working[one_date] = working_fraction_of(resolved.day_type)
+            share = working_fraction_of(resolved.day_type)
+            # SH-03 (owner decision P-02) - a full holiday or weekly off that the date's shift
+            # operates on is an ordinary working day, as attendance treats it, so leave charges
+            # it. A half-day weekly off keeps its half share (attendance reads it as WORKING).
+            off_type = resolved.day_type.day_type
+            if share == Decimal("0.00") and off_type in ("HOLIDAY", "WEEKLY_OFF"):
+                shift = (
+                    await schedules.resolve(company_id, employee_id, one_date)
+                ).schedule.shift_inputs
+                if shift is not None and (
+                    (off_type == "HOLIDAY" and shift.operates_on_holiday)
+                    or (off_type == "WEEKLY_OFF" and shift.operates_on_weekly_off)
+                ):
+                    share = Decimal("1.00")
+            working[one_date] = share
             one_date += timedelta(days=1)
 
         # F7 (D-6) — a published roster outranks the calendar, as it does in attendance: a roster

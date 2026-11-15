@@ -1347,12 +1347,24 @@ class DayPresence:
     counter_excess_minutes: int
 
 
+_OFF_DAY_TYPES = ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN")
+
+
+def _work_not_expected(inputs: AttendanceCalculationInput, day_type: str | None) -> bool:
+    """SH-03 (owner decision P-02, engine 13) — whether no work is expected on the day. A roster
+    week-off is never expected. A holiday, weekly off or shutdown is not expected *unless the
+    shift operates on it* (`operates_on_holiday` / `operates_on_weekly_off`, or a roster
+    "working this holiday" row): then it is an ordinary working day — absence follows the
+    missing-punch rule and work is ordinary pay. Before engine 13 such a day counted as both
+    expected and not expected, so a no-show was paid while a short day was loss of pay."""
+    if inputs.roster_week_off_override:
+        return True
+    return day_type in _OFF_DAY_TYPES and not _shift_operates(inputs, day_type)
+
+
 def _is_non_operating_off_day(inputs: AttendanceCalculationInput) -> bool:
     day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
-    not_expected = (
-        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
-    )
-    return not_expected and not _shift_operates(inputs, day_type)
+    return _work_not_expected(inputs, day_type)
 
 
 def evaluate_presence_and_breaks(
@@ -1738,6 +1750,19 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
         behaviour = "INCOMPLETE"  # missing_shift_behaviour default; real value read from policy
         if inputs.policy is not None:
             behaviour = inputs.policy.missing_shift_behaviour
+        # SH-08 (engine 13) — a full holiday, weekly off or shutdown needs no shift to be a day
+        # off. Before, a day off with no shift fell into `missing_shift_behaviour` and could be
+        # ABSENT (loss of pay) on a Sunday. A roster "working this holiday" row keeps it expected.
+        if (
+            not inputs.punches
+            and inputs.calendar_day_type in _OFF_DAY_TYPES
+            and not _is_half_weekly_off(inputs)
+            and not inputs.roster_holiday_working_override
+        ):
+            return _apply_overlays(
+                _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="no_shift_on_day_off"),
+                inputs,
+            )
         if not inputs.punches:
             status = "ABSENT" if behaviour == "ABSENT" else "INCOMPLETE"
             return _apply_overlays(
@@ -1754,10 +1779,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # is *expected*). `roster_holiday_working_override` mirrors what a per-shift
     # `operates_on_holiday`/`operates_on_weekly_off` flag already does, just scoped to one
     # employee-date instead of the whole shift.
-    not_expected = (
-        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
-    )
-    shift_operates = _shift_operates(inputs, day_type)
+    not_expected = _work_not_expected(inputs, day_type)
 
     collapsed = collapse_duplicate_punches(
         punches_in_order(inputs.punches),
@@ -1766,8 +1788,8 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     snapshot["collapsed_punch_ids"] = [str(p.id) for p in collapsed]
     collapsed = drop_stray_punches(collapsed, snapshot)
 
-    # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
-    if not_expected and not shift_operates and not collapsed:
+    # §19.1 step 8 — not expected (an off day the shift does not work) + no punches
+    if not_expected and not collapsed:
         return _apply_overlays(
             _terminal_result(
                 "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
@@ -2090,16 +2112,44 @@ def _terminal_result(
 def _evaluate_no_schedule(
     inputs: AttendanceCalculationInput, snapshot: dict[str, Any]
 ) -> AttendanceCalculationResult:
+    """A day with punches and no shift. SH-08 (owner decision P-06, engine 13): worked minutes go
+    through the policy's hour bands (before, any worked minute paid a full day). With no schedule
+    there is no lateness, early departure or overtime. On a day off (holiday, weekly off,
+    shutdown, roster week-off) the work never costs pay: the day off stays as it was."""
+    assert inputs.policy is not None
+    policy = inputs.policy
     collapsed = collapse_duplicate_punches(
         punches_in_order(inputs.punches),
-        window_seconds=(inputs.policy.duplicate_punch_window_seconds if inputs.policy else 60),
+        window_seconds=policy.duplicate_punch_window_seconds,
     )
     pairing = pair_punches(drop_stray_punches(collapsed, snapshot))
     _first_in, last_out, gross_minutes, _gaps = presence_span(
-        pairing.pairs, mode=inputs.policy.multi_punch_mode if inputs.policy else "PAIR_ALL"
+        pairing.pairs, mode=policy.multi_punch_mode
     )
     snapshot["no_schedule"] = True
-    status = "PRESENT" if gross_minutes > 0 else "INCOMPLETE"
+    day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
+    off_day = inputs.roster_week_off_override or (
+        day_type in _OFF_DAY_TYPES and not inputs.roster_holiday_working_override
+    )
+    missing_punch = bool(pairing.orphans)
+    hour_band_status = lookup_band(gross_minutes, inputs.hour_bands) if gross_minutes else None
+    status = _resolve_primary_status(
+        day_type=day_type or "WORKING",
+        not_expected=off_day,
+        worked_minutes=gross_minutes,
+        missing_punch=missing_punch,
+        missing_punch_behaviour=policy.missing_punch_behaviour,
+        hour_band_status=hour_band_status,
+        late_classification=None,
+        early_classification=None,
+    )
+    paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
+    unpaid_off_fraction = "0.00"
+    if off_day and gross_minutes > 0:
+        status = "PRESENT"
+        paid_fraction, lop_fraction, unpaid_off_fraction = _off_day_work_pay(
+            inputs, hour_band_status, False
+        )
     return AttendanceCalculationResult(
         attendance_status=status,
         calendar_day_type=inputs.calendar_day_type,
@@ -2119,15 +2169,16 @@ def _evaluate_no_schedule(
         early_departure_minutes=0,
         late_classification=None,
         early_departure_classification=None,
-        missing_punch=bool(pairing.orphans),
+        missing_punch=missing_punch,
         auto_closed=False,
         is_late=False,
         is_early_out=False,
         is_overtime=False,
-        worked_on_holiday=False,
-        worked_on_weekly_off=False,
-        paid_day_fraction="1.00" if status == "PRESENT" else "0.00",
-        lop_fraction="0.00" if status == "PRESENT" else "0.00",
+        worked_on_holiday=day_type == "HOLIDAY" and gross_minutes > 0,
+        worked_on_weekly_off=day_type == "WEEKLY_OFF" and gross_minutes > 0,
+        paid_day_fraction=paid_fraction,
+        lop_fraction=lop_fraction,
+        unpaid_off_fraction=unpaid_off_fraction,
         ot_minutes_detected=0,
         ot_minutes_approved=0,
         ot_pending=False,
@@ -2155,7 +2206,7 @@ def _off_day_overtime_basis(
 ) -> int | None:
     """D-1 — no work was expected on a day off the shift does not operate, so all of it counts as
     overtime. Where the shift operates (or the employee is rostered), the schedule still applies."""
-    if not_expected and not _shift_operates(inputs, day_type):
+    if not_expected:
         return 0
     return scheduled_minutes
 
@@ -2279,7 +2330,7 @@ def _evaluate_fixed_or_flex(
         else:
             early_until = split[0] if split else None
     # No work was expected on a day off the shift does not operate, so nothing is late or early.
-    off_day_work = not_expected and not _shift_operates(inputs, day_type)
+    off_day_work = not_expected
     if off_day_work:
         late_from = early_until = None
     if first_in is not None and late_from is not None:
@@ -2436,8 +2487,9 @@ def _evaluate_fixed_or_flex(
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
-        is_holiday=worked_on_holiday,
-        is_weekly_off=worked_on_weekly_off,
+        # P-02: work on an off day the shift operates is ordinary work (NORMAL class).
+        is_holiday=worked_on_holiday and not_expected,
+        is_weekly_off=worked_on_weekly_off and not_expected,
         is_night=is_night,
         policy=inputs.ot_policy,
     )
@@ -2453,7 +2505,9 @@ def _evaluate_fixed_or_flex(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
+            is_holiday=worked_on_holiday and not_expected,
+            is_weekly_off=worked_on_weekly_off and not_expected,
+            is_night=is_night,
         )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
@@ -2552,7 +2606,7 @@ def _evaluate_split(
     # REQUIRE_REGULARIZATION. IGNORE falls through to the ordinary status resolution below (the
     # missed block carries no special weight); the other three map directly.
     behaviour = policy.split_shift_missed_block_behaviour
-    off_day_work = not_expected and not _shift_operates(inputs, day_type)
+    off_day_work = not_expected
     if off_day_work and worked_minutes > 0:
         status = "PRESENT"
     elif missed_blocks > 0 and behaviour in ("HALF_DAY", "ABSENT"):
@@ -2605,8 +2659,9 @@ def _evaluate_split(
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
-        is_holiday=worked_on_holiday,
-        is_weekly_off=worked_on_weekly_off,
+        # P-02: work on an off day the shift operates is ordinary work (NORMAL class).
+        is_holiday=worked_on_holiday and not_expected,
+        is_weekly_off=worked_on_weekly_off and not_expected,
         is_night=is_night,
         policy=inputs.ot_policy,
     )
@@ -2622,7 +2677,9 @@ def _evaluate_split(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
+            is_holiday=worked_on_holiday and not_expected,
+            is_weekly_off=worked_on_weekly_off and not_expected,
+            is_night=is_night,
         )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
