@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
-import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
 import '../../../core/requests/request_screens.dart';
@@ -24,6 +23,7 @@ import '../../../core/widgets/employee/employee_status_chip.dart';
 import '../../../core/widgets/employee/layout.dart';
 import '../../../core/widgets/employee/status_map.dart';
 import 'attendance_summary.dart';
+import 'raise_correction.dart';
 import 'employee_attendance_profile_screen.dart';
 import '../../../core/widgets/ui.dart';
 
@@ -239,20 +239,16 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     final client = ref.read(apiClientProvider);
     final user = ref.read(authControllerProvider).user;
     final zone = user?.companyTimezone ?? 'Asia/Kolkata';
-    final denied = ref.read(deniedChoiceSourcesProvider(user?.id ?? '').notifier);
-    // The employee is fixed by the day, so the form never asks for one (web locks the field).
+    // The employee is fixed by the day, so the form never asks for one (web locks the field). The
+    // likely type comes from the day's flags and the recorded punches are shown (MOB-UX-018).
     final saved = await openSpecForm(
       context,
-      title: 'Raise a regularization request',
+      title: 'Attendance correction',
       spec: regularizationSpec(false),
-      defaults: {'attendance_date': day.attendanceDate},
+      defaults: correctionDefaultsFor(day),
+      intro: recordedPunchesNote(day, zone),
       submitLabel: 'Submit request',
-      loadChoiceSet: () async {
-        final set = await loadChoicesTolerant(client, optional: regularizationConfig.optionalChoiceKeys, knownDenied: denied.state);
-        final newlyDenied = {for (final e in set.unavailable.entries) if (e.value == ChoiceUnavailable.denied) e.key};
-        if (newlyDenied.difference(denied.state).isNotEmpty) denied.state = {...denied.state, ...newlyDenied};
-        return set;
-      },
+      loadChoiceSet: () => loadCorrectionChoices(ref),
       onSubmit: (payload, _) async => client.post<Object?>(
         '/regularizations',
         body: buildRegularizationBody({...payload, if (mode == 'ON_BEHALF') 'employee_id': day.employeeId}, zone),
@@ -260,7 +256,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       ),
     );
     if (saved && mounted) {
-      _toast('Regularization request submitted');
+      _toast('Correction request submitted');
       await _loadCorrections(day);
     }
   }

@@ -18,7 +18,7 @@ const periodBlockingReasonLabels = {
   'EMPLOYEES_WITHOUT_ATTENDANCE': 'Employees missing calculated attendance',
   'CONFIG_ERROR': 'Unresolved configuration errors',
   'INCOMPLETE_ATTENDANCE': 'Incomplete attendance requiring manual resolution',
-  'PENDING_REGULARIZATION': 'Pending regularization requests',
+  'PENDING_REGULARIZATION': 'Pending attendance corrections',
   'PENDING_OVERTIME_APPROVAL': 'Pending overtime approvals',
   'UNPUBLISHED_ROSTER': 'Unpublished (DRAFT) roster entries',
   'PAID_LOP_MISMATCH': 'Days whose paid, loss-of-pay and unpaid-off shares do not add up to one day',

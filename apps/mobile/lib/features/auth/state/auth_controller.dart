@@ -15,7 +15,7 @@ import 'auth_state.dart';
 class AuthController extends StateNotifier<AuthState> {
   AuthController(this._repository) : super(AuthState.initial) {
     _sessionExpiredSubscription = TokenStorage.instance.onSessionExpired.listen((_) {
-      state = const AuthState(status: AuthStatus.unauthenticated);
+      state = AuthState(status: AuthStatus.unauthenticated, sessionExpired: true, expiredUserId: state.user?.id);
     });
     unawaited(_init());
   }

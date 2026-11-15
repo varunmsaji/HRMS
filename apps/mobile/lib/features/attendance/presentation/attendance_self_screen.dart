@@ -10,7 +10,6 @@ import '../../../core/widgets/ui.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
-import '../../../core/auth/surface.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
@@ -181,7 +180,7 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Attendance'), automaticallyImplyLeading: false, actions: usesEmployeeSurface(ref.watch(authControllerProvider).user) ? null : const [MoreAction()]),
+      appBar: AppBar(title: const Text('Attendance'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
       body: body,
     );
   }

@@ -160,7 +160,11 @@ void main() {
 
     testWidgets('shows the headline figures and what approving would do', (tester) async {
       await _pump(tester, _Api(objects: {_leavePath: _leaveData()}), panel());
+      // Folded into one line first, so the requests start near the top (MOB-UX-016).
       expect(find.text('Oldest submitted 2 days ago'), findsOneWidget);
+      expect(find.text('2 Casual, 1 Sick · 48 active staff'), findsNothing);
+      await tester.tap(find.byIcon(Icons.expand_more_rounded));
+      await tester.pumpAndSettle();
       expect(find.text('2 Casual, 1 Sick · 48 active staff'), findsOneWidget);
       expect(find.text('Peak absence: 2026-11-09 (5 away)'), findsOneWidget);
       expect(find.text('94%'), findsOneWidget);
@@ -183,7 +187,7 @@ void main() {
     testWidgets('your own request cannot be decided from here', (tester) async {
       await _pump(tester, _Api(objects: {_leavePath: _leaveData(items: [_leaveItem(employeeId: 'me')])}), panel());
       expect(find.text('Approve leave'), findsNothing);
-      expect(find.text('Decline'), findsNothing);
+      expect(find.text('Reject'), findsNothing);
       expect(find.text('View details'), findsOneWidget);
     });
 
@@ -220,13 +224,15 @@ void main() {
 
     testWidgets('puts what was recorded beside what is being asked for', (tester) async {
       await _pump(tester, _Api(objects: {_regPath: _regData()}), panel());
+      await tester.tap(find.byIcon(Icons.expand_more_rounded));
+      await tester.pumpAndSettle();
       expect(find.text('2.5%'), findsOneWidget);
-      expect(find.text('6 of 240 working days regularized'), findsOneWidget);
+      expect(find.text('6 of 240 working days corrected'), findsOneWidget);
       expect(find.text('18 / 2'), findsOneWidget);
       expect(find.text('Pending HR review'), findsOneWidget);
       expect(find.text('Missing'), findsOneWidget);
       expect(find.text('Status incomplete · 15m late'), findsOneWidget);
-      expect(find.text('Missing punch'), findsOneWidget);
+      expect(find.text('Missed a punch (in or out)'), findsOneWidget);
       expect(find.textContaining('6:00 pm'), findsOneWidget, reason: 'the requested out, in the zone of the day');
       expect(find.text('No change'), findsOneWidget);
       expect(find.text('8h 45m'), findsOneWidget);
@@ -238,24 +244,25 @@ void main() {
       await tester.tap(find.text('Approve'));
       await tester.pumpAndSettle();
       expect(api.asked, contains('/regularizations/r-1'));
+      expect(find.byType(RequestDetailScreen), findsNothing, reason: 'the dialog opens over the list, no detail screen first');
       final asksBefore = api.asked.where((p) => p.startsWith(_regPath)).length;
       await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
       await tester.pumpAndSettle();
       expect(api.calls.single.path, '/regularizations/r-1/approve');
       expect(api.calls.single.ifMatch, '2');
-      expect(find.text('Pending decisions'), findsOneWidget, reason: 'back on the decision centre');
+      expect(find.textContaining('pending decisions'), findsOneWidget, reason: 'back on the decision centre');
       expect(api.asked.where((p) => p.startsWith(_regPath)).length, asksBefore + 1);
     });
 
     testWidgets('backing out of the review saves nothing and returns to the list', (tester) async {
       final api = _Api(objects: {_regPath: _regData(), '/regularizations/r-1': _regItem()});
       await _pump(tester, api, panel());
-      await tester.tap(find.text('Decline'));
+      await tester.tap(find.text('Reject'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
       await tester.pumpAndSettle();
       expect(api.calls, isEmpty);
-      expect(find.text('Decline'), findsOneWidget);
+      expect(find.text('Reject'), findsOneWidget);
     });
 
     testWidgets('fits a small phone at large text', (tester) async {
@@ -268,14 +275,14 @@ void main() {
     testWidgets('an approver opens on Decisions and can switch to Mine and Team', (tester) async {
       final api = _Api(objects: {_regPath: _regData()}, lists: const {'/regularizations': []});
       await _pump(tester, api, RequestListScreen(config: regularizationConfig, decisionCenter: Scaffold(body: RegularizationDecisionCenterPanel(now: _now))));
-      expect(find.text('Pending decisions'), findsOneWidget);
+      expect(find.textContaining('pending decisions'), findsOneWidget);
       expect(api.listCalls.map((c) => c.path), isNot(contains('/regularizations')));
       for (final label in ['Mine', 'Decisions', 'Team']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
       await tester.tap(find.text('Team'));
       await tester.pumpAndSettle();
-      expect(find.text('Pending decisions'), findsNothing);
+      expect(find.textContaining('pending decisions'), findsNothing);
       expect(api.listCalls.map((c) => c.path), contains('/regularizations'));
     });
 
@@ -304,10 +311,10 @@ void main() {
     testWidgets('the leave screen opens on Decisions for an approver', (tester) async {
       final api = _Api(objects: {_leavePath: _leaveData()}, lists: const {'/leave-applications': []});
       await _pump(tester, api, LeaveApplicationsScreen(decisionCenter: Scaffold(body: LeaveDecisionCenterPanel(now: _now))));
-      expect(find.text('Pending requests'), findsOneWidget);
+      expect(find.textContaining('pending requests'), findsOneWidget);
       await tester.tap(find.text('Mine'));
       await tester.pumpAndSettle();
-      expect(find.text('Pending requests'), findsNothing);
+      expect(find.textContaining('pending requests'), findsNothing);
     });
   });
 }

@@ -113,7 +113,7 @@ void main() {
 
     testWidgets('an administrator keeps the original labels', (tester) async {
       await _pump(tester, [dashboardCompanyView, attendanceView, leaveBalanceView, payrollPayslipViewOwn]);
-      expect(_t('Regularizations'), findsOneWidget);
+      expect(_t('Attendance Corrections'), findsOneWidget);
       expect(_t('Leave Balances'), findsOneWidget);
       expect(_t('My Payslips'), findsOneWidget);
       expect(_t('Corrections'), findsNothing);

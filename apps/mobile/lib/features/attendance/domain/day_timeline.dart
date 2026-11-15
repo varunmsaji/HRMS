@@ -43,7 +43,7 @@ const _sourceLabels = {
   'IMPORT': 'Import',
   'ADMIN': 'Entered by HR',
   'API': 'API',
-  'REGULARIZATION': 'Regularization',
+  'REGULARIZATION': 'Correction',
 };
 
 String? sourceLabel(String? source) {

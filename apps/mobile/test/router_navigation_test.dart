@@ -269,12 +269,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/attendance');
 
-      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Dashboard')));
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Home')));
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/home');
 
-      // On the redesigned Home the profile avatar in the header opens the More hub.
-      await tester.tap(find.byIcon(Icons.person));
+      // The avatar looks like "me", so it opens Profile; the labelled More button opens the hub.
+      await tester.tap(find.byTooltip('My profile'));
+      await tester.pumpAndSettle();
+      expect(router.routeInformationProvider.value.uri.path, '/app/me');
+
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Home')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('More'));
       await tester.pumpAndSettle();
       expect(find.byType(SettingsHubScreen), findsOneWidget);
     });

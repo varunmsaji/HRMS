@@ -7,12 +7,16 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form_screen.dart';
+import '../../../core/format.dart' show formatLeaveDays;
 import '../../../core/providers.dart';
+import '../../../core/widgets/employee/leave_balance_strip.dart';
+import 'package:go_router/go_router.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/leave_repository.dart';
 import '../domain/leave_application_form.dart';
 import 'leave_application_detail_screen.dart';
+import 'leave_apply_screen.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 
 /// Leave applications — mirrors `apps/web/src/app/app/leave-applications/page.tsx`. "Mine" and
@@ -45,6 +49,10 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   List<Choice> _employees = const [];
   Map<String, String> _typeNames = const {};
 
+  /// The signed-in employee's balances, shown above "Mine" (audit MOB-UX-011); null until read,
+  /// and left null when they cannot be read (the list still works).
+  List<LeaveBalance>? _balances;
+
   String? get _myEmployeeId => ref.read(authControllerProvider).user?.employeeId;
 
   List<String> get _permissions => ref.read(authControllerProvider).user?.permissions ?? const <String>[];
@@ -57,7 +65,17 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     // An approver starts on what is waiting for them, as on the web.
     _decisions = widget.decisionCenter != null && _permissions.contains(leaveApplicationApprove);
     _loadLookups();
+    _loadBalances();
     if (!_decisions) _load();
+  }
+
+  Future<void> _loadBalances() async {
+    final id = _myEmployeeId;
+    if (id == null || !_permissions.contains(leaveBalanceView)) return;
+    try {
+      final balances = await ref.read(leaveRepositoryProvider).listLeaveBalances(id);
+      if (mounted) setState(() => _balances = balances);
+    } catch (_) {}
   }
 
   Future<void> _loadLookups() async {
@@ -125,6 +143,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   Future<void> _apply() async {
     final saved = await openLeaveApplicationForm(context, ref, onBehalf: _team || _decisions);
     if (saved && mounted) {
+      _loadBalances();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Leave application submitted.')));
       setState(() => _decisionsKey++);
       _load();
@@ -186,6 +205,13 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                 },
               ),
             const SizedBox(height: 10),
+            if (!_decisions && !_team && (_balances?.isNotEmpty ?? false)) ...[
+              LeaveBalanceStrip(
+                items: [for (final b in _balances!) LeaveBalanceItem(name: b.leaveTypeName, balance: formatLeaveDays(b.balance), reserved: b.reservedBalance == 0 ? null : formatLeaveDays(b.reservedBalance))],
+                onAll: () => context.push('/app/leave-balances'),
+              ),
+              const SizedBox(height: 10),
+            ],
             if (!_decisions) ...[
             Row(children: [
               Expanded(child: OutlinedButton.icon(onPressed: () => _pick(true), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_from.isEmpty ? 'From' : _from))),
@@ -288,7 +314,11 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
 /// Opens the apply-for-leave form ([onBehalf] adds the employee picker). Resolves to true once a
 /// request was submitted. Shared by the Leave tab and Home's "Apply Leave" shortcut, which opens
 /// the form directly rather than the list (MOB-UX-007).
-Future<bool> openLeaveApplicationForm(BuildContext context, WidgetRef ref, {bool onBehalf = false}) {
+///
+/// Self-service opens the dedicated [LeaveApplyScreen] (balances on the type chips, one date-range
+/// picker, a day summary). Applying on behalf keeps the generic form with its employee picker.
+Future<bool> openLeaveApplicationForm(BuildContext context, WidgetRef ref, {bool onBehalf = false}) async {
+  if (!onBehalf) return (await pushKeepingTheme<bool>(context, (_) => const LeaveApplyScreen())) == true;
   final client = ref.read(apiClientProvider);
   return openSpecForm(
     context,

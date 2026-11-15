@@ -6,16 +6,18 @@ import '../../../core/time.dart';
 /// Regularization requests and overtime records — the attendance module's approval workflows,
 /// configured on the shared request framework. Mirrors `apps/web/src/app/app/{regularizations,overtime}`.
 
+/// Plain-language names for what went wrong, so an employee can pick without knowing the policy
+/// terms (audit MOB-UX-018). The API codes are unchanged.
 const regularizationTypeLabels = {
-  'MISSING_PUNCH': 'Missing punch',
-  'WRONG_PUNCH': 'Wrong punch time',
-  'WRONG_SHIFT': 'Wrong shift',
-  'WRONG_STATUS': 'Wrong status',
-  'WFH': 'Work from home',
-  'ON_DUTY': 'On duty',
-  'EXCESS_BREAK': 'Excess break',
-  'FULL_DAY': 'Full day correction',
-  'EARLY_DEPARTURE_APPROVAL': 'Early departure pre-approval',
+  'MISSING_PUNCH': 'Missed a punch (in or out)',
+  'WRONG_PUNCH': 'A punch time is wrong',
+  'WRONG_SHIFT': 'Wrong shift assigned',
+  'WRONG_STATUS': 'Day marked wrongly',
+  'WFH': 'Worked from home',
+  'ON_DUTY': 'On duty elsewhere',
+  'EXCESS_BREAK': 'Break ran over',
+  'FULL_DAY': 'Count the full day',
+  'EARLY_DEPARTURE_APPROVAL': 'Leaving early (ask in advance)',
 };
 
 const requestStatusLabels = {'SUBMITTED': 'Submitted', 'APPROVED': 'Approved', 'REJECTED': 'Rejected', 'CANCELLED': 'Cancelled'};
@@ -37,12 +39,12 @@ Map<String, String> _validateRegularization(Map<String, dynamic> v) {
 
 FormSpec regularizationSpec(bool onBehalf) => FormSpec(
       name: 'regularization',
-      label: 'Regularization request',
+      label: 'Attendance correction',
       extraValidate: _validateRegularization,
       fields: [
         if (onBehalf) const FieldSpec('employee_id', 'Employee', kind: FieldKind.choice, choiceKey: 'employees', required: true),
         const FieldSpec('attendance_date', 'Attendance date', kind: FieldKind.date, required: true),
-        const FieldSpec('request_type', 'Request type', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'WFH', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
+        const FieldSpec('request_type', 'What needs correcting?', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'WFH', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
         const FieldSpec('correct_shift', 'Correct the assigned shift instead of punch times', kind: FieldKind.toggle),
         const FieldSpec('requested_shift_id', 'Correct shift', kind: FieldKind.choice, choiceKey: 'shifts', showWhen: 'correct_shift'),
         const FieldSpec('punch_in_time', 'Check-in time', kind: FieldKind.time, showWhen: '!correct_shift'),
@@ -105,8 +107,8 @@ List<DetailSection> _regularizationSections(Map<String, dynamic> r, String tz) {
 }
 
 final regularizationConfig = RequestConfig(
-  title: 'Regularizations',
-  singular: 'Regularization request',
+  title: 'Attendance corrections',
+  singular: 'Attendance correction',
   path: '/regularizations',
   statuses: const ['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'],
   statusLabels: requestStatusLabels,

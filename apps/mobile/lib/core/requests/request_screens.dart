@@ -346,83 +346,11 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
   }
 
   Future<void> _review(Rec r, {required bool approve}) async {
-    final comment = TextEditingController();
-    final rejection = TextEditingController();
-    final maxMinutes = approve ? _c.editableMinutes?.call(r) : null;
-    final minutes = TextEditingController(text: maxMinutes?.toString() ?? '');
-    String? formError;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text('${approve ? 'Approve' : 'Reject'} ${_c.singular.toLowerCase()}'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              if (maxMinutes != null) ...[
-                AuthFormField(
-                  label: 'Minutes to approve',
-                  description: '$maxMinutes detected. You can approve fewer, not more.',
-                  child: TextField(controller: minutes, keyboardType: TextInputType.number),
-                ),
-                const SizedBox(height: 12),
-              ],
-              AuthFormField(label: 'Comment', description: maxMinutes != null ? 'Required if you change the minutes. Visible to the employee.' : 'Optional, visible to the employee.', child: TextField(controller: comment)),
-              if (!approve) ...[const SizedBox(height: 12), AuthFormField(label: 'Rejection reason', child: TextField(controller: rejection))],
-              if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-            FilledButton(
-              style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
-              onPressed: () async {
-                final entered = int.tryParse(minutes.text.trim());
-                final minutesChanged = maxMinutes != null && entered != maxMinutes;
-                if (minutesChanged && (entered == null || entered < 1 || entered > maxMinutes)) {
-                  setLocal(() => formError = 'Enter whole minutes from 1 to $maxMinutes. To pay nothing, reject instead.');
-                  return;
-                }
-                if (minutesChanged && comment.text.trim().isEmpty) {
-                  setLocal(() => formError = 'Add a comment explaining why the minutes were changed.');
-                  return;
-                }
-                try {
-                  final updated = await _client.post<Rec>(
-                    '$_url/${approve ? 'approve' : 'reject'}',
-                    body: {
-                      if (comment.text.trim().isNotEmpty) 'reviewer_comment': comment.text.trim(),
-                      if (minutesChanged) 'minutes_approved': entered,
-                      if (!approve && rejection.text.trim().isNotEmpty) 'rejection_reason': rejection.text.trim(),
-                    },
-                    ifMatch: r['version'].toString(),
-                    parse: (d) => d as Rec,
-                  );
-                  if (mounted) setState(() => _row = updated);
-                  if (ctx.mounted) Navigator.of(ctx).pop(true);
-                } on ApiError catch (e) {
-                  setLocal(() => formError = e.status == 403
-                      ? (e.code == _c.selfApprovalCode
-                          ? 'You cannot approve or reject your own ${_c.singular.toLowerCase()}.'
-                          : e.code == _c.approverMismatchCode
-                              ? "You are not the resolved approver for this ${_c.singular.toLowerCase()}'s current stage."
-                              : e.message)
-                      : e.status == 409
-                          ? 'This ${_c.singular.toLowerCase()} has already moved on (decided or cancelled by someone else). Refresh to see its current state.'
-                          : e.message);
-                } catch (_) {
-                  setLocal(() => formError = 'Something went wrong.');
-                }
-              },
-              child: Text(approve ? 'Approve' : 'Reject'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok == true && mounted) {
-      _toast(approve ? '${_c.singular} approved.' : '${_c.singular} rejected.');
-      _load();
-    }
+    final updated = await showRequestReviewDialog(context, _client, _c, r, approve: approve);
+    if (updated == null || !mounted) return;
+    setState(() => _row = updated);
+    _toast(approve ? '${_c.singular} approved.' : '${_c.singular} rejected.');
+    _load();
   }
 
   Future<void> _cancel(Rec r) async {
@@ -511,3 +439,98 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
 
 /// `formatDateTime` for an optional ISO string.
 String when(String? iso, String zone) => formatDateTime(iso, zone);
+
+/// Approve or reject request [r] of kind [c] in a dialog; resolves to the updated record, or null
+/// when the approver backed out.
+///
+/// One text field (audit MOB-UX-015): when approving, an optional comment (required only when the
+/// approved overtime minutes are changed); when rejecting, a required reason. Both are shown to
+/// the employee. Used by the detail screen and straight from the decision-centre cards (MOB-UX-014).
+Future<Rec?> showRequestReviewDialog(BuildContext context, ApiClient client, RequestConfig c, Rec r, {required bool approve}) async {
+  final url = '${c.path}/${r['id']}';
+  final note = TextEditingController();
+  final maxMinutes = approve ? c.editableMinutes?.call(r) : null;
+  final minutes = TextEditingController(text: maxMinutes?.toString() ?? '');
+  String? formError;
+  Rec? updated;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setLocal) => AlertDialog(
+        title: Text('${approve ? 'Approve' : 'Reject'} ${c.singular.toLowerCase()}'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (maxMinutes != null) ...[
+              AuthFormField(
+                label: 'Minutes to approve',
+                description: '$maxMinutes detected. You can approve fewer, not more.',
+                child: TextField(controller: minutes, keyboardType: TextInputType.number),
+              ),
+              const SizedBox(height: 12),
+            ],
+            AuthFormField(
+              label: approve ? 'Comment' : 'Reason',
+              required: !approve,
+              description: approve
+                  ? (maxMinutes != null ? 'Required if you change the minutes. Shown to the employee.' : 'Optional. Shown to the employee.')
+                  : 'Shown to the employee.',
+              child: TextField(controller: note, minLines: 2, maxLines: 4, textCapitalization: TextCapitalization.sentences),
+            ),
+            if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () async {
+              final text = note.text.trim();
+              final entered = int.tryParse(minutes.text.trim());
+              final minutesChanged = maxMinutes != null && entered != maxMinutes;
+              if (!approve && text.isEmpty) {
+                setLocal(() => formError = 'Give the employee a reason.');
+                return;
+              }
+              if (minutesChanged && (entered == null || entered < 1 || entered > maxMinutes)) {
+                setLocal(() => formError = 'Enter whole minutes from 1 to $maxMinutes. To pay nothing, reject instead.');
+                return;
+              }
+              if (minutesChanged && text.isEmpty) {
+                setLocal(() => formError = 'Add a comment explaining why the minutes were changed.');
+                return;
+              }
+              try {
+                updated = await client.post<Rec>(
+                  '$url/${approve ? 'approve' : 'reject'}',
+                  body: {
+                    if (approve && text.isNotEmpty) 'reviewer_comment': text,
+                    if (minutesChanged) 'minutes_approved': entered,
+                    if (!approve) 'rejection_reason': text,
+                  },
+                  ifMatch: r['version'].toString(),
+                  parse: (d) => d as Rec,
+                );
+                if (ctx.mounted) Navigator.of(ctx).pop(true);
+              } on ApiError catch (e) {
+                setLocal(() => formError = e.status == 403
+                    ? (e.code == c.selfApprovalCode
+                        ? 'You cannot approve or reject your own ${c.singular.toLowerCase()}.'
+                        : e.code == c.approverMismatchCode
+                            ? "You are not the resolved approver for this ${c.singular.toLowerCase()}'s current stage."
+                            : e.message)
+                    : e.status == 409
+                        ? 'This ${c.singular.toLowerCase()} has already moved on (decided or cancelled by someone else). Refresh to see its current state.'
+                        : e.message);
+              } catch (_) {
+                setLocal(() => formError = 'Something went wrong.');
+              }
+            },
+            child: Text(approve ? 'Approve' : 'Reject'),
+          ),
+        ],
+      ),
+    ),
+  );
+  // Not disposed here: the dialog is still animating out and its fields still use them.
+  return ok == true ? updated : null;
+}

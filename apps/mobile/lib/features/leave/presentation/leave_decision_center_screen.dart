@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error.dart' show describeApiError;
 import '../../../core/requests/decision_center_view.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
@@ -50,8 +51,27 @@ class _LeaveCard extends StatelessWidget {
   final DateTime? now;
   final VoidCallback reload;
 
-  Future<void> _open(BuildContext context, {bool? review}) async {
-    await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: item.id, reviewOnOpen: review));
+  Future<void> _open(BuildContext context) async {
+    await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: item.id));
+    reload();
+  }
+
+  /// Approve or reject from the card itself: reads the application (for its current version) and
+  /// opens the decision dialog over this list, with no detail screen in between (MOB-UX-014).
+  Future<void> _decide(BuildContext context, {required bool approve}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = ProviderScope.containerOf(context, listen: false).read(leaveRepositoryProvider);
+    final LeaveApplication application;
+    try {
+      application = await repo.getLeaveApplication(item.id);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(describeApiError(e))));
+      return;
+    }
+    if (!context.mounted) return;
+    final updated = await showLeaveReviewDialog(context, repo, application, approve: approve);
+    if (updated == null) return;
+    messenger.showSnackBar(SnackBar(content: Text(approve ? 'Leave application approved.' : 'Leave application rejected.')));
     reload();
   }
 
@@ -108,8 +128,8 @@ class _LeaveCard extends StatelessWidget {
           detailsLabel: 'View details',
           onDetails: () => _open(context),
           approveLabel: 'Approve leave',
-          onDecline: item.isPending && canReview ? () => _open(context, review: false) : null,
-          onApprove: item.isPending && canReview ? () => _open(context, review: true) : null,
+          onDecline: item.isPending && canReview ? () => _decide(context, approve: false) : null,
+          onApprove: item.isPending && canReview ? () => _decide(context, approve: true) : null,
         ),
       ]),
     );

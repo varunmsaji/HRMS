@@ -120,6 +120,9 @@ FakeApiClient _api({Map<String, Object> failing = const {}, List<Map<String, dyn
           {'employee_id': 'e-1', 'leave_type_id': 'lt-1', 'leave_type_code': 'CL', 'leave_type_name': 'Casual leave', 'balance': '8.5', 'reserved_balance': '1'},
         ],
         '/leave-applications': leaveApps,
+        '/leave-types': [
+          {'id': 'lt-1', 'name': 'Casual leave', 'is_active': true},
+        ],
         '/regularizations': const [],
         '/me/payslips': payslips,
       },
@@ -466,7 +469,7 @@ void main() {
       // Untouched: Back closes it without a question.
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(find.text('Discard changes?'), findsNothing);
+      expect(find.text('Discard this request?'), findsNothing);
       expect(find.text('Apply for leave'), findsNothing);
 
       await tester.tap(find.text('Apply Leave'));
@@ -475,7 +478,7 @@ void main() {
       await tester.pump(); // the frame that rebuilds the form with its changes pending
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(find.text('Discard changes?'), findsOneWidget);
+      expect(find.text('Discard this request?'), findsOneWidget);
 
       await tester.tap(find.text('Keep editing'));
       await tester.pumpAndSettle();

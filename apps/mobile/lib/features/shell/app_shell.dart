@@ -69,19 +69,15 @@ const shellHomeBranch = 0;
 const _shellBranchCount = 4;
 
 const _destinations = [
-  NavigationDestination(icon: Icon(Icons.space_dashboard_outlined), selectedIcon: Icon(Icons.space_dashboard_rounded), label: 'Home'),
-  NavigationDestination(icon: Icon(Icons.fingerprint_rounded), selectedIcon: Icon(Icons.fingerprint_rounded), label: 'Attendance'),
-  NavigationDestination(icon: Icon(Icons.beach_access_outlined), selectedIcon: Icon(Icons.beach_access_rounded), label: 'Leave'),
-  NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'Profile'),
-];
-
-/// Same four tabs on the employee surface: Home and Leave get their own glyphs (redesign §3.3).
-const _employeeDestinations = [
-  NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view_rounded), label: 'Dashboard'),
+  NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'Home'),
   NavigationDestination(icon: Icon(Icons.fingerprint_rounded), selectedIcon: Icon(Icons.fingerprint_rounded), label: 'Attendance'),
   NavigationDestination(icon: Icon(Icons.event_available_outlined), selectedIcon: Icon(Icons.event_available_rounded), label: 'Leave'),
   NavigationDestination(icon: Icon(Icons.account_circle_outlined), selectedIcon: Icon(Icons.account_circle_rounded), label: 'Profile'),
 ];
+
+/// The same four tabs, names and glyphs on both surfaces, so "tap Home" means one thing in training
+/// and support (audit MOB-UX-005).
+const _employeeDestinations = _destinations;
 
 /// The shell branch indexes to show as tabs, in order. All four, for everyone: the Home tab is
 /// the company dashboard for an administrator, the employee Home for a user with an employee

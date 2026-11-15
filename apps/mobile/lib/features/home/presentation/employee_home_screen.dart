@@ -28,6 +28,8 @@ import '../../payroll/data/payroll_repository.dart' show PayslipSummary;
 import '../../payroll/presentation/payslip_screen.dart';
 import '../../payroll/presentation/pay_runs_screen.dart' show payrollRepositoryProvider;
 import '../state/home_providers.dart';
+import '../../../core/widgets/ui.dart' show initialsOf;
+import '../../shell/more_action.dart';
 import '../state/home_stats.dart';
 import '../../notifications/presentation/notification_bell.dart';
 import '../../notifications/state/unread_count.dart';
@@ -108,7 +110,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     if (employeeId == null) {
       return Scaffold(
         backgroundColor: Dd.canvas,
-        body: SafeArea(child: Column(children: [_Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.push('/app/more')), const Expanded(child: Center(child: Text('No employee record is linked to your account.')))])),
+        body: SafeArea(child: Column(children: [_Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.go('/app/me')), const Expanded(child: Center(child: Text('No employee record is linked to your account.')))])),
       );
     }
 
@@ -150,7 +152,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           top: false,
           bottom: false,
           child: Column(children: [
-            _Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.push('/app/more')),
+            _Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.go('/app/me'), name: employee?.fullName),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: () async {
@@ -447,7 +449,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           iconColor: Dd.navy,
           iconBackground: const Color(0xFFE3E8FB),
           title: 'Correction',
-          subtitle: flagged == null ? 'Fix a missed punch' : 'Fix ${_shortDate(flagged)}',
+          subtitle: flagged == null ? 'Fix a missed punch' : 'Fix ${_shortDate(flagged.attendanceDate)}',
           onTap: () => _raiseCorrection(employeeId, flagged),
         ),
       if (widget.payroll && permissions.contains(payrollPayslipViewOwn))
@@ -474,12 +476,12 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
 
   /// The latest past day this month that the server flagged as needing a correction (a missing
   /// punch or an incomplete day), to prefill the correction form. Null when there is none.
-  static String? _lastFlaggedDay(List<AttendanceDay>? days, String today) {
-    String? latest;
+  static AttendanceDay? _lastFlaggedDay(List<AttendanceDay>? days, String today) {
+    AttendanceDay? latest;
     for (final d in days ?? const <AttendanceDay>[]) {
       if (d.attendanceDate.compareTo(today) >= 0) continue;
       final flagged = d.raw['missing_punch'] == true || d.attendanceStatus == 'INCOMPLETE';
-      if (flagged && (latest == null || d.attendanceDate.compareTo(latest) > 0)) latest = d.attendanceDate;
+      if (flagged && (latest == null || d.attendanceDate.compareTo(latest.attendanceDate) > 0)) latest = d;
     }
     return latest;
   }
@@ -492,9 +494,9 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     ref.invalidate(homeBalancesProvider(employeeId));
   }
 
-  Future<void> _raiseCorrection(String employeeId, String? date) async {
+  Future<void> _raiseCorrection(String employeeId, AttendanceDay? day) async {
     final messenger = ScaffoldMessenger.of(context);
-    if (!await raiseOwnCorrection(context, ref, date: date) || !mounted) return;
+    if (!await raiseOwnCorrection(context, ref, day: day) || !mounted) return;
     messenger.showSnackBar(const SnackBar(content: Text('Correction request submitted.')));
     ref.invalidate(homeSubmittedCorrectionsProvider(employeeId));
   }
@@ -593,9 +595,15 @@ class _TwoColumnGrid extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onBell, required this.onProfile});
+  const _Header({required this.onBell, required this.onProfile, this.name});
   final VoidCallback onBell;
+
+  /// Opens the Profile tab: the avatar looks like "me", so it goes to me (MOB-UX-004). Settings
+  /// and tools are behind the labelled More button beside it.
   final VoidCallback onProfile;
+
+  /// The signed-in employee's name, for the avatar's initials; a person glyph until it is known.
+  final String? name;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -620,13 +628,20 @@ class _Header extends StatelessWidget {
               const SizedBox(width: 10),
               const Expanded(child: Text('Krewoxa', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white, height: 1.1))),
               NotificationBell(onPressed: onBell, color: Colors.white),
+              const MoreAction(onDark: true),
               // A 48 dp button with a name, not a bare tappable picture (MOB-UX-037).
               IconButton(
                 onPressed: onProfile,
-                tooltip: 'Settings and more',
+                tooltip: 'My profile',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                icon: const CircleAvatar(radius: 19, backgroundColor: Colors.white, child: Icon(Icons.person, size: 20, color: Dd.navy)),
+                icon: CircleAvatar(
+                  radius: 19,
+                  backgroundColor: Colors.white,
+                  child: name == null || name!.trim().isEmpty
+                      ? const Icon(Icons.person, size: 20, color: Dd.navy)
+                      : Text(initialsOf(name!), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Dd.navy)),
+                ),
               ),
             ]),
           ),

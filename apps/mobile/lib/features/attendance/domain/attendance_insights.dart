@@ -268,7 +268,7 @@ List<AttentionItem> buildAttentionItems({
   add('Late arrivals', 'Checked in after the grace window.', Severity.medium, rows.where(isLate));
   add('Early departures', 'Checked out before shift end.', Severity.low, rows.where((d) => _flag(d, 'is_early_out')));
   if (pendingRegularizations > 0) {
-    items.add(AttentionItem('Regularization pending', 'Employee correction requests awaiting a decision.', pendingRegularizations, 'requests', Severity.high, route: '/app/regularizations'));
+    items.add(AttentionItem('Corrections pending', 'Attendance corrections awaiting a decision.', pendingRegularizations, 'requests', Severity.high, route: '/app/regularizations'));
   }
   if (pendingOvertime > 0) {
     items.add(AttentionItem('Overtime awaiting approval', 'Detected overtime not yet approved or rejected.', pendingOvertime, 'records', Severity.medium, route: '/app/overtime'));

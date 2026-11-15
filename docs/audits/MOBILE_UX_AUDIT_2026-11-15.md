@@ -501,6 +501,15 @@ Ordering principle: fix what misdirects users first, then what costs them taps e
 | 5 | 037 | Home usable with TalkBack/VoiceOver | None |
 
 ### Phase 2: High-impact improvements (about 2–3 weeks)
+
+**Status (2026-11-15):** implemented on `test` except 002 and biometric unlock.
+* 004/005: Home's avatar shows initials and opens Profile; a labelled "More" button is on every tab, including Attendance (this reverses decision D-15); both surfaces use the same tab names and icons ("Home").
+* 011/012: the Leave tab shows balances above "Mine"; self-service leave has its own form (type chips with balances, one date-range picker, half day only for one day, maternity date only for maternity leave, a summary of selected and working days that defers to the leave rules, sticky "Submit request", discard guard). Applying on behalf keeps the generic form.
+* 014/015/016: Approve and Reject on decision cards open the decision dialog over the list; one comment/reason field (reason required on reject, sent as `rejection_reason`); "Decline" is now "Reject"; the headline figures fold into one line.
+* 018/019: the correction form is prefilled with the likely type from the day's flags and shows the recorded punches (times are not prefilled); type names are plain language; "Attendance correction" replaces "Regularization" in everything a user reads.
+* 030/031: the login screen remembers the identifier and company code (never the password); "Register your company" is a link; an expired session is explained and the same user returns to the screen they were on. A half-filled form is still lost when the session expires.
+* Not done: **002 push notifications** need a Firebase project, platform config files and an APNs key, plus a backend sender. **Biometric unlock** needs native changes that should be tested on devices.
+
 | Order | Issues | Expected impact | Dependencies |
 |---|---|---|---|
 | 1 | 011, 012 | Leave applied with full information, fewer rejections | Leave-type metadata; day-count preview (backend preferred) |

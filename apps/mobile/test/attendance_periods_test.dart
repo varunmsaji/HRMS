@@ -123,7 +123,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, 'Validate'));
       await tester.pumpAndSettle();
       expect(find.text('BLOCKED'), findsOneWidget);
-      expect(find.text('Pending regularization requests — 3'), findsOneWidget);
+      expect(find.text('Pending attendance corrections — 3'), findsOneWidget);
     });
 
     testWidgets('finalize carries the version and surfaces blocking reasons from a refusal', (tester) async {

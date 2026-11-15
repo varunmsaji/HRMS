@@ -56,7 +56,7 @@ class _Pending {
 }
 
 /// Web's pending row titles and the queue each opens.
-const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Regularization', 'overtime': 'Overtime'};
+const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Attendance correction', 'overtime': 'Overtime'};
 const _pendingRoute = {'leave': '/app/leave-applications', 'regularization': '/app/regularizations', 'overtime': '/app/overtime'};
 const _pendingIcon = {'leave': Icons.event_busy_outlined, 'regularization': Icons.schedule_outlined, 'overtime': Icons.more_time_outlined};
 

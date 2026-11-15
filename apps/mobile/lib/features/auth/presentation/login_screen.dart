@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/validation.dart';
+import '../../../core/router/app_router.dart' show returnPathProvider;
+import '../../../core/widgets/ui.dart' show Tone, toneColors;
+import '../data/login_prefs.dart';
 import '../state/auth_controller.dart';
 import '../state/auth_state.dart';
 import 'widgets/auth_form_field.dart';
@@ -32,6 +35,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   String? _unverifiedEmail;
   _ResendState _resendState = _ResendState.idle;
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prefill();
+  }
+
+  /// Fills in the identifier and company code from the last successful sign-in on this device, so
+  /// a returning employee types only their password (MOB-UX-030). Never overwrites typing.
+  Future<void> _prefill() async {
+    final saved = await ref.read(loginPrefsProvider).read();
+    if (!mounted) return;
+    setState(() {
+      if (_emailController.text.isEmpty && saved.identifier != null) _emailController.text = saved.identifier!;
+      if (_companyCodeController.text.isEmpty && saved.companyCode != null) _companyCodeController.text = saved.companyCode!;
+    });
+  }
 
   @override
   void dispose() {
@@ -75,7 +95,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ? await auth.login(email: identifier, password: password)
           : await auth.login(companyCode: companyCode, employeeCode: identifier, password: password);
       if (!mounted) return;
-      context.go(landingPathFor(user));
+      await ref.read(loginPrefsProvider).remember(identifier: identifier, companyCode: byEmail ? null : companyCode);
+      if (!mounted) return;
+      // Back to where an expired session interrupted this same user; otherwise the landing page.
+      context.go(ref.read(returnPathProvider).takeFor(user?.id) ?? landingPathFor(user));
     } catch (error) {
       if (error is ApiError) {
         if (error.code == 'EMAIL_NOT_VERIFIED') {
@@ -171,7 +194,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          OutlinedButton.icon(
+          // Most people on this screen are employees signing in; registering a company is the rare
+          // case, so it is a link rather than a second large button competing with Sign in.
+          TextButton.icon(
             onPressed: _submitting ? null : () => context.go('/register'),
             icon: const Icon(Icons.domain_add_outlined, size: 20),
             label: const Text('Register your company'),
@@ -188,6 +213,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (ref.watch(authControllerProvider.select((a) => a.sessionExpired)) && _formError == null) ...[
+              const _SessionEndedNote(),
+              const SizedBox(height: 16),
+            ],
             if (_formError != null) ...[
               InlineAlert(message: _formError!),
               const SizedBox(height: 16),
@@ -277,6 +306,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             PrimaryButton(label: _submitting ? 'Signing in…' : 'Sign in', loading: _submitting, onPressed: _submit),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shown when the app signed the user out because their session ran out, so the login screen is
+/// not a mystery (MOB-UX-031). Informational, not an error.
+class _SessionEndedNote extends StatelessWidget {
+  const _SessionEndedNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = toneColors(context, Tone.info);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: c.bg, borderRadius: BorderRadius.circular(12)),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.info_outline_rounded, size: 18, color: c.fg),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Your session ended. Sign in again to continue where you left off.', style: TextStyle(color: c.fg, fontSize: 13, height: 1.35))),
+        ]),
       ),
     );
   }

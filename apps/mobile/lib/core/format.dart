@@ -58,3 +58,16 @@ String formatDateRange(String start, String end) {
   if (s.year == e.year && s.month == e.month) return '${s.day}–${e.day} ${_shortMonths[e.month - 1]}';
   return '${formatShortDate(start)} – ${formatShortDate(end)}';
 }
+
+const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/// "2026-11-12" -> "Thu, 12 Nov" (with the year when it is not this year's).
+String formatDayDate(String iso, {DateTime? now}) {
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  final year = (now ?? DateTime.now()).year == d.year ? '' : ' ${d.year}';
+  return '${_weekdays[d.weekday - 1]}, ${d.day} ${_shortMonths[d.month - 1]}$year';
+}
+
+/// A leave day count: whole numbers without decimals ("4"), halves as written ("8.5").
+String formatLeaveDays(num days) => days == days.roundToDouble() ? '${days.toInt()}' : days.toStringAsFixed(1);

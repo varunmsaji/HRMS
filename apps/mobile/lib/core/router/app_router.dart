@@ -86,6 +86,24 @@ class _AuthRefreshNotifier extends ChangeNotifier {
 
 final _authRefreshProvider = Provider<_AuthRefreshNotifier>((ref) => _AuthRefreshNotifier(ref));
 
+/// Where the user was when their session expired, and who they were. The login screen sends the
+/// same user back there after they sign in again, instead of to their landing page (MOB-UX-031).
+/// A plain holder, not reactive state: it is written during a redirect and read once at login.
+class ReturnPath {
+  String? path;
+  String? userId;
+
+  /// The remembered path if [userId] is the person it was saved for, then forgets it either way.
+  String? takeFor(String? userId) {
+    final match = path != null && this.userId != null && this.userId == userId ? path : null;
+    path = null;
+    this.userId = null;
+    return match;
+  }
+}
+
+final returnPathProvider = Provider<ReturnPath>((ref) => ReturnPath());
+
 /// The router's redirect rules as a pure function (so every user type can be tested without
 /// building screens). Returns the location to go to instead, or null to stay.
 String? appRedirect(AuthState auth, String location) {
@@ -116,7 +134,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/splash',
     refreshListenable: ref.watch(_authRefreshProvider),
-    redirect: (context, state) => appRedirect(ref.read(authControllerProvider), state.matchedLocation),
+    redirect: (context, state) {
+      final auth = ref.read(authControllerProvider);
+      final to = appRedirect(auth, state.matchedLocation);
+      if (to == '/login' && auth.sessionExpired && state.matchedLocation.startsWith('/app/')) {
+        ref.read(returnPathProvider)
+          ..path = state.uri.toString()
+          ..userId = auth.expiredUserId;
+      }
+      return to;
+    },
     routes: [
       GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),

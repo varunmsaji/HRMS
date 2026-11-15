@@ -6,11 +6,18 @@ enum AuthStatus { loading, authenticated, unauthenticated }
 
 /// Mirrors `apps/web/src/lib/auth/auth-context.tsx`'s `AuthState`.
 class AuthState {
-  const AuthState({required this.status, this.session, this.user});
+  const AuthState({required this.status, this.session, this.user, this.sessionExpired = false, this.expiredUserId});
 
   final AuthStatus status;
   final StoredSession? session;
   final UserProfile? user;
+
+  /// Signed out because the session ran out (refresh failed), not because the user chose to.
+  /// The login screen then says so and returns the same user to where they were (MOB-UX-031).
+  final bool sessionExpired;
+
+  /// Who was signed in when the session expired, so only that person is sent back to their screen.
+  final String? expiredUserId;
 
   static const initial = AuthState(status: AuthStatus.loading);
 }
