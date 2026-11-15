@@ -103,6 +103,10 @@ class Session:
     punch_ids: tuple[UUID, ...]
     #: For a lone punch, its direction; None for a pair.
     lone_direction: str | None
+    #: For a pair, the raw punches standing for its IN and for its OUT (so the pair can be split
+    #: again, see `split_pair`). Empty for a lone punch.
+    in_ids: tuple[UUID, ...] = ()
+    out_ids: tuple[UUID, ...] = ()
 
 
 def build_sessions(punches: list[PunchData], *, duplicate_window_seconds: int) -> list[Session]:
@@ -151,6 +155,8 @@ def build_sessions(punches: list[PunchData], *, duplicate_window_seconds: int) -
                     end=punch.punch_time,
                     punch_ids=tuple(members[pending.id] + members[punch.id]),
                     lone_direction=None,
+                    in_ids=tuple(members[pending.id]),
+                    out_ids=tuple(members[punch.id]),
                 )
             )
             pending = None
@@ -228,13 +234,45 @@ def owner_of(session: Session, claims: list[DayClaim]) -> date | None:
     return None
 
 
+def split_pair(session: Session) -> tuple[Session, Session]:
+    """N-03 - an IN-OUT pair taken apart into a lone IN and a lone OUT."""
+    assert session.lone_direction is None
+    return (
+        Session(session.start, session.start, session.in_ids, "IN"),
+        Session(session.end, session.end, session.out_ids, "OUT"),
+    )
+
+
+def _outruns_owner(session: Session, owner: date | None, claims: list[DayClaim]) -> bool:
+    """N-03 - a pair whose OUT lies at or beyond the end of its owning shift day's window.
+    Only a shift day's window is a statement about how long its work can last; a day without
+    a shift has no schedule to outrun."""
+    if owner is None or session.lone_direction is not None:
+        return False
+    claim = next((c for c in claims if c.attendance_date == owner), None)
+    return claim is not None and claim.has_shift and session.end >= claim.window_end
+
+
 def assign_owners(
     punches: list[PunchData], claims: list[DayClaim], *, duplicate_window_seconds: int
 ) -> dict[UUID, date | None]:
-    """`{punch_id: owning date, or None for an orphan}` for every punch given."""
+    """`{punch_id: owning date, or None for an orphan}` for every punch given.
+
+    N-03: a pair is never one work session longer than its day's window. A forgotten OUT followed
+    by a next-morning OUT used to pair into a single 24-hour session owned by the first day, with
+    about 15 hours of overtime. Such a pair is split into its IN and its OUT, which are then
+    owned separately as lone punches: the IN stays with the day it started (INCOMPLETE, no
+    checkout), the OUT goes to the day that can take it, or is an orphan. Neither day is paid
+    work nobody can vouch for; both need a regularization."""
     owners: dict[UUID, date | None] = {}
     for session in build_sessions(punches, duplicate_window_seconds=duplicate_window_seconds):
         owner = owner_of(session, claims)
+        if _outruns_owner(session, owner, claims):
+            for part in split_pair(session):
+                part_owner = owner_of(part, claims)
+                for punch_id in part.punch_ids:
+                    owners[punch_id] = part_owner
+            continue
         for punch_id in session.punch_ids:
             owners[punch_id] = owner
     return owners

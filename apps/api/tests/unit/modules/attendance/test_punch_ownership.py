@@ -181,3 +181,172 @@ def test_every_punch_has_at_most_one_owner_regardless_of_which_day_asks() -> Non
         for ids in per_day.values():
             assert not (ids & seen)
             seen |= ids
+
+
+# ---------------------------------------------------------------------------
+# N-03 - a pair never outlasts its day's window
+# (docs/audits/SHIFT_SCENARIO_MAP_2026-11-15.md, PUN-06)
+# ---------------------------------------------------------------------------
+
+
+def test_forgotten_out_then_next_morning_out_is_split_between_two_days() -> None:
+    """IN 09:00 on day 0, no OUT, then an OUT at 09:05 the next morning: one 24-hour pair before
+    the fix. Now the IN stays with day 0 and the OUT goes to day 1; neither is a work session."""
+    punches = [p(0, 9, 0, "IN"), p(1, 9, 5, "OUT")]
+    assert owners(punches, DAY_SHIFTS) == [D, D + timedelta(days=1)]
+
+
+def test_out_beyond_the_window_with_no_shift_the_next_day_is_an_orphan() -> None:
+    claims = [fixed(0, 9, 18)]
+    punches = [p(0, 9, 0, "IN"), p(1, 9, 5, "OUT")]
+    assert owners(punches, claims) == [D, None]
+
+
+def test_pair_ending_at_the_last_minute_of_the_window_stays_whole() -> None:
+    """Shift ends 18:00, `max_late_punch_minutes` 720: an OUT at 06:00 next day is still inside."""
+    claims = [fixed(0, 9, 18), fixed(1, 9, 18)]
+    assert owners([p(0, 9, 0, "IN"), p(1, 6, 0, "OUT")], claims) == [D, D]
+
+
+def test_pair_ending_one_minute_past_the_window_is_split() -> None:
+    claims = [fixed(0, 9, 18), fixed(1, 9, 18)]
+    # 06:01 is the first instant outside day 0's window. The OUT cannot end tomorrow's 09:00 shift
+    # (a lone OUT may not precede the shift it ends), so it is an orphan, not day 1's.
+    assert owners([p(0, 9, 0, "IN"), p(1, 6, 1, "OUT")], claims) == [D, None]
+    # Once the next shift has started it can take the OUT.
+    assert owners([p(0, 9, 0, "IN"), p(1, 9, 0, "OUT")], claims) == [D, D + timedelta(days=1)]
+
+
+def test_legitimate_overnight_pair_inside_the_window_is_not_split() -> None:
+    claims = [fixed(d, 22, 6) for d in range(-2, 3)]
+    assert owners([p(0, 22, 0, "IN"), p(1, 7, 0, "OUT")], claims) == [D, D]
+
+
+def test_split_pair_takes_its_duplicates_and_strays_with_each_half() -> None:
+    punches = [
+        p(0, 9, 0, "IN"),
+        p(0, 9, 0, "IN"),  # duplicate of the IN
+        p(1, 9, 5, "OUT"),
+        p(1, 9, 20, "OUT"),  # stray after the OUT
+    ]
+    nxt = D + timedelta(days=1)
+    assert owners(punches, DAY_SHIFTS) == [D, D, nxt, nxt]
+
+
+def test_a_day_without_a_shift_does_not_split_a_pair() -> None:
+    """A no-shift day has no schedule to outrun: its pair stays as before."""
+    claims = [no_shift(0), no_shift(1)]
+    punches = [p(0, 22, 0, "IN"), p(1, 7, 0, "OUT")]
+    assert owners(punches, claims) == [D, D]
+
+
+def _engine_input(day: int, punches: list[PunchData]):  # type: ignore[no-untyped-def]
+    from hrms.modules.attendance.calculation import (
+        AttendanceCalculationInput,
+        BandData,
+        OvertimePolicyInputs,
+        PolicyInputs,
+        ShiftInputs,
+    )
+
+    return AttendanceCalculationInput(
+        employee_id=uuid4(),
+        attendance_date=D + timedelta(days=day),
+        timezone="UTC",
+        population_status="ACTIVE",
+        calendar_day_type="WORKING",
+        holiday_name=None,
+        holiday_on_weekly_off=False,
+        shift=ShiftInputs("FIXED", True, False, False, False),
+        scheduled_start=at(day, 9),
+        scheduled_end=at(day, 18),
+        policy=PolicyInputs(
+            grace_in_minutes=10,
+            grace_out_minutes=10,
+            punch_rounding="NONE",
+            rounding_minutes=None,
+            missing_punch_behaviour="INCOMPLETE",
+            missing_shift_behaviour="INCOMPLETE",
+            half_day_split="NONE",
+            half_day_boundary_minutes=None,
+            multi_punch_mode="PAIR_ALL",
+            duplicate_punch_window_seconds=60,
+            core_hours_breach_behaviour="FLAG",
+            early_out_uses_core_end=False,
+            split_shift_missed_block_behaviour="IGNORE",
+            excess_break_behaviour="IGNORE",
+            incomplete_at_lock_behaviour="TREAT_ABSENT",
+            work_on_leave_behaviour="KEEP_PUNCH_STATUS",
+        ),
+        hour_bands=[
+            BandData(0, 239, "ABSENT"),
+            BandData(240, 479, "HALF_DAY"),
+            BandData(480, None, "PRESENT"),
+        ],
+        ot_policy=OvertimePolicyInputs(
+            eligibility="SHIFT_FLAG",
+            min_ot_minutes=30,
+            rounding_minutes=None,
+            rounding_mode="NONE",
+            requires_post_approval=False,
+            daily_cap_minutes=None,
+            comp_off_instead_of_pay=False,
+            night_ot_mode="SHIFT_FLAG",
+            night_window_start=None,
+            night_window_end=None,
+        ),
+        punches=punches,
+    )
+
+
+def test_forgotten_out_pays_no_overtime_and_no_24_hour_day_end_to_end() -> None:
+    """PUN-06 through the engine: both days are INCOMPLETE with no worked minutes and no overtime,
+    where before day 0 was PRESENT with 1440 worked minutes and 900 minutes of overtime."""
+    from hrms.modules.attendance.calculation import evaluate_day
+
+    punches = [p(0, 9, 0, "IN"), p(1, 9, 5, "OUT")]
+    result = assign_owners(punches, DAY_SHIFTS, duplicate_window_seconds=60)
+    for day in (0, 1):
+        own = [x for x in punches if result[x.id] == D + timedelta(days=day)]
+        assert len(own) == 1
+        outcome = evaluate_day(_engine_input(day, own))
+        assert outcome.attendance_status == "INCOMPLETE"
+        assert outcome.worked_minutes == 0
+        assert outcome.ot_minutes_detected == 0
+        assert outcome.missing_punch is True
+
+
+def test_no_owned_pair_outlasts_its_days_window() -> None:
+    """Property: whatever the punches, the pairs the engine forms from a shift day's own punches
+    all end inside that day's window."""
+    from hrms.modules.attendance.calculation import (
+        collapse_duplicate_punches,
+        drop_stray_punches,
+        pair_punches,
+        punches_in_order,
+    )
+
+    rng = random.Random(20261116)
+    for _ in range(400):
+        claims = [
+            rng.choice([fixed(d, 9, 18), fixed(d, 22, 6), fixed(d, 14, 23), no_shift(d)])
+            for d in range(-2, 4)
+        ]
+        punches = [
+            PunchData(
+                uuid4(),
+                at(-1, 0) + timedelta(minutes=rng.randint(0, 5 * 24 * 60)),
+                rng.choice(["IN", "OUT"]),
+            )
+            for _n in range(rng.randint(0, 10))
+        ]
+        result = assign_owners(punches, claims, duplicate_window_seconds=60)
+        for claim in claims:
+            if not claim.has_shift:
+                continue
+            own = [x for x in punches if result[x.id] == claim.attendance_date]
+            kept = drop_stray_punches(
+                collapse_duplicate_punches(punches_in_order(own), window_seconds=60)
+            )
+            for _in, out in pair_punches(kept).pairs:
+                assert out.punch_time < claim.window_end

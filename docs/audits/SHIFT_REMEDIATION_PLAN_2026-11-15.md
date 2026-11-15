@@ -289,3 +289,22 @@ Run on 15 Nov 2026 against isolated test databases (`hrms_test`, `hrms_test2`).
 The SH-10 and SH-12 regression tests fail on the engine before this change. The roster and swap
 tests (SH-18, SH-20) could not be checked against the old code separately: the old service files no
 longer import with the new employee code.
+
+---
+
+## 9. Follow-up: N-02 and N-03 (engine version 14)
+
+From `SHIFT_SCENARIO_MAP_2026-11-15.md` (findings N-02 and N-03). Same branch, not pushed.
+
+| Finding | Change | Where |
+|---|---|---|
+| N-03 | A pair whose OUT lies at or beyond the end of its owning shift day's punch window is split into a lone IN and a lone OUT, each owned separately. A forgotten OUT plus a next-morning OUT no longer makes one 24-hour day with about 15 hours of overtime: both days are INCOMPLETE until corrected. Days without a shift are not split (no schedule to outrun). | `punch_ownership.py` (`assign_owners`, `split_pair`) |
+| N-02 | Grace minutes (at most the grace, and no more than the minutes actually missed at that end) are credited to the **hour-band lookup only**, capped at the net scheduled minutes. Worked minutes, overtime, late and early minutes are unchanged. Applies to FIXED, FLEXIBLE, SPLIT and half-day-leave days; recorded as `snapshot.grace_band_credit`. | `calculation.py` (`grace_band_credit`) |
+
+Known edge: the credit never covers more than the grace, so on a shift with no spare minutes an arrival one minute past grace is still a half day (scenario BRK-13).
+
+Not included, by decision: the punch endpoint's stale-punch handling (the 18-hour order rule, R-07) stays a separate change after its own audit of stale punches and night shifts.
+
+After deploy: recalculate unlocked days of open periods (`POST /attendance/days/calculate-range` per open period). Locked days keep their engine version.
+
+Tests: `test_grace_band_credit.py` (27), `test_punch_ownership.py` (9 new, including a property test that no owned pair outlasts its day's window).

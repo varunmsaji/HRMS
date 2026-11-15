@@ -74,7 +74,12 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: fixed two-hour pad (SH-01/02); a shift operating on an off day makes it a working day (SH-03);
 #: no-shift days off are not expected and worked no-shift days use hour bands (SH-08); breaks
 #: matched by overlap and automatic deduction not stacked on a punched break (SH-10/SH-12).
-ENGINE_VERSION = 13
+#: 14 = grace minutes (at most the grace, and no more than the minutes actually missed) are credited
+#: to the hour-band lookup only (N-02, `grace_band_credit`), so an arrival or departure inside grace
+#: no longer drops an exactly-full day under the band. Worked minutes, overtime and the raw
+#: late/early figures are unchanged. Ownership also stops pairing an IN with an OUT that lies
+#: beyond its day's punch window (N-03, `punch_ownership.assign_owners`).
+ENGINE_VERSION = 14
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -2359,6 +2364,39 @@ def _off_day_work_pay(
     return "1.00", "0.00", "0.00"
 
 
+def grace_band_credit(
+    *,
+    first_in: datetime | None,
+    last_out: datetime | None,
+    start_anchor: datetime | None,
+    end_anchor: datetime | None,
+    grace_in_minutes: int,
+    grace_out_minutes: int,
+    worked_minutes: int,
+    net_scheduled_minutes: int | None,
+) -> tuple[int, int, int]:
+    """N-02 - `(credit_in, credit_out, band_minutes)`: the minutes that go to the hour-band lookup.
+
+    Grace forgives lateness (late = raw - grace) but, before engine 14, added nothing to worked
+    time, so on a shift whose net schedule equals the full-day band (8 h) an arrival inside grace
+    fell under the band and cost a half day. The forgiven minutes - at most the grace, and no more
+    than the minutes actually missed at that end - are credited **to the band lookup only**.
+    `worked_minutes`, overtime, `late_minutes` and `early_departure_minutes` are untouched. The
+    credit never lifts the figure above the net scheduled minutes (the day cannot be "more present"
+    than the shift asked for) and never below the real worked minutes."""
+    credit_in = credit_out = 0
+    if first_in is not None and start_anchor is not None:
+        raw = int((first_in - start_anchor).total_seconds() // 60)
+        credit_in = min(max(raw, 0), grace_in_minutes)
+    if last_out is not None and end_anchor is not None:
+        raw = int((end_anchor - last_out).total_seconds() // 60)
+        credit_out = min(max(raw, 0), grace_out_minutes)
+    band = worked_minutes + credit_in + credit_out
+    if net_scheduled_minutes is not None:
+        band = min(band, max(worked_minutes, net_scheduled_minutes))
+    return credit_in, credit_out, band
+
+
 def _core_hours_breached(
     *,
     first_in: datetime | None,
@@ -2503,34 +2541,6 @@ def _evaluate_fixed_or_flex(
     ):
         cumulative_status_override = "HALF_DAY"
 
-    # Hour bands describe a full day, so the worked half is judged in proportion: 4.5 hours worked
-    # around a half-day leave counts as a full 9-hour day would.
-    band_minutes = worked_minutes * 2 if leave_half is not None else worked_minutes
-    hour_band_status = lookup_band(band_minutes, inputs.hour_bands) if worked_minutes else None
-
-    status = _resolve_primary_status(
-        day_type=day_type,
-        not_expected=not_expected,
-        worked_minutes=worked_minutes,
-        missing_punch=missing_punch,
-        missing_punch_behaviour=policy.missing_punch_behaviour,
-        hour_band_status=hour_band_status,
-        late_classification=late_classification,
-        early_classification=early_classification,
-        core_hours_status_override=core_hours_status_override,
-        cumulative_status_override=cumulative_status_override,
-    )
-    if off_day_work and worked_minutes > 0:
-        status = "PRESENT"
-    if totals.unresolved_count and not not_expected:
-        # An unresolved break is never silently turned into half-day/absent: the day waits for
-        # an authorised correction. INCOMPLETE is the existing "needs review" status — not paid,
-        # not LOP, and handled at period close by `incomplete_at_lock_behaviour`.
-        status = "INCOMPLETE"
-
-    worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
-    worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
-
     # FLEXIBLE: `scheduled_start`/`scheduled_end` are the *start-time window* (e.g. 09:00-10:00),
     # not the working span, so the amount of work expected is `required_minutes` (net of unpaid
     # breaks, like `worked_minutes`). Measuring against the window length made a normal 8-hour
@@ -2562,6 +2572,58 @@ def _evaluate_fixed_or_flex(
         if scheduled_minutes is not None
         else None
     )
+
+    # Hour bands describe a full day, so the worked half is judged in proportion: 4.5 hours worked
+    # around a half-day leave counts as a full 9-hour day would.
+    # N-02: grace minutes are credited to this lookup only (see `grace_band_credit`); the real
+    # worked, overtime, late and early figures are unchanged.
+    credit_in, credit_out, credited = grace_band_credit(
+        first_in=first_in,
+        last_out=last_out,
+        start_anchor=late_from,
+        end_anchor=early_until,
+        grace_in_minutes=policy.grace_in_minutes,
+        grace_out_minutes=policy.grace_out_minutes,
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=(
+            None
+            if ot_scheduled_minutes is None
+            else ot_scheduled_minutes // 2
+            if leave_half is not None
+            else ot_scheduled_minutes
+        ),
+    )
+    band_minutes = credited * 2 if leave_half is not None else credited
+    snapshot["grace_band_credit"] = {
+        "in": credit_in,
+        "out": credit_out,
+        "band_minutes": band_minutes,
+        "worked_minutes": worked_minutes,
+    }
+    hour_band_status = lookup_band(band_minutes, inputs.hour_bands) if worked_minutes else None
+
+    status = _resolve_primary_status(
+        day_type=day_type,
+        not_expected=not_expected,
+        worked_minutes=worked_minutes,
+        missing_punch=missing_punch,
+        missing_punch_behaviour=policy.missing_punch_behaviour,
+        hour_band_status=hour_band_status,
+        late_classification=late_classification,
+        early_classification=early_classification,
+        core_hours_status_override=core_hours_status_override,
+        cumulative_status_override=cumulative_status_override,
+    )
+    if off_day_work and worked_minutes > 0:
+        status = "PRESENT"
+    if totals.unresolved_count and not not_expected:
+        # An unresolved break is never silently turned into half-day/absent: the day waits for
+        # an authorised correction. INCOMPLETE is the existing "needs review" status — not paid,
+        # not LOP, and handled at period close by `incomplete_at_lock_behaviour`.
+        status = "INCOMPLETE"
+
+    worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
+    worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
 
     ot_scheduled_minutes = _off_day_overtime_basis(
         inputs, day_type, not_expected, ot_scheduled_minutes
@@ -2697,7 +2759,37 @@ def _evaluate_split(
     snapshot["split_missed_blocks"] = missed_blocks
 
     missing_punch = bool(pairing.orphans) or first_in is None
-    hour_band_status = lookup_band(worked_minutes, inputs.hour_bands) if worked_minutes else None
+    # SH-04 - the schedule is the sum of the duty blocks (a SPLIT version carries no
+    # `required_minutes`; before engine 13 this left the schedule unknown and OT always zero).
+    net_scheduled_minutes = max(
+        0,
+        split_minutes
+        - scheduled_unpaid_break_minutes(
+            shift,
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+            scheduled_start=inputs.scheduled_start,
+        ),
+    )
+    # N-02: grace minutes at the first block's start and the last block's end are credited to the
+    # band lookup only. Lateness itself is still not computed for split shifts (P-11).
+    credit_in, credit_out, credited = grace_band_credit(
+        first_in=first_in,
+        last_out=last_out,
+        start_anchor=None if not_expected else inputs.scheduled_start,
+        end_anchor=None if not_expected else inputs.scheduled_end,
+        grace_in_minutes=policy.grace_in_minutes,
+        grace_out_minutes=policy.grace_out_minutes,
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=net_scheduled_minutes,
+    )
+    snapshot["grace_band_credit"] = {
+        "in": credit_in,
+        "out": credit_out,
+        "band_minutes": credited,
+        "worked_minutes": worked_minutes,
+    }
+    hour_band_status = lookup_band(credited, inputs.hour_bands) if worked_minutes else None
 
     # `split_shift_missed_block_behaviour` (W3) is one of IGNORE/HALF_DAY/ABSENT/
     # REQUIRE_REGULARIZATION. IGNORE falls through to the ordinary status resolution below (the
@@ -2727,18 +2819,7 @@ def _evaluate_split(
     worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
     worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
 
-    # SH-04 — the schedule is the sum of the duty blocks (a SPLIT version carries no
-    # `required_minutes`; before engine 13 this left the schedule unknown and OT always zero).
-    ot_scheduled_minutes: int | None = max(
-        0,
-        split_minutes
-        - scheduled_unpaid_break_minutes(
-            shift,
-            attendance_date=inputs.attendance_date,
-            tz_name=inputs.timezone,
-            scheduled_start=inputs.scheduled_start,
-        ),
-    )
+    ot_scheduled_minutes: int | None = net_scheduled_minutes
     ot_scheduled_minutes = _off_day_overtime_basis(
         inputs, day_type, not_expected, ot_scheduled_minutes
     )
