@@ -161,6 +161,24 @@ def _check_choice(field: str, value: str | None, choices: tuple[str, ...]) -> No
         raise ValueError(f"{field} must be one of {choices}")
 
 
+def _reject_dormant_policy_settings(model: Any) -> None:
+    """SH-14 (plan section 5) - settings the engine does not apply are refused instead of stored,
+    so a policy never claims a rule it does not keep. Stored values on existing rows stay as they
+    are and still have no effect. `None` (a PATCH that leaves the field alone) and the default
+    are always accepted."""
+    dormant = {
+        "punch_rounding": model.punch_rounding not in (None, "NONE"),
+        "rounding_minutes": model.rounding_minutes is not None,
+        "missing_punch_behaviour": model.missing_punch_behaviour == "AUTO_CLOSE",
+        "half_day_split": model.half_day_split not in (None, "BY_HOURS"),
+        "half_day_boundary_minutes": model.half_day_boundary_minutes is not None,
+        "early_out_uses_core_end": bool(model.early_out_uses_core_end),
+    }
+    for field, used in dormant.items():
+        if used:
+            raise ValueError(f"{field}: this setting is not applied yet; leave it at its default")
+
+
 # ---------------------------------------------------------------------------
 # Attendance Policy — identity
 # ---------------------------------------------------------------------------
@@ -438,6 +456,7 @@ class AttendancePolicyVersionCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_choices(self) -> "AttendancePolicyVersionCreate":
+        _reject_dormant_policy_settings(self)
         _check_choice("punch_rounding", self.punch_rounding, _PUNCH_ROUNDING)
         _check_choice(
             "missing_punch_behaviour", self.missing_punch_behaviour, _MISSING_PUNCH_BEHAVIOURS
@@ -524,6 +543,7 @@ class AttendancePolicyVersionUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_choices(self) -> "AttendancePolicyVersionUpdate":
+        _reject_dormant_policy_settings(self)
         _check_choice("punch_rounding", self.punch_rounding, _PUNCH_ROUNDING)
         _check_choice(
             "missing_punch_behaviour", self.missing_punch_behaviour, _MISSING_PUNCH_BEHAVIOURS

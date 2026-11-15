@@ -43,6 +43,14 @@ os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
 # for the same employee. `test_punch_sequence_and_gap.py` switches them on explicitly.
 os.environ["ATTENDANCE_PUNCH_MIN_GAP_SECONDS"] = "0"
 os.environ["ATTENDANCE_PUNCH_ORDER_CHECK_ENABLED"] = "false"
+# SH-06: branch and shift timezones are held to the company allow-list (production default
+# `Asia/Kolkata` only, pinned in `test_settings.py`). Most attendance tests reason in UTC, and
+# `test_shift_window.py` keeps the engine's multi-zone date logic covered with Los Angeles, so the
+# test env also allows those two. The restriction itself is tested with New York and London.
+os.environ["ALLOWED_COMPANY_TIMEZONES"] = '["Asia/Kolkata", "UTC", "America/Los_Angeles"]'
+# SH-15: break modes are hidden in production (default off); the break-management tests exercise
+# the engine and API behind the setting, so the test env turns it on.
+os.environ.setdefault("SHIFT_BREAK_MODES_ENABLED", "true")
 os.environ["CELERY_BROKER_URL"] = urlunsplit(
     urlsplit(os.environ["REDIS_URL"])._replace(
         path="/" + os.environ.get("HRMS_TEST_CELERY_DB", "15")

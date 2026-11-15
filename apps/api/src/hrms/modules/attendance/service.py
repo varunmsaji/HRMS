@@ -2111,7 +2111,9 @@ class AttendanceService:
             self._session, company_id=company_id, employee_ids=employee_ids
         )
 
-    async def assert_date_open(self, company_id: UUID, target_date: date) -> None:
+    async def assert_date_open(
+        self, company_id: UUID, target_date: date, *, employee_id: UUID | None = None
+    ) -> None:
         """`SR-11` (execution gate §12.4) — the cross-module seam for the narrow CLOSED-period
         check added to shift-version publish (`organisation.service.publish_shift_version`):
         a backdated version whose `effective_from` falls inside an already-`CLOSED` period must
@@ -2123,7 +2125,7 @@ class AttendanceService:
         reaching a closed period" — that is recorded as debt against the policy-versioning
         workstream (§12.4), not absorbed here. Only `ShiftVersion` publish gets this check,
         because it is the one the Phase 2/3 timezone work already touches in the same file."""
-        await _ensure_date_open(self._session, company_id, target_date, employee_id=None)
+        await _ensure_date_open(self._session, company_id, target_date, employee_id=employee_id)
 
     async def closed_period_overlapping(
         self, company_id: UUID, employee_id: UUID, date_from: date, date_to: date
@@ -2289,6 +2291,30 @@ async def _ensure_shift_in_company(
     from hrms.modules.organisation.service import OrganisationService
 
     await OrganisationService(session).get_shift(company_id, shift_id)
+
+
+async def _ensure_shift_usable_on(
+    session: AsyncSession, company_id: UUID, shift_id: UUID | None, on: date
+) -> None:
+    """SH-18 - a roster row may only name an active shift of this company that has a published
+    version covering the roster date. Before, an inactive shift or one with no version that day
+    was accepted and the day calculated as a configuration error."""
+    if shift_id is None:
+        return
+    from hrms.modules.attendance.exceptions import RosterShiftNotUsableError
+    from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
+    from hrms.modules.organisation.service import OrganisationService
+
+    organisation = OrganisationService(session)
+    shift = await organisation.get_shift(company_id, shift_id)
+    if not shift.is_active:
+        raise RosterShiftNotUsableError("INACTIVE_SHIFT", "This shift is no longer active")
+    try:
+        await organisation.resolve_shift_version_as_of(company_id, shift_id, on)
+    except ShiftVersionNotFoundForDateError as exc:
+        raise RosterShiftNotUsableError(
+            "SHIFT_NOT_SCHEDULED_ON_DATE", "The shift has no published version on this date"
+        ) from exc
 
 
 def _is_unique_violation(exc: IntegrityError) -> bool:
@@ -2510,7 +2536,7 @@ class ShiftRosterService:
         user_agent: str | None,
     ) -> ShiftRosterRead:
         await _ensure_date_open(self._session, company_id, roster_date, employee_id=employee_id)
-        await _ensure_shift_in_company(self._session, company_id, shift_id)
+        await _ensure_shift_usable_on(self._session, company_id, shift_id, roster_date)
         now = datetime.now(UTC)
         roster_id = uuid4()
         data = {
@@ -2576,7 +2602,9 @@ class ShiftRosterService:
         values = build_shift_roster_update_values(patch)
         if not values:
             return before_read
-        await _ensure_shift_in_company(self._session, company_id, values.get("shift_id"))
+        await _ensure_shift_usable_on(
+            self._session, company_id, values.get("shift_id"), row.roster_date
+        )
 
         now = datetime.now(UTC)
         try:
@@ -2616,6 +2644,8 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if "PUBLISHED" in (before_read.status, after_read.status):
+            await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
 
     async def publish_roster_entry(
@@ -2680,6 +2710,7 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
 
     async def delete_roster_entry(
@@ -2737,7 +2768,28 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if before_read.status == "PUBLISHED":
+            await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
+
+    async def _queue_recalc(
+        self, company_id: UUID, entry: ShiftRosterRead, actor_user_id: UUID | None
+    ) -> None:
+        """Invariant C - a published roster row decides the day's shift, so changing one makes
+        that day's calculated attendance stale. A draft row changes nothing until published."""
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=entry.employee_id,
+            date_from=entry.roster_date,
+            date_to=entry.roster_date,
+            reason="ROSTER_CHANGED",
+            source_entity_type="shift_roster",
+            source_entity_id=entry.id,
+            requested_by=actor_user_id,
+        )
 
     async def get_roster_entry(
         self,
@@ -3441,6 +3493,9 @@ class PunchService:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
         rows, total = await self._repo.page_filtered(
             self._session,
             page=page,
@@ -3449,6 +3504,7 @@ class PunchService:
             employee_id=employee_id,
             date_from=date_from,
             date_to=date_to,
+            tz_name=company.timezone,
         )
         return [punch_to_read(r) for r in rows], total
 

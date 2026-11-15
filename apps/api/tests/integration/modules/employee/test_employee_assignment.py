@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 from hrms.core.audit.models import AuditLog
 from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.attendance.exceptions import AttendancePeriodClosedError
 
 from ..organisation.test_registration_flow import _cleanup, _register
 
@@ -117,14 +118,39 @@ async def _create_employment(
 
 
 async def _create_shift(
-    client: AsyncClient, headers: dict[str, str], **extra: Any
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    published_from: str | None = "2026-01-01",
+    **extra: Any,
 ) -> dict[str, Any]:
-    # W2 — `Shift` is identity-only (name/code); schedule now lives on `ShiftVersion`, not
-    # needed here since this suite only exercises the `shift_id` FK relationship.
+    """W2 — `Shift` is identity-only (name/code); the schedule lives on `ShiftVersion`. SH-13: an
+    assignment may only name a shift with a published version covering its start, so by default
+    the shift gets a 09:00-18:00 version from `published_from`; `None` leaves only the draft."""
     payload = {"name": "General Shift", **extra}
     response = await client.post("/v1/shifts", headers=headers, json=payload)
     assert response.status_code == 201, response.text
-    return dict(response.json()["data"])
+    shift = dict(response.json()["data"])
+    if published_from is not None:
+        draft_id = shift["draft_version_id"]
+        patched = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={
+                "shift_type": "FIXED",
+                "effective_from": published_from,
+                "start_time": "09:00",
+                "end_time": "18:00",
+            },
+        )
+        assert patched.status_code == 200, patched.text
+        published = await client.post(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+            headers={**headers, "If-Match": "2"},
+            json={},
+        )
+        assert published.status_code == 200, published.text
+    return shift
 
 
 async def _create_assignment(
@@ -2013,3 +2039,245 @@ async def test_create_assignment_cross_tenant_scoped_actor_denied(
         await _teardown(company_id=company_a, user_id=user_a)
         await _teardown(company_id=company_b, user_id=user_b)
         await _cleanup_scoped_users()
+
+
+# --- SH-13: assignment integrity ------------------------------------------------------------
+
+
+async def _initial(
+    client: AsyncClient,
+    headers: dict[str, str],
+    employee: dict[str, Any],
+    org: dict[str, Any],
+    effective_from: str = "2027-06-01",
+    **extra: Any,
+) -> dict[str, Any]:
+    return await _create_assignment(
+        client,
+        headers,
+        employee_id=employee["id"],
+        effective_from=effective_from,
+        change_type="INITIAL",
+        branch_id=org["branch"]["id"],
+        department_id=org["department"]["id"],
+        designation_id=org["designation"]["id"],
+        **extra,
+    )
+
+
+async def test_clear_shift_takes_the_employee_off_their_shift(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`shift_id: null` carries the shift forward (unchanged); only `clear_shift` removes it."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(client, headers)
+        shift = await _create_shift(client, headers)
+        first = await _initial(client, headers, employee, org, shift_id=shift["id"])
+        carried = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2027-08-01",
+            change_type="TRANSFER",
+            shift_id=None,
+        )
+        assert carried["shift_id"] == shift["id"]
+        cleared = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(carried["version"]),
+            effective_from="2027-09-01",
+            change_type="SHIFT_CHANGE",
+            clear_shift=True,
+        )
+        assert cleared["shift_id"] is None
+        both = await client.post(
+            f"/v1/employees/{employee['id']}/assignments",
+            headers={**headers, "If-Match": str(cleared["version"])},
+            json={
+                "effective_from": "2027-10-01",
+                "change_type": "SHIFT_CHANGE",
+                "shift_id": shift["id"],
+                "clear_shift": True,
+            },
+        )
+        assert both.status_code == 422, both.text
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_a_shift_with_no_published_version_on_the_start_date_is_refused(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(client, headers)
+        draft_only = await _create_shift(client, headers, published_from=None)
+        refused = await _initial(
+            client, headers, employee, org, shift_id=draft_only["id"], expected_status=422
+        )
+        assert refused["error"]["code"] == "SHIFT_NOT_SCHEDULED_ON_DATE"
+        later = await _create_shift(client, headers, name="Later", published_from="2027-07-01")
+        refused = await _initial(
+            client, headers, employee, org, shift_id=later["id"], expected_status=422
+        )
+        assert refused["error"]["code"] == "SHIFT_NOT_SCHEDULED_ON_DATE"
+        accepted = await _initial(
+            client, headers, employee, org, effective_from="2027-07-01", shift_id=later["id"]
+        )
+        assert accepted["shift_id"] == later["id"]
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_an_assignment_starting_in_a_closed_period_is_refused(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(
+            client, headers, joining_date="2026-03-01"
+        )
+        first = await _initial(client, headers, employee, org, effective_from="2026-03-01")
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text(
+                    "INSERT INTO attendance_period (id, company_id, legal_entity_id, period_start,"
+                    " period_end, label, status, opened_at, closed_at, version, created_at,"
+                    " updated_at) VALUES (gen_random_uuid(), :cid, :le, '2026-04-01',"
+                    " '2026-04-30', 'closed', 'CLOSED', now(), now(), 1, now(), now())"
+                ),
+                {"cid": str(company_id), "le": org["legal_entity"]["id"]},
+            )
+            await session.commit()
+        refused = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2026-04-15",
+            change_type="TRANSFER",
+            expected_status=409,
+        )
+        assert refused["error"]["code"] == AttendancePeriodClosedError.code
+        accepted = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2026-05-01",
+            change_type="TRANSFER",
+        )
+        assert accepted["effective_from"] == "2026-05-01"
+    finally:
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text("DELETE FROM attendance_period WHERE company_id = :cid"),
+                {"cid": str(company_id)},
+            )
+            await session.commit()
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_a_change_before_a_future_dated_row_splits_the_covering_row(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A transfer already scheduled for later must not block a shift change dated before it. The
+    covering row is split; the scheduled row is left as it is; If-Match is the open row's."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(client, headers)
+        shift = await _create_shift(client, headers)
+        first = await _initial(client, headers, employee, org)
+        scheduled = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2027-09-01",
+            change_type="TRANSFER",
+        )
+        inserted = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(scheduled["version"]),
+            effective_from="2027-08-01",
+            change_type="SHIFT_CHANGE",
+            shift_id=shift["id"],
+        )
+        assert inserted["effective_from"] == "2027-08-01"
+        assert inserted["effective_to"] == "2027-08-31"
+        assert inserted["shift_id"] == shift["id"]
+        rows = (
+            await client.get(f"/v1/employees/{employee['id']}/assignments", headers=headers)
+        ).json()["data"]
+        timeline = [(r["effective_from"], r["effective_to"], r["shift_id"]) for r in rows]
+        assert sorted(timeline) == [
+            ("2027-06-01", "2027-07-31", None),
+            ("2027-08-01", "2027-08-31", shift["id"]),
+            ("2027-09-01", None, None),
+        ]
+        # The start of an existing row cannot be split.
+        on_start = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(scheduled["version"]),
+            effective_from="2027-08-01",
+            change_type="TRANSFER",
+            expected_status=422,
+        )
+        assert on_start["error"]["code"] == "INVALID_EFFECTIVE_FROM"
+        # A stale If-Match on the open row still wins.
+        stale = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2027-07-01",
+            change_type="TRANSFER",
+            expected_status=409,
+        )
+        assert stale["error"]["code"] == "STALE_RESOURCE"
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_a_change_before_a_past_row_is_still_refused(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Splitting is only for a future-dated open row; history between past rows stays fixed."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(
+            client, headers, joining_date="2026-01-01"
+        )
+        first = await _initial(client, headers, employee, org, effective_from="2026-01-01")
+        second = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(first["version"]),
+            effective_from="2026-06-01",
+            change_type="TRANSFER",
+        )
+        refused = await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            if_match=str(second["version"]),
+            effective_from="2026-03-01",
+            change_type="TRANSFER",
+            expected_status=422,
+        )
+        assert refused["error"]["code"] == "INVALID_EFFECTIVE_FROM"
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)

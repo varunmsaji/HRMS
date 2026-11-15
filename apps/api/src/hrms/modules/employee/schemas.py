@@ -507,6 +507,9 @@ class AssignmentCreate(BaseModel):
     dotted_line_manager_id: UUID | None = None
     cost_centre_id: UUID | None = None
     shift_id: UUID | None = None
+    # SH-13 - `shift_id: null` carries the current shift forward, so taking an employee off any
+    # shift is its own explicit flag, like `clear_reporting_manager`.
+    clear_shift: bool = False
     work_location_type: WorkLocationType | None = None
 
     @model_validator(mode="after")
@@ -515,6 +518,8 @@ class AssignmentCreate(BaseModel):
             raise ValueError(
                 "clear_reporting_manager cannot be combined with a reporting_manager_id"
             )
+        if self.clear_shift and self.shift_id is not None:
+            raise ValueError("clear_shift cannot be combined with a shift_id")
         if self.confirm_pending_request_impact and self.pending_impact_token is None:
             raise ValueError("confirm_pending_request_impact requires pending_impact_token")
         return self

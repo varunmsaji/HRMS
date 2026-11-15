@@ -285,6 +285,19 @@ class InvalidCtcRangeError(ValidationError):
         )
 
 
+class ShiftNameAlreadyExistsError(ConflictError):
+    """SH-21 - two shifts of one company with the same name (ignoring case) cannot be told apart
+    in the roster, assignment and swap pickers."""
+
+    code = "SHIFT_NAME_ALREADY_EXISTS"
+
+    def __init__(self, message: str = "A shift with this name already exists") -> None:
+        super().__init__(
+            message,
+            details=[{"field": "name", "code": "SHIFT_NAME_ALREADY_EXISTS", "message": message}],
+        )
+
+
 class GradeCodeAlreadyExistsError(ConflictError):
     """The `grade` table already carries a `UNIQUE (company_id, code)` constraint
     (predates this slice, scripts/sql/001_init_schema.sql) — this converts the resulting

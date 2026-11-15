@@ -8,7 +8,7 @@ test_shift_version_validation.py). `create_shift` now also creates an initial em
 """
 
 from datetime import UTC, datetime, time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -85,6 +85,14 @@ def _draft_version(**overrides: object) -> ShiftVersion:
     }
     defaults.update(overrides)
     return ShiftVersion(**defaults)  # type: ignore[arg-type]
+
+
+@pytest.fixture(autouse=True)
+def _shift_name_check():  # type: ignore[no-untyped-def]
+    """SH-21 - the name-uniqueness query needs a real database; covered by the integration test
+    `test_shift.py::test_shift_names_are_unique_per_company_ignoring_case`."""
+    with patch.object(OrganisationService, "_assert_shift_name_free", new_callable=AsyncMock):
+        yield
 
 
 @pytest.fixture

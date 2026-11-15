@@ -17,6 +17,15 @@ from hrms.core.errors.base import (
 )
 
 
+class RosterShiftNotUsableError(ValidationError):
+    """SH-18 - a roster row names a shift that is inactive or has no published version on the
+    roster date, so the day could only calculate as a configuration error."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message, details=[{"field": "shift_id", "code": code, "message": message}])
+
+
 class PolicyCodeAlreadyExistsError(ConflictError):
     """A partial unique index on `(company_id, code)` for active rows backs this, mirroring
     `HolidayCalendarCodeAlreadyExistsError`."""

@@ -37,6 +37,7 @@ from hrms.modules.attendance.models import EmployeeWorkplaceAuthorization, Geofe
 from hrms.modules.attendance.repository import AttendancePolicyRepository
 from hrms.modules.attendance.resolution import PolicyResolutionService
 from hrms.modules.attendance.schemas import GeofenceDecisionRead, PunchLocation
+from hrms.shared.business_time import business_today
 
 _DISABLED = GeofencePolicy(mode="DISABLED", max_accuracy_m=100, max_age_seconds=60)
 
@@ -463,7 +464,11 @@ class GeofenceService:
         from hrms.modules.employee.models import EmployeeAssignment
         from hrms.modules.organisation.models import Branch
 
-        today = datetime.now(UTC).date()
+        # SH-17: the company's today decides which assignments are current, not the UTC date.
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        today = business_today(company.timezone)
         branches = (
             (
                 await self._session.execute(

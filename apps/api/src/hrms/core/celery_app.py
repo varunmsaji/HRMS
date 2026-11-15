@@ -106,6 +106,13 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_daily_calculation",
                 "schedule": crontab(minute=30, hour=9),
             },
+            # Invariant C (shift remediation) — recalculates days a shift, assignment, roster,
+            # swap or policy change made stale. Each change kicks its own run after commit; this
+            # only picks up a request whose kick was lost (the kick is at-most-once).
+            "attendance-run-recalc-requests": {
+                "task": "attendance.run_recalc_requests",
+                "schedule": crontab(minute="*/5"),
+            },
             # Decision 5 — ends login access once a future-dated termination's last working
             # day has passed. Hourly rather than once a day: the company-local day boundary
             # differs per company timezone, and the sweep is idempotent so extra runs cost

@@ -53,7 +53,9 @@ async def weekly_schedule(
 ) -> DataEnvelope[WeeklySchedule]:
     """Headcount per shift per day for the Monday-based week containing `week_start`."""
     if week_start is None:
-        week_start = date.today()
+        # SH-17: the company's today, not the server's (a Monday 00:00-05:30 IST request showed
+        # the previous week).
+        week_start = await service.company_today(tenant.company_id)
     monday = week_start - timedelta(days=week_start.weekday())
     data = await service.weekly_schedule(
         tenant.company_id,

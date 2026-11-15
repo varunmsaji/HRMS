@@ -798,21 +798,66 @@ def _break_window_contains(start: time, end: time | None, point: time) -> bool:
     return point >= start or point <= end
 
 
+def _break_window_overlap_seconds(
+    start: time, end: time | None, gap: tuple[datetime, datetime], tz: ZoneInfo
+) -> float:
+    """SH-10 — seconds of `gap` inside the break window, the window anchored on the gap's local
+    date and the day before (a window that wraps past midnight). A point-in-time window (no end,
+    or end == start) has no overlap."""
+    if end is None or end == start:
+        return 0.0
+    gap_start, gap_end = gap
+    local_date = gap_start.astimezone(tz).date()
+    best = 0.0
+    for day in (local_date - timedelta(days=1), local_date):
+        window_start = datetime.combine(day, start, tzinfo=tz)
+        window_end = datetime.combine(day if end > start else day + timedelta(days=1), end, tz)
+        overlap = (min(gap_end, window_end) - max(gap_start, window_start)).total_seconds()
+        best = max(best, overlap)
+    return best
+
+
+def _break_window_bounds(shift_break: ShiftBreakData) -> tuple[time, time | None] | None:
+    if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
+        return shift_break.start_time, shift_break.end_time
+    if shift_break.break_kind == "FLEXIBLE_DURATION" and shift_break.window_start is not None:
+        return shift_break.window_start, shift_break.window_end
+    return None
+
+
 def match_breaks(
-    gaps: list[tuple[datetime, datetime]], shift_breaks: list[ShiftBreakData], *, tz_name: str
+    gaps: list[tuple[datetime, datetime]],
+    shift_breaks: list[ShiftBreakData],
+    *,
+    tz_name: str,
+    deduct_paid_excess: bool = False,
 ) -> list[MatchedBreak]:
-    """Matches each detected punch gap against the configured `ShiftBreak`s by time overlap
-    (local time-of-day comparison for `FIXED_WINDOW`/`FLEXIBLE_DURATION` window bounds). An
-    unmatched gap defaults unpaid (conservative — architecture §10.2's default is that unpaid
-    break minutes are excluded from worked minutes unless configured otherwise). A matched gap
-    exceeding the break's `max_minutes` is flagged `is_excess`."""
+    """Matches each detected punch gap against the configured `ShiftBreak`s. An unmatched gap
+    defaults unpaid (conservative — architecture §10.2's default is that unpaid break minutes
+    are excluded from worked minutes unless configured otherwise). A matched gap exceeding the
+    break's `max_minutes` is flagged `is_excess`.
+
+    SH-10 (engine 13): a gap matches the break whose window it overlaps most. Before, only the
+    gap's start time was compared, so a paid 13:00-14:00 lunch taken 12:50-13:50 was wholly
+    unpaid. Only when no window overlaps does the old start-time rule apply (a point-in-time
+    break, or a gap that starts exactly at a window's end). With `deduct_paid_excess` (policy
+    `excess_break_behaviour` DEDUCT) a paid break pays up to its `max_minutes` and the rest of
+    the gap is unpaid; otherwise the excess is only flagged, as before."""
     tz = ZoneInfo(tz_name)
     matched: list[MatchedBreak] = []
     for gap_start, gap_end in gaps:
         minutes = max(0, int((gap_end - gap_start).total_seconds() // 60))
         gap_start_local = gap_start.astimezone(tz).time()
         best: ShiftBreakData | None = None
+        best_overlap = 0.0
         for shift_break in shift_breaks:
+            bounds = _break_window_bounds(shift_break)
+            if bounds is None:
+                continue
+            overlap = _break_window_overlap_seconds(*bounds, (gap_start, gap_end), tz)
+            if overlap > best_overlap:
+                best, best_overlap = shift_break, overlap
+        for shift_break in shift_breaks if best is None else ():
             if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
                 if _break_window_contains(
                     shift_break.start_time, shift_break.end_time, gap_start_local
@@ -830,6 +875,30 @@ def match_breaks(
                     break
         is_paid = best.is_paid if best is not None else False
         is_excess = best is not None and best.max_minutes is not None and minutes > best.max_minutes
+        if is_excess and is_paid and deduct_paid_excess:
+            assert best is not None and best.max_minutes is not None
+            paid_end = gap_start + timedelta(minutes=best.max_minutes)
+            matched.append(
+                MatchedBreak(
+                    start=gap_start,
+                    end=paid_end,
+                    minutes=best.max_minutes,
+                    is_paid=True,
+                    is_excess=True,
+                    shift_break_id=best.id,
+                )
+            )
+            matched.append(
+                MatchedBreak(
+                    start=paid_end,
+                    end=gap_end,
+                    minutes=minutes - best.max_minutes,
+                    is_paid=False,
+                    is_excess=True,
+                    shift_break_id=best.id,
+                )
+            )
+            continue
         matched.append(
             MatchedBreak(
                 start=gap_start,
@@ -1120,8 +1189,20 @@ def compute_breaks(
     notes: dict[str, Any] = {}
 
     # --- legacy: punch gaps matched against mode-less breaks only (behaviour unchanged) -------
-    for gap_break in match_breaks(gaps, legacy_rules, tz_name=inputs.timezone):
+    for gap_break in match_breaks(
+        gaps,
+        legacy_rules,
+        tz_name=inputs.timezone,
+        deduct_paid_excess=policy.excess_break_behaviour == "DEDUCT",
+    ):
         out.append(gap_break)
+    # SH-12: punched gaps no legacy break claimed; one that overlaps an automatic deduction's
+    # window counts toward that deduction (see below).
+    unclaimed_gaps = [
+        (b.start, b.end, b.minutes)
+        for b in out
+        if b.shift_break_id is None and b.start is not None and b.end is not None
+    ]
 
     presence = _merge_intervals([(i.punch_time, o.punch_time) for i, o in credit_pairs])
     all_events = inputs.break_events
@@ -1229,6 +1310,22 @@ def compute_breaks(
         )
         duration = _rule_duration(rule, rule_window)
         if rule_window is None or duration <= 0:
+            continue
+        # SH-12 (engine 13): an unpaid punched gap overlapping the window already took (part of)
+        # this break. Before, the gap was excluded from worked time and the window was deducted
+        # again on top - 90 minutes lost for a 60-minute lunch punched 12:30-13:30 against a
+        # 13:00-14:00 deduction. Each gap counts toward one rule only.
+        punched = 0
+        for gap in list(unclaimed_gaps):
+            if gap[0] < rule_window[1] and gap[1] > rule_window[0]:
+                punched += gap[2]
+                unclaimed_gaps.remove(gap)
+        if punched:
+            notes.setdefault("auto_satisfied_by_punch", []).append(
+                {"rule": rule.name, "punched_minutes": punched}
+            )
+        duration -= punched
+        if duration <= 0:
             continue
         eligible = _subtract_intervals(
             _intersect_intervals(presence, [rule_window]), explicit_union + claimed

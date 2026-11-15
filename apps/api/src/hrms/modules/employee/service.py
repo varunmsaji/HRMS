@@ -30,6 +30,7 @@ from hrms.modules.employee.document_validation import (
 from hrms.modules.employee.exceptions import (
     AssignmentDatesOverlapError,
     AssignmentFieldsRequiredError,
+    AssignmentShiftNotScheduledError,
     AssignmentVersionRequiredError,
     BankDatesOverlapError,
     BankVersionRequiredError,
@@ -2012,8 +2013,17 @@ class EmployeeAssignmentService:
                 message="reporting_manager_id cannot be set to the acting user's own employee_id",
             )
 
-        if body.change_type == "SHIFT_CHANGE" and body.shift_id is None:
+        if body.change_type == "SHIFT_CHANGE" and body.shift_id is None and not body.clear_shift:
             raise ShiftIdRequiredError()
+
+        # SH-13 - an assignment decides the employee's shift, branch timezone and scoped policies
+        # from its start date, so a start inside a closed period would rewrite finalized
+        # attendance (the same rule roster writes and shift publishes follow).
+        from hrms.modules.attendance.service import AttendanceService
+
+        await AttendanceService(self._session).assert_date_open(
+            company_id, body.effective_from, employee_id=employee_id
+        )
 
         if body.reporting_manager_id is not None:
             # Taken before anything the loop walk or the optimistic version check reads: a
@@ -2026,6 +2036,10 @@ class EmployeeAssignmentService:
         current = await self._repo.get_current_assignment(
             self._session, company_id=company_id, employee_id=employee_id
         )
+        # SH-13 - the row split by a change dated before a future-dated current row; the new row
+        # then fills the gap up to that future row. `base` is the row the new one continues from.
+        split: Any | None = None
+        base = current
 
         if current is None:
             missing = [
@@ -2054,36 +2068,43 @@ class EmployeeAssignmentService:
                     current=assignment_to_audit_dict(assignment_to_read(current)),
                 )
             if body.effective_from <= current.effective_from:
-                raise InvalidEffectiveFromError()
+                split = await self._row_to_split_before_future_row(
+                    company_id, employee_id, body.effective_from, current
+                )
+                base = split
             if expected_version is None:
                 raise AssignmentVersionRequiredError()
-            branch_id = body.branch_id if body.branch_id is not None else current.branch_id
+            src = split if split is not None else current
+            branch_id = body.branch_id if body.branch_id is not None else src.branch_id
             department_id = (
-                body.department_id if body.department_id is not None else current.department_id
+                body.department_id if body.department_id is not None else src.department_id
             )
             designation_id = (
-                body.designation_id if body.designation_id is not None else current.designation_id
+                body.designation_id if body.designation_id is not None else src.designation_id
             )
-            grade_id = body.grade_id if body.grade_id is not None else current.grade_id
+            grade_id = body.grade_id if body.grade_id is not None else src.grade_id
             if body.clear_reporting_manager:
                 reporting_manager_id = None
             elif body.reporting_manager_id is not None:
                 reporting_manager_id = body.reporting_manager_id
             else:
-                reporting_manager_id = current.reporting_manager_id
+                reporting_manager_id = src.reporting_manager_id
             dotted_line_manager_id = (
                 body.dotted_line_manager_id
                 if body.dotted_line_manager_id is not None
-                else current.dotted_line_manager_id
+                else src.dotted_line_manager_id
             )
             cost_centre_id = (
-                body.cost_centre_id if body.cost_centre_id is not None else current.cost_centre_id
+                body.cost_centre_id if body.cost_centre_id is not None else src.cost_centre_id
             )
-            shift_id = body.shift_id if body.shift_id is not None else current.shift_id
+            if body.clear_shift:
+                shift_id = None
+            else:
+                shift_id = body.shift_id if body.shift_id is not None else src.shift_id
             work_location_type = (
                 body.work_location_type
                 if body.work_location_type is not None
-                else current.work_location_type
+                else src.work_location_type
             )
 
         if branch_id is not None:
@@ -2096,8 +2117,20 @@ class EmployeeAssignmentService:
             await self._assert_grade_ownership(company_id, grade_id)
         if shift_id is not None:
             await self._assert_shift_ownership(company_id, shift_id)
+        if body.shift_id is not None:
+            # SH-13 - a shift chosen here must be scheduled on the start date; otherwise every day
+            # from then on calculates as a configuration error.
+            from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
+            from hrms.modules.organisation.service import OrganisationService
+
+            try:
+                await OrganisationService(self._session).resolve_shift_version_as_of(
+                    company_id, body.shift_id, body.effective_from
+                )
+            except ShiftVersionNotFoundForDateError as exc:
+                raise AssignmentShiftNotScheduledError() from exc
         if reporting_manager_id is not None:
-            manager_chosen = current is None or reporting_manager_id != current.reporting_manager_id
+            manager_chosen = base is None or reporting_manager_id != base.reporting_manager_id
             await self._assert_manager_reference(
                 company_id,
                 employee_id,
@@ -2111,7 +2144,7 @@ class EmployeeAssignmentService:
             )
 
         pending_impact_acknowledged: dict[str, int] | None = None
-        if current is not None and reporting_manager_id != current.reporting_manager_id:
+        if base is not None and reporting_manager_id != base.reporting_manager_id:
             # Evaluated here, inside the write's own transaction, so the figures can never be
             # older than the write itself: the caller must have acknowledged *this* set of
             # pending requests (`pending_impact_token`), not whatever a preview showed earlier.
@@ -2131,17 +2164,23 @@ class EmployeeAssignmentService:
                 pending_impact_acknowledged = counts.model_dump()
 
         now = datetime.now(UTC)
-        before_read = assignment_to_read(current) if current is not None else None
+        before_read = assignment_to_read(base) if base is not None else None
+        # Read before closing: `close_assignment` refreshes the same row object in the session.
+        split_end = split.effective_to if split is not None else None
+        split_version = split.version if split is not None else None
 
-        if current is not None:
+        if base is not None:
             assert expected_version is not None  # narrowed above
+            # The open row's If-Match was checked above; a split row is guarded by its own
+            # version, read in this transaction, so two writers filling the same gap cannot both
+            # succeed.
             closed = await self._repo.close_assignment(
                 self._session,
                 company_id=company_id,
                 employee_id=employee_id,
-                assignment_id=current.id,
+                assignment_id=base.id,
                 effective_to=body.effective_from - timedelta(days=1),
-                expected_version=expected_version,
+                expected_version=split_version if split_version is not None else expected_version,
                 now=now,
             )
             if closed is None:
@@ -2149,7 +2188,7 @@ class EmployeeAssignmentService:
                     self._session,
                     company_id=company_id,
                     employee_id=employee_id,
-                    assignment_id=current.id,
+                    assignment_id=base.id,
                 )
                 if refreshed is None:
                     raise NotFoundError("Resource not found")
@@ -2178,8 +2217,14 @@ class EmployeeAssignmentService:
                     "change_type": body.change_type,
                     "change_reason": body.change_reason,
                     "effective_from": body.effective_from,
-                    "effective_to": None,
-                    "version": _chained_version(expected_version if current is not None else None),
+                    "effective_to": split_end,
+                    "version": _chained_version(
+                        split_version
+                        if split_version is not None
+                        else expected_version
+                        if current is not None
+                        else None
+                    ),
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -2209,7 +2254,49 @@ class EmployeeAssignmentService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        # Invariant C - the new assignment can change the employee's shift, branch timezone and
+        # SHIFT/BRANCH/DEPARTMENT-scoped policy from its start date.
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=body.effective_from,
+            date_to=split_end,
+            reason="ASSIGNMENT_CREATED",
+            source_entity_type="employee_assignment",
+            source_entity_id=assignment_id,
+            requested_by=actor_user_id,
+        )
         return after_read
+
+    async def _row_to_split_before_future_row(
+        self, company_id: UUID, employee_id: UUID, effective_from: date, current: Any
+    ) -> Any:
+        """SH-13 - a change dated on or before the open row's start is allowed only when that open
+        row is still in the future (a transfer already scheduled for next month must not block a
+        shift change today). The row covering `effective_from` is split there; the future row is
+        left as it is. Anything else - rewriting history between two past rows, or a date on the
+        open row's own start - is refused as before."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        if current.effective_from <= business_today(company.timezone):
+            raise InvalidEffectiveFromError()
+        covering = await self._repo.get_assignment_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=effective_from
+        )
+        if (
+            covering is None
+            or covering.id == current.id
+            or covering.effective_from >= effective_from
+            or covering.effective_to is None
+        ):
+            raise InvalidEffectiveFromError(
+                "effective_from must fall inside an earlier assignment, strictly after its start"
+            )
+        return covering
 
     async def _pending_manager_change_impact(
         self, company_id: UUID, employee_id: UUID, *, new_manager_id: UUID | None

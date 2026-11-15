@@ -35,6 +35,7 @@ from hrms.modules.attendance.service import (
     _ensure_employee_visible,
     _ensure_shift_in_company,
 )
+from hrms.shared.business_time import business_today
 
 
 def _time(value: str | None) -> Any:
@@ -224,7 +225,11 @@ class EmployeeBreakOverrideService:
         if row.revoked_at is not None:
             raise ConflictError("This override has already been revoked")
         before = override_to_read(row).model_dump(mode="json")
-        today: date = datetime.now(UTC).date()
+        # SH-17: the company's today, not the UTC date.
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        today: date = business_today(company.timezone)
         await _ensure_date_open(
             self._session, company_id, max(row.effective_from, today), employee_id=row.employee_id
         )

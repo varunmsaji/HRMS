@@ -58,6 +58,7 @@ from hrms.modules.attendance.models import (
     ShiftRoster,
 )
 from hrms.shared.pagination import PageParams, fetch_page
+from hrms.shared.timezone import resolve_zoneinfo
 
 
 class AttendancePolicyRepository:
@@ -1175,12 +1176,13 @@ class PunchRepository:
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
+        tz_name: str = "UTC",
     ) -> Select[Any] | None:
         """`visible_employee_ids=None` means COMPANY scope (no filter), mirroring
         `EmployeeRepository.list_employees`'s `visible_employee_ids` convention exactly.
-        `date_from`/`date_to` are UTC calendar-day bounds on `punch_time` — a coarse listing
-        filter, distinct from the timezone-aware `attendance_date` the calculation engine
-        computes."""
+        `date_from`/`date_to` are calendar-day bounds on `punch_time` in `tz_name` (SH-17: the
+        company's zone; before, UTC days, so an IST evening punch after 18:30 listed under the
+        next day) — a listing filter, distinct from the `attendance_date` the engine computes."""
         conditions = [Punch.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
@@ -1188,11 +1190,12 @@ class PunchRepository:
             conditions.append(Punch.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(Punch.employee_id == employee_id)
+        zone = resolve_zoneinfo(tz_name)
         if date_from is not None:
-            start = datetime.combine(date_from, datetime.min.time(), tzinfo=UTC)
+            start = datetime.combine(date_from, datetime.min.time(), tzinfo=zone)
             conditions.append(Punch.punch_time >= start)
         if date_to is not None:
-            end = datetime.combine(date_to, datetime.min.time(), tzinfo=UTC) + timedelta(days=1)
+            end = datetime.combine(date_to + timedelta(days=1), datetime.min.time(), tzinfo=zone)
             conditions.append(Punch.punch_time < end)
         stmt = select(Punch).where(*conditions).order_by(Punch.punch_time.desc(), Punch.id)
         return stmt

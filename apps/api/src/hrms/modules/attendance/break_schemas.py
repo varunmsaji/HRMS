@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from hrms.core.config.settings import get_settings
 from hrms.modules.attendance.models import AttendanceBreakEvent, EmployeeBreakOverride
 from hrms.modules.organisation.schemas import (
     SHIFT_BREAK_EXCESS_OUTCOMES,
@@ -210,6 +211,8 @@ class EmployeeBreakOverrideCreate(BaseModel):
     def _mode(cls, value: str | None) -> str | None:
         if value is not None and value not in SHIFT_BREAK_MODES:
             raise ValueError(f"mode must be one of {SHIFT_BREAK_MODES}")
+        if value is not None and not get_settings().shift_break_modes_enabled:
+            raise ValueError("Break modes are not available yet; leave mode empty")
         return value
 
     @field_validator("break_type")

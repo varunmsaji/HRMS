@@ -11,10 +11,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
+from hrms.core.db.locks import lock_shift_swap_reference
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.models import ShiftRoster, ShiftSwapRequest
@@ -39,6 +40,7 @@ from hrms.modules.notification.types import (
     SHIFT_SWAPS_PATH,
 )
 from hrms.modules.organisation.models import Department, Shift, ShiftVersion
+from hrms.shared.business_time import business_today
 
 _LIVE_STATUSES = ("ACTIVE", "PROBATION", "ON_NOTICE")
 _PEOPLE_PREVIEW = 4
@@ -487,6 +489,7 @@ class RosterScheduleService:
         scope: DataScope | None,
         caller_employee_id: UUID | None,
     ) -> list[SwapRequestRead]:
+        await self._expire_stale(company_id, await self.company_today(company_id))
         visible = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
@@ -513,18 +516,39 @@ class RosterScheduleService:
         )
         return [await self._read(company_id, r) for r in rows]
 
-    async def _published(self, company_id: UUID, employee_id: UUID, on: date) -> ShiftRoster | None:
-        return (
-            await self._session.execute(
-                select(ShiftRoster).where(
-                    ShiftRoster.company_id == company_id,
-                    ShiftRoster.employee_id == employee_id,
-                    ShiftRoster.roster_date == on,
-                    ShiftRoster.status == "PUBLISHED",
-                    ShiftRoster.deleted_at.is_(None),
-                )
+    async def _published(
+        self, company_id: UUID, employee_id: UUID, on: date, *, for_update: bool = False
+    ) -> ShiftRoster | None:
+        stmt = select(ShiftRoster).where(
+            ShiftRoster.company_id == company_id,
+            ShiftRoster.employee_id == employee_id,
+            ShiftRoster.roster_date == on,
+            ShiftRoster.status == "PUBLISHED",
+            ShiftRoster.deleted_at.is_(None),
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def company_today(self, company_id: UUID) -> date:
+        """SH-17/SH-20 - "today" in the company's timezone, never the server's."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        return business_today(company.timezone)
+
+    async def _expire_stale(self, company_id: UUID, today: date) -> None:
+        """SH-20 - a pending swap whose date has passed can no longer happen; it was left PENDING
+        for ever and could still be approved, rewriting a worked day's roster. Marked EXPIRED."""
+        await self._session.execute(
+            update(ShiftSwapRequest)
+            .where(
+                ShiftSwapRequest.company_id == company_id,
+                ShiftSwapRequest.status == "PENDING",
+                ShiftSwapRequest.swap_date < today,
             )
-        ).scalar_one_or_none()
+            .values(status="EXPIRED", updated_at=datetime.now(UTC))
+        )
 
     async def create_swap(
         self,
@@ -565,8 +589,6 @@ class RosterScheduleService:
             raise ValidationError("Your account is not linked to an employee record.")
         if body.counterpart_employee_id == caller_employee_id:
             raise ValidationError("Choose a colleague to swap with.")
-        if body.swap_date < date.today():
-            raise ValidationError("You can only swap shifts that have not happened yet.")
         colleague = (
             await self._session.execute(
                 select(Employee.id).where(
@@ -660,6 +682,10 @@ class RosterScheduleService:
         consented: bool,
         actor_user_id: UUID | None,
     ) -> SwapRequestRead:
+        # SH-20 - in the company's timezone, for HR and self-service alike (before: the server's
+        # date, and only on the self-service path).
+        if swap_date < await self.company_today(company_id):
+            raise ValidationError("You can only swap shifts that have not happened yet.")
         a = await self._published(company_id, requester_id, swap_date)
         b = await self._published(company_id, counterpart_id, swap_date)
         if not (a and a.shift_id and not a.is_week_off_override) or not (
@@ -683,6 +709,9 @@ class RosterScheduleService:
         ).scalar_one()
         if already:
             raise ConflictError("One of you already has a pending swap request for that day.")
+        # SH-20 - numbered under a per-company lock: two requests created at once both read the
+        # same count before, and took the same reference.
+        await lock_shift_swap_reference(self._session, company_id)
         count = (
             await self._session.execute(
                 select(func.count())
@@ -746,11 +775,22 @@ class RosterScheduleService:
 
         now = datetime.now(UTC)
         if approve:
+            if swap.swap_date < await self.company_today(company_id):
+                raise ConflictError("This swap's date has passed, so it can no longer be approved.")
             if not swap.counterpart_consented:
                 raise ConflictError("The colleague has not agreed to this swap yet.")
             await _ensure_date_open(self._session, company_id, swap.swap_date, employee_id=None)
-            a = await self._published(company_id, swap.requester_employee_id, swap.swap_date)
-            b = await self._published(company_id, swap.counterpart_employee_id, swap.swap_date)
+            # SH-20 - both roster rows are locked before they are checked and rewritten, in a
+            # fixed order (employee id), so a concurrent roster edit cannot slip in between and
+            # two decisions on overlapping swaps cannot deadlock.
+            locked = {
+                emp_id: await self._published(company_id, emp_id, swap.swap_date, for_update=True)
+                for emp_id in sorted(
+                    (swap.requester_employee_id, swap.counterpart_employee_id), key=str
+                )
+            }
+            a = locked[swap.requester_employee_id]
+            b = locked[swap.counterpart_employee_id]
             if (
                 a is None
                 or b is None
@@ -767,6 +807,21 @@ class RosterScheduleService:
                 r.updated_at = now
                 r.updated_by = actor_user_id
                 r.reason = f"Shift swap {swap.reference}"
+            # Invariant C - both employees' day now runs on the other shift.
+            from hrms.modules.attendance.recalc import request_recalc
+
+            for emp_id in (swap.requester_employee_id, swap.counterpart_employee_id):
+                await request_recalc(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=emp_id,
+                    date_from=swap.swap_date,
+                    date_to=swap.swap_date,
+                    reason="SWAP_APPROVED",
+                    source_entity_type="shift_swap_request",
+                    source_entity_id=swap.id,
+                    requested_by=actor_user_id,
+                )
         swap.status = "APPROVED" if approve else "DECLINED"
         swap.decided_by = actor_user_id
         swap.decided_at = now

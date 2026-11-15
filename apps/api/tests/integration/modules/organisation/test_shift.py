@@ -376,8 +376,8 @@ async def test_reactivate_shift_via_patch(client: AsyncClient, seeded_plan_catal
 async def test_multiple_shifts_supported(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_shift(client, headers)
-        await _create_shift(client, headers)
+        await _create_shift(client, headers, name="Shift A")
+        await _create_shift(client, headers, name="Shift B")
         listed = await client.get("/v1/shifts", headers=headers)
         codes = {row["code"] for row in listed.json()["data"]}
         assert codes == {"SHF-001", "SHF-002"}
@@ -450,6 +450,104 @@ async def test_delete_shift_safeguards(client: AsyncClient, seeded_plan_catalogu
                 )
             ).scalar_one()
         assert count == 1
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+# --- SH-21: shift validation ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shift_names_are_unique_per_company_ignoring_case(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        await _create_shift(client, headers, name="Morning")
+        dup = await client.post("/v1/shifts", headers=headers, json={"name": "  morning "})
+        assert dup.status_code == 409, dup.text
+        assert dup.json()["error"]["code"] == "SHIFT_NAME_ALREADY_EXISTS"
+        evening = await _create_shift(client, headers, name="Evening")
+        renamed = await client.patch(
+            f"/v1/shifts/{evening['id']}",
+            headers={**headers, "If-Match": str(evening["version"])},
+            json={"name": "MORNING"},
+        )
+        assert renamed.status_code == 409, renamed.text
+        # Renaming a shift to its own name (different case) is not a clash.
+        same = await client.patch(
+            f"/v1/shifts/{evening['id']}",
+            headers={**headers, "If-Match": str(evening["version"])},
+            json={"name": "EVENING"},
+        )
+        assert same.status_code == 200, same.text
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.parametrize("minutes", [0, 1441])
+@pytest.mark.asyncio
+async def test_required_minutes_must_be_one_minute_to_a_day(
+    client: AsyncClient, seeded_plan_catalogue: None, minutes: int
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        response = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}",
+            headers={**headers, "If-Match": "1"},
+            json={"required_minutes": minutes},
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_breaks_as_long_as_the_shift_cannot_be_published(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        patched = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={
+                "shift_type": "FIXED",
+                "effective_from": "2026-01-01",
+                "start_time": "09:00",
+                "end_time": "11:00",
+                "breaks": [
+                    {
+                        "name": "One",
+                        "break_kind": "FIXED_WINDOW",
+                        "start_time": "09:00",
+                        "end_time": "10:00",
+                        "is_paid": False,
+                    },
+                    {
+                        "name": "Two",
+                        "break_kind": "FIXED_WINDOW",
+                        "start_time": "10:00",
+                        "end_time": "11:00",
+                        "is_paid": False,
+                    },
+                ],
+            },
+        )
+        assert patched.status_code == 200, patched.text
+        published = await client.post(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+            headers={**headers, "If-Match": "2"},
+            json={},
+        )
+        assert published.status_code == 422, published.text
+        assert published.json()["error"]["code"] == "INVALID_SHIFT_BREAK"
     finally:
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -12,7 +12,8 @@ rewritten.
   punch up to 12h after shift end is attributed instead of being ignored past 2h.
 * `attendance_recalc_request` — the durable impact queue (Invariant C): a change to a shift
   version, assignment, roster, swap or policy assignment records which employee-dates it can
-  affect; a Celery task recalculates the open ones.
+  affect; a Celery task recalculates the open ones. Its employee and shift references cascade on
+  delete: a queued recalculation for a row that no longer exists has nothing to do.
 * `punch_dismissal` — HR marks an orphan punch (owned by no attendance day) as reviewed and not
   attendance, so it stops blocking period close. Punches stay immutable (WD-11).
 * `shift_swap_request.status` gains `EXPIRED` (a pending swap whose date has passed).
@@ -62,9 +63,9 @@ def upgrade() -> None:
             CONSTRAINT "attendance_recalc_request_company_fkey" FOREIGN KEY ("company_id")
               REFERENCES "company"("id") ON DELETE RESTRICT,
             CONSTRAINT "attendance_recalc_request_employee_fkey" FOREIGN KEY ("employee_id")
-              REFERENCES "employee"("id"),
+              REFERENCES "employee"("id") ON DELETE CASCADE,
             CONSTRAINT "attendance_recalc_request_shift_fkey" FOREIGN KEY ("shift_id")
-              REFERENCES "shift"("id"),
+              REFERENCES "shift"("id") ON DELETE CASCADE,
             CONSTRAINT "attendance_recalc_request_requester_fkey" FOREIGN KEY ("requested_by")
               REFERENCES "user"("id") ON DELETE SET NULL,
             CONSTRAINT "attendance_recalc_request_range_check" CHECK ("date_from" <= "date_to")

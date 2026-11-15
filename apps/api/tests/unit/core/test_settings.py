@@ -299,3 +299,9 @@ def test_s3_public_endpoint_url_defaults_to_none_and_is_independent_of_the_guard
     `s3_endpoint_url` when it is unset, so the boot guard must not require it separately."""
     settings = _non_dev_settings()
     assert settings.s3_public_endpoint_url is None
+
+
+def test_allowed_company_timezones_defaults_to_india_only() -> None:
+    """DEC-TZ-02 / SH-06: the production default. The test env widens it (`tests/conftest.py`
+    adds `UTC`), so this reads the field default rather than an env-built `Settings`."""
+    assert Settings.model_fields["allowed_company_timezones"].default == ("Asia/Kolkata",)

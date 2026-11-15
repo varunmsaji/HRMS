@@ -195,7 +195,7 @@ async def test_patch_company_profile_non_indian_timezone_rejected(
         response = await client.patch(
             PROFILE_PATH,
             headers={**headers, "If-Match": str(version)},
-            json={"timezone": "America/Los_Angeles"},
+            json={"timezone": "America/New_York"},
         )
         assert response.status_code == 422, response.text
     finally:

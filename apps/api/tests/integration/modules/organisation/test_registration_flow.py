@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.models import AuditLog
 from hrms.core.auth.passwords import verify_password
+from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import (
     Company,
     Permission,
@@ -72,6 +73,12 @@ async def _cleanup(*, company_id: UUID | None, user_id: UUID | None) -> None:
             # Workflow actions (leave, regularization, swaps, ...) create in-app notifications.
             await session.execute(
                 text("DELETE FROM notification WHERE company_id = :cid"), {"cid": company_id}
+            )
+            # Shift, assignment, roster, swap and policy writes queue recalculations (Invariant
+            # C); the queue references the company with ON DELETE RESTRICT.
+            await session.execute(
+                text("DELETE FROM attendance_recalc_request WHERE company_id = :cid"),
+                {"cid": company_id},
             )
             await session.execute(
                 AuditLog.__table__.delete().where(AuditLog.company_id == company_id)
@@ -509,7 +516,7 @@ async def test_registration_non_indian_valid_timezone_rejected(
     is still rejected. Before Phase 2, this was accepted: an anonymous, unauthenticated visitor
     could create a company running every attendance calculation in `America/Los_Angeles` on a
     product that is India-only for V1 (execution gate §6)."""
-    payload = _payload(timezone="America/Los_Angeles")
+    payload = _payload(timezone="America/New_York")
     response = await client.post("/v1/companies/register", json=payload)
     assert response.status_code == 422, response.text
 
@@ -609,7 +616,12 @@ async def test_registration_config_is_public_and_lists_india_only(
     by the sign-up page before any tenant or session exists (execution gate §6.3)."""
     response = await client.get("/v1/companies/registration-config")
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["allowed_company_timezones"] == ["Asia/Kolkata"]
+    # Exactly the configured list (production default India-only, pinned in `test_settings.py`;
+    # the test env also allows `UTC`, see `tests/conftest.py`).
+    assert response.json()["data"]["allowed_company_timezones"] == list(
+        get_settings().allowed_company_timezones
+    )
+    assert "Asia/Kolkata" in response.json()["data"]["allowed_company_timezones"]
 
 
 async def _role_grants(company_id: UUID, role_code: str) -> dict[str, str]:

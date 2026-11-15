@@ -45,6 +45,11 @@ walks the first's committed link and is refused. It is a LEAF lock: taken first 
 write (nothing the walk depends on is read or locked before it), with no other lock in this list
 acquired while holding it, so it cannot take part in a cycle.
 
+`shift-swap-reference` serialises numbering of shift swap requests within one company, so two
+requests created at once cannot both read the same count and take the same reference (SH-20). A
+LEAF lock: taken just before the count and the insert, with nothing else in this list acquired
+while holding it.
+
 Lock order, outermost first — always acquire in this order, never the reverse:
 
     leave-dates  ->  payroll-finalise  ->  attendance-period-close  ->  leave balance
@@ -130,6 +135,15 @@ async def lock_calendar_policy_dependencies(session: AsyncSession, company_id: U
     `work-calendar-change:<company>` when both are needed (change-impact confirmation). A leaf
     lock otherwise."""
     key = f"calendar-policy-dependencies:{company_id}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+
+async def lock_shift_swap_reference(session: AsyncSession, company_id: UUID) -> None:
+    """Held until the transaction ends. A leaf lock; see the module docstring."""
+    key = f"shift-swap-reference:{company_id}"
     async with bounded_lock_wait(
         session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
     ):

@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
-from hrms.core.errors.base import ValidationError
+from hrms.core.errors.base import ConflictError, ValidationError
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
@@ -89,7 +90,25 @@ async def get_my_break_state(
     return DataEnvelope(data=data, meta=_meta())
 
 
-@router.post("/attendance/breaks/me/start", status_code=status.HTTP_200_OK)
+class BreakModesDisabledError(ConflictError):
+    """SH-15 - break punching is hidden until a client exposes it (`shift_break_modes_enabled`)."""
+
+    code = "BREAK_MODES_DISABLED"
+
+    def __init__(self) -> None:
+        super().__init__("Break punching is not available yet")
+
+
+def _require_break_modes() -> None:
+    if not get_settings().shift_break_modes_enabled:
+        raise BreakModesDisabledError()
+
+
+@router.post(
+    "/attendance/breaks/me/start",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_require_break_modes)],
+)
 async def start_my_break(
     body: BreakActionSelf,
     request: Request,
@@ -112,7 +131,11 @@ async def start_my_break(
     return DataEnvelope(data=data, meta=_meta())
 
 
-@router.post("/attendance/breaks/me/end", status_code=status.HTTP_200_OK)
+@router.post(
+    "/attendance/breaks/me/end",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_require_break_modes)],
+)
 async def end_my_break(
     body: BreakActionSelf,
     request: Request,

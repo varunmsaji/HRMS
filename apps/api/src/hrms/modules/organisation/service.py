@@ -82,6 +82,7 @@ from hrms.modules.organisation.exceptions import (
     PolicyNotPublishedError,
     ShiftDeleteConfirmationMismatchError,
     ShiftDeletionBlockedError,
+    ShiftNameAlreadyExistsError,
     ShiftVersionDraftAlreadyExistsError,
     ShiftVersionNotDraftError,
     ShiftVersionNotFoundForDateError,
@@ -225,6 +226,7 @@ from hrms.modules.organisation.schemas import (
     shift_to_read,
     shift_version_to_audit_dict,
     shift_version_to_read,
+    validate_schedule_timezone,
     weekly_off_pattern_to_audit_dict,
     weekly_off_pattern_to_read,
     work_calendar_to_audit_dict,
@@ -233,7 +235,6 @@ from hrms.modules.organisation.schemas import (
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
 from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
-from hrms.shared.timezone import validate_iana_timezone
 
 # No explicit trial length is defined anywhere in the frozen Company docs — 14 days is an
 # assumed, easily-changed default (common SaaS convention), not a sourced product decision.
@@ -2171,6 +2172,7 @@ class OrganisationService:
         schedule, so an initial empty DRAFT `ShiftVersion` is created in the same transaction
         rather than requiring a mandatory second round-trip. The `code` is always auto-assigned
         (`SHF-001`, `SHF-002`, …); the client never supplies one."""
+        await self._assert_shift_name_free(company_id, body.name)
         now = datetime.now(UTC)
         shift_id = uuid4()
         code = await self._repo.next_auto_shift_code(self._session, company_id=company_id)
@@ -2228,6 +2230,26 @@ class OrganisationService:
             user_agent=user_agent,
         )
         return read
+
+    async def _assert_shift_name_free(
+        self, company_id: UUID, name: str, *, except_id: UUID | None = None
+    ) -> None:
+        """SH-21 - shift names are unique per company, ignoring case and surrounding spaces.
+        Checked in the service (no unique index yet): two creates racing with one name can
+        still both pass."""
+        from sqlalchemy import func, select
+
+        from hrms.modules.organisation.models import Shift
+
+        stmt = select(Shift.id).where(
+            Shift.company_id == company_id,
+            Shift.deleted_at.is_(None),
+            func.lower(func.btrim(Shift.name)) == name.strip().lower(),
+        )
+        if except_id is not None:
+            stmt = stmt.where(Shift.id != except_id)
+        if (await self._session.execute(stmt.limit(1))).first() is not None:
+            raise ShiftNameAlreadyExistsError()
 
     def _empty_draft_shift_version_data(
         self, *, company_id: UUID, shift_id: UUID, now: datetime
@@ -2337,6 +2359,8 @@ class OrganisationService:
         values = build_shift_update_values(patch)
         if not values:
             return before_read
+        if "name" in values:
+            await self._assert_shift_name_free(company_id, values["name"], except_id=shift_id)
 
         now = datetime.now(UTC)
         updated = await self._repo.update_shift(
@@ -2819,16 +2843,33 @@ class OrganisationService:
         window_start: str | None,
         window_end: str | None,
         breaks: list[Any],
+        required_minutes: int | None = None,
     ) -> None:
         """FIXED/FLEXIBLE only — containment of `FIXED_WINDOW` breaks inside the shift's
         overall span. SPLIT is skipped: `ShiftBreak` has no `duty_block_id` (known
         limitation — the architecture's own field list omits this link), so
-        containment-within-duty-block can't be validated."""
+        containment-within-duty-block can't be validated.
+
+        SH-11: a FLEXIBLE shift's `window_start`-`window_end` is when the day may *start*, not
+        the working day, so a lunch break after the start window was refused at publish. The
+        bound is the start window's opening to its close plus `required_minutes` (the latest a
+        day can end)."""
         if shift_type == "SPLIT":
             return
-        bound_start, bound_end = (
-            (start_time, end_time) if shift_type == "FIXED" else (window_start, window_end)
-        )
+        if shift_type == "FIXED":
+            bound_start, bound_end = start_time, end_time
+        else:
+            bound_start = window_start
+            bound_end = (
+                None
+                if window_end is None
+                else _format_time(
+                    (
+                        datetime.combine(date(2000, 1, 1), _parse_time(window_end))
+                        + timedelta(minutes=min(required_minutes or 0, 1439))
+                    ).time()
+                )
+            )
         if bound_start is None or bound_end is None:
             return
         for brk in breaks:
@@ -2894,9 +2935,10 @@ class OrganisationService:
         # optional and only-if-set). Re-validating here, once, at the one gate every version must
         # pass before it can affect real attendance, closes that window without needing a
         # one-off data migration to sweep legacy rows first.
+        # SH-06: and the zone must be on the allow-list (a draft saved before the restriction).
         if version.timezone is not None:
             try:
-                validate_iana_timezone(version.timezone)
+                validate_schedule_timezone(version.timezone)
             except ValueError as exc:
                 raise ValidationError(
                     str(exc),
@@ -2954,8 +2996,45 @@ class OrganisationService:
             window_start=window_start,
             window_end=window_end,
             breaks=breaks,
+            required_minutes=version.required_minutes,
         )
+        self._validate_breaks_shorter_than_shift(version, breaks, duty_blocks)
         return is_cross_midnight
+
+    def _validate_breaks_shorter_than_shift(
+        self, version: Any, breaks: list[Any], duty_blocks: list[Any]
+    ) -> None:
+        """SH-21 - the breaks together must be shorter than the working day, or the day has no
+        working time at all. A fixed break counts its window; a flexible one its scheduled (or
+        minimum) minutes."""
+        if version.shift_type == "FIXED":
+            start, end = _format_time(version.start_time), _format_time(version.end_time)
+            assert start is not None and end is not None  # checked above
+            shift_minutes = (self._time_to_minutes(end) - self._time_to_minutes(start)) % 1440
+        elif version.shift_type == "FLEXIBLE":
+            shift_minutes = int(version.required_minutes or 0)
+        else:
+            shift_minutes = sum(
+                (
+                    self._time_to_minutes(_format_time(b.end_time) or "00:00")
+                    - self._time_to_minutes(_format_time(b.start_time) or "00:00")
+                )
+                % 1440
+                for b in duty_blocks
+            )
+        total = 0
+        for brk in breaks:
+            if not getattr(brk, "is_enabled", True):
+                continue
+            if brk.break_kind == "FIXED_WINDOW" and brk.start_time and brk.end_time:
+                total += (
+                    self._time_to_minutes(_format_time(brk.end_time) or "00:00")
+                    - self._time_to_minutes(_format_time(brk.start_time) or "00:00")
+                ) % 1440
+            else:
+                total += int(brk.scheduled_minutes or brk.min_minutes or 0)
+        if shift_minutes and total >= shift_minutes:
+            raise InvalidShiftBreakError("the breaks together must be shorter than the shift")
 
     async def _validate_weekly_off_pattern_reference(
         self, company_id: UUID, weekly_off_pattern_id: UUID
@@ -3494,6 +3573,20 @@ class OrganisationService:
             )
 
         after_read = shift_version_to_read(updated, breaks, duty_blocks)
+        # Invariant C - days already calculated against this shift from the new version's start
+        # are stale now.
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            date_from=draft.effective_from,
+            shift_id=shift_id,
+            reason="SHIFT_VERSION_PUBLISHED",
+            source_entity_type="shift_version",
+            source_entity_id=version_id,
+            requested_by=actor_user_id,
+        )
         await self._audit.record(
             self._session,
             company_id=company_id,
@@ -4719,6 +4812,7 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._queue_policy_recalc(company_id, read, body.effective_from, actor_user_id)
         return read
 
     async def get_policy_assignment(
@@ -4730,6 +4824,32 @@ class OrganisationService:
         if row is None:
             raise NotFoundError("Resource not found")
         return policy_assignment_to_read(row)
+
+    async def _queue_policy_recalc(
+        self,
+        company_id: UUID,
+        assignment: PolicyAssignmentRead,
+        date_from: date,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """Invariant C - a policy, calendar or weekly-off assignment that starts or ends changes
+        the rules for every day it covers from `date_from`. Leave and regularization policies do
+        not feed the attendance calculation."""
+        if assignment.policy_kind in ("LEAVE_POLICY", "REGULARIZATION_POLICY"):
+            return
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            date_from=date_from,
+            employee_id=assignment.scope_id if assignment.scope_type == "EMPLOYEE" else None,
+            shift_id=assignment.scope_id if assignment.scope_type == "SHIFT" else None,
+            reason="POLICY_ASSIGNMENT_CHANGED",
+            source_entity_type="policy_assignment",
+            source_entity_id=assignment.id,
+            requested_by=actor_user_id,
+        )
 
     async def end_policy_assignment(
         self,
@@ -4804,6 +4924,9 @@ class OrganisationService:
             after=policy_assignment_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await self._queue_policy_recalc(
+            company_id, read, body.effective_to + timedelta(days=1), actor_user_id
         )
         return read
 
