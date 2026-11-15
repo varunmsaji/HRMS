@@ -39,6 +39,11 @@ interface WhosInPanelProps {
   showDate?: boolean;
   /** Department per employee, when it has loaded — shown under the name. */
   directory?: Map<string, { department: string | null }>;
+  /** When set, rows with no punches (absent, or no record yet) get a "Mark present" action. The
+   * caller gates it on `ATTENDANCE.PUNCH_ON_BEHALF`. */
+  onMarkPresent?: (target: { employeeId: string; label: string; date: string }) => void;
+  /** The date a row with no attendance record belongs to (the focus date). */
+  fallbackDate?: string;
 }
 
 function Avatar({ name }: { name: string }) {
@@ -66,7 +71,23 @@ function flagBadges(day: AttendanceDay) {
 
 /** The employee list behind every drill-down: search, sort and paging over the rows the page
  * already holds. Desktop shows a table; small screens show the same rows as compact cards. */
-export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDate = false, directory }: WhosInPanelProps) {
+/** A row HR can mark present in one step: nothing was punched, and the day is not leave, a
+ * holiday or a weekly off (those are not absences to correct). */
+function canMarkPresent(day: AttendanceDay | null): boolean {
+  if (!day) return true;
+  return day.attendance_status === "ABSENT" && !day.actual_first_in && !day.actual_last_out;
+}
+
+export function WhosInPanel({
+  rows,
+  employeesById,
+  shiftNames,
+  timezone,
+  showDate = false,
+  directory,
+  onMarkPresent,
+  fallbackDate,
+}: WhosInPanelProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
   const [page, setPage] = useState(1);
@@ -123,6 +144,23 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
       hours: day?.actual_first_in ? formatMinutes(day.worked_minutes) : "—",
       presence: day ? PRESENCE_LABELS[presenceOf(day)] : "No record yet",
     };
+  };
+
+  const markButton = (d: (typeof slice)[number]) => {
+    const date = d.row.day?.attendance_date ?? fallbackDate;
+    if (!onMarkPresent || !date || !canMarkPresent(d.row.day)) return null;
+    return (
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        className="mt-1.5"
+        aria-label={`Mark ${d.name} present on ${formatShortDate(date)}`}
+        onClick={() => onMarkPresent({ employeeId: d.row.employeeId, label: d.name, date })}
+      >
+        Mark present
+      </Button>
+    );
   };
 
   return (
@@ -210,6 +248,7 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
                         ) : (
                           <Badge variant="outline">No record</Badge>
                         )}
+                        {markButton(d)}
                       </td>
                     </tr>
                   );
@@ -240,6 +279,7 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
                     <div><dt className="text-foreground-muted">Worked</dt><dd>{c.hours}</dd></div>
                   </dl>
                   {d.row.day ? <div className="mt-2 flex flex-wrap gap-1">{flagBadges(d.row.day)}</div> : null}
+                  {markButton(d)}
                 </li>
               );
             })}

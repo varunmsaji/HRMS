@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
@@ -22,8 +23,14 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
 from hrms.core.db.session import session_scope
-from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
-from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
+from hrms.core.db.timeouts import bounded_lock_wait, bounded_waits, is_wait_timeout
+from hrms.core.errors.base import (
+    AppError,
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.observability.security_events import security_event
@@ -153,6 +160,9 @@ from hrms.modules.attendance.schemas import (
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
+    ManualDayEntryRequest,
+    ManualDayEntryResponse,
+    ManualDayEntryResult,
     OvertimePolicyCreate,
     OvertimePolicyRead,
     OvertimePolicyUpdate,
@@ -2949,6 +2959,7 @@ class PunchService:
         user_agent: str | None = None,
         location: PunchLocation | None = None,
         location_error: str | None = None,
+        calculate: bool = True,
     ) -> tuple[PunchRead, bool]:
         """Returns `(punch, replayed)`: `replayed` is True when an earlier row with the same
         `idempotency_key` was returned instead of writing a new one (callers that attach
@@ -3116,6 +3127,9 @@ class PunchService:
                 punch_id=punch_id,
             )
             read = read.model_copy(update={"geofence": geofence.to_read()})
+        if not calculate:
+            # The caller writes more punches for the same day and recalculates once afterwards.
+            return read, False
         await self._try_immediate_calculate(
             company_id,
             employee_id,
@@ -3561,6 +3575,356 @@ class PunchService:
             date_to=date_to,
         )
         return [punch_to_read(r) for r in rows], total
+
+    # --- manual day entry (HR marks an IN and an OUT in one step) ------------------------------
+
+    async def preview_manual_days(
+        self,
+        company_id: UUID,
+        body: ManualDayEntryRequest,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> ManualDayEntryResponse:
+        """What `record_manual_days` would do with `body`, without writing anything.
+
+        Runs the same checks in the same order, so a `READY` line here fails at submit time only
+        if something changed in between (a period was closed, another punch arrived). Submit
+        re-checks everything; the preview is advice for the person, never a guarantee."""
+        timezone = await self._company_zone(company_id)
+        results: list[ManualDayEntryResult] = []
+        for employee_id in body.employee_ids:
+            existing: list[PunchRead] = []
+            try:
+                _ensure_not_self_entry(employee_id, caller_employee_id)
+                await _ensure_employee_visible(
+                    self._session, company_id, employee_id, scope, caller_employee_id
+                )
+                existing = await self._punches_on_manual_days(
+                    company_id, employee_id, body, timezone
+                )
+                if existing:
+                    raise _ExistingPunchesError()
+                await self._ensure_manual_day_allowed(company_id, employee_id, body, timezone)
+            except AppError as exc:
+                results.append(_blocked(employee_id, exc, existing))
+                continue
+            results.append(ManualDayEntryResult(employee_id=employee_id, outcome="READY"))
+        return _manual_day_response(body, results)
+
+    @logged_operation(
+        "attendance.manual_day.record",
+        result_fields=lambda r: {"recorded": r.recorded_count, "blocked": r.blocked_count},
+    )
+    async def record_manual_days(
+        self,
+        company_id: UUID,
+        body: ManualDayEntryRequest,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ManualDayEntryResponse:
+        """Records an `ADMIN` IN at `punch_in_at` and OUT at `punch_out_at` for each employee.
+        Never for the caller's own employee record (`SELF_ENTRY_NOT_ALLOWED`).
+
+        **Per employee, both punches or neither** — each employee runs in its own savepoint, so a
+        refusal (closed period, terminated, out of scope, an existing punch on the day) rolls back
+        only that employee and is reported as `BLOCKED`; the others are still recorded. An
+        unexpected error is not caught and fails the whole request.
+
+        Every punch goes through `record_punch_outcome`, so the single on-behalf punch's bounds
+        and its per-punch `PUNCH_CREATED` audit row apply unchanged. One more audit row,
+        `ATTENDANCE_MANUAL_DAY_ENTRY`, records the submission as a whole: who, when, the reason
+        and every employee's outcome.
+
+        A per-employee advisory lock (taken for all employees up front, in sorted order, so two
+        overlapping submissions cannot deadlock) makes the "no punch on this day yet" check hold
+        until commit against another manual-day submission for the same person. It is a leaf
+        lock: nothing in `core.db.locks` is taken while it is held, and the day calculation takes
+        no advisory lock."""
+        timezone = await self._company_zone(company_id)
+        for employee_id in sorted(body.employee_ids):
+            await _lock_manual_day(self._session, company_id, employee_id)
+
+        results: list[ManualDayEntryResult] = []
+        for employee_id in body.employee_ids:
+            results.append(
+                await self._record_manual_day(
+                    company_id,
+                    employee_id,
+                    body,
+                    timezone,
+                    scope=scope,
+                    caller_employee_id=caller_employee_id,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            )
+        response = _manual_day_response(body, results)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_MANUAL_DAY_ENTRY",
+            entity_type="attendance_manual_day",
+            entity_id=uuid4(),
+            after={
+                "punch_in_at": response.punch_in_at,
+                "punch_out_at": response.punch_out_at,
+                "reason": body.reason,
+                "idempotency_key": body.idempotency_key,
+                "results": [
+                    {
+                        "employee_id": str(r.employee_id),
+                        "outcome": r.outcome,
+                        "code": r.code,
+                        "replayed": r.replayed,
+                        "punch_ids": [str(p.id) for p in r.punches],
+                    }
+                    for r in results
+                ],
+            },
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return response
+
+    async def _record_manual_day(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> ManualDayEntryResult:
+        existing: list[PunchRead] = []
+        try:
+            async with self._session.begin_nested():
+                _ensure_not_self_entry(employee_id, caller_employee_id)
+                await _ensure_employee_visible(
+                    self._session, company_id, employee_id, scope, caller_employee_id
+                )
+                replay = await self._manual_day_replay(company_id, employee_id, body)
+                if replay is not None:
+                    return ManualDayEntryResult(
+                        employee_id=employee_id, outcome="RECORDED", replayed=True, punches=replay
+                    )
+                existing = await self._punches_on_manual_days(
+                    company_id, employee_id, body, timezone
+                )
+                if existing:
+                    raise _ExistingPunchesError()
+                await self._ensure_manual_dates_open(company_id, employee_id, body, timezone)
+                punches: list[PunchRead] = []
+                for direction, instant in (("IN", body.punch_in_at), ("OUT", body.punch_out_at)):
+                    punch, _replayed = await self.record_punch_outcome(
+                        company_id,
+                        employee_id,
+                        direction=direction,
+                        requested_punch_time=instant,
+                        source="ADMIN",
+                        reference=body.reason,
+                        idempotency_key=_manual_day_key(body, employee_id, direction),
+                        scope=scope,
+                        caller_employee_id=caller_employee_id,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        calculate=False,
+                    )
+                    punches.append(punch)
+        except AppError as exc:
+            return _blocked(employee_id, exc, existing)
+
+        # Outside the employee's savepoint: a failed calculation must never undo the punches
+        # (`_try_immediate_calculate` swallows its own errors; the daily sweep retries).
+        calculated: set[date] = set()
+        for instant in (body.punch_in_at, body.punch_out_at):
+            local_date = instant.astimezone(timezone).date()
+            if local_date in calculated:
+                continue
+            calculated.add(local_date)
+            await self._try_immediate_calculate(
+                company_id,
+                employee_id,
+                instant,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return ManualDayEntryResult(employee_id=employee_id, outcome="RECORDED", punches=punches)
+
+    async def _ensure_manual_day_allowed(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+    ) -> None:
+        """The bounds `record_punch_outcome` applies to an on-behalf punch, plus
+        `_ensure_manual_dates_open`, checked for both instants without writing — used by the
+        preview."""
+        await self._ensure_manual_dates_open(company_id, employee_id, body, timezone)
+        now = datetime.now(UTC)
+        for instant in (body.punch_in_at, body.punch_out_at):
+            if instant > now:
+                raise FuturePunchTimeError()
+            await self._ensure_within_employment(company_id, employee_id, instant)
+            await _ensure_not_after_last_working_day(
+                self._session, company_id, employee_id, instant
+            )
+            await _ensure_punch_date_open(self._session, company_id, employee_id, instant)
+
+    async def _ensure_manual_dates_open(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+    ) -> None:
+        """Stricter than punch ingestion's `_ensure_punch_date_open`, on purpose.
+
+        Ingestion accepts a punch unless both its local date and the day before are closed,
+        because refusing a real device punch destroys a fact, while accepting one into a closed
+        day is harmless (the calculation never rewrites a locked day). A manual day is not an
+        observed fact but a correction HR is typing in, and accepting it into a closed period
+        would tell HR it worked while changing nothing. So every company-local date the entry
+        touches must be open; a closed period has to be reopened first."""
+        dates = {
+            instant.astimezone(timezone).date() for instant in (body.punch_in_at, body.punch_out_at)
+        }
+        for local_date in sorted(dates):
+            await _ensure_date_open(self._session, company_id, local_date, employee_id=employee_id)
+
+    async def _punches_on_manual_days(
+        self, company_id: UUID, employee_id: UUID, body: ManualDayEntryRequest, timezone: ZoneInfo
+    ) -> list[PunchRead]:
+        """Every live punch on the company-local calendar day(s) the manual entry covers: from
+        local midnight of the IN's date to local midnight after the OUT's date."""
+        first = body.punch_in_at.astimezone(timezone).date()
+        last = body.punch_out_at.astimezone(timezone).date()
+        window_start = datetime.combine(first, datetime.min.time(), tzinfo=timezone)
+        window_end = datetime.combine(
+            last + timedelta(days=1), datetime.min.time(), tzinfo=timezone
+        )
+        rows = await self._repo.list_for_employee_window(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            window_start=window_start.astimezone(UTC),
+            window_end=window_end.astimezone(UTC),
+        )
+        return [punch_to_read(r) for r in rows]
+
+    async def _manual_day_replay(
+        self, company_id: UUID, employee_id: UUID, body: ManualDayEntryRequest
+    ) -> list[PunchRead] | None:
+        """The punches an earlier attempt with the same idempotency key stored for this employee,
+        or `None` when there was no such attempt. The pair is written in one savepoint, so either
+        both keys exist or neither does."""
+        if not body.idempotency_key:
+            return None
+        found: list[PunchRead] = []
+        for direction in ("IN", "OUT"):
+            row = await self._repo.get_by_idempotency_key(
+                self._session,
+                company_id=company_id,
+                idempotency_key=_manual_day_key(body, employee_id, direction) or "",
+            )
+            if row is None:
+                return None
+            if row.employee_id != employee_id:
+                raise DuplicatePunchIdempotencyKeyError()
+            found.append(punch_to_read(row))
+        return found
+
+    async def _company_zone(self, company_id: UUID) -> ZoneInfo:
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        return resolve_zoneinfo(company.timezone)
+
+
+class _ExistingPunchesError(ConflictError):
+    """Internal to manual day entry; surfaces only as a `BLOCKED` line, never as a response."""
+
+    code = "EXISTING_PUNCHES"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This employee already has punches on this day. Correct it with a single punch instead."
+        )
+
+
+class _SelfEntryNotAllowedError(PermissionDeniedError):
+    """Internal to manual day entry; surfaces only as a `BLOCKED` line."""
+
+    code = "SELF_ENTRY_NOT_ALLOWED"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "You cannot mark your own attendance. Ask another HR admin, or raise a regularization."
+        )
+
+
+def _ensure_not_self_entry(employee_id: UUID, caller_employee_id: UUID | None) -> None:
+    """Separation of duties: HR backdating their own attendance is the case this whole path most
+    needs to prevent, so it is refused even though the caller holds the permission. (The single
+    on-behalf punch still accepts self; tightening that is a separate decision.)"""
+    if caller_employee_id is not None and employee_id == caller_employee_id:
+        raise _SelfEntryNotAllowedError()
+
+
+def _manual_day_key(body: ManualDayEntryRequest, employee_id: UUID, direction: str) -> str | None:
+    if not body.idempotency_key:
+        return None
+    return f"{body.idempotency_key}:{employee_id}:{direction}"
+
+
+def _blocked(employee_id: UUID, exc: AppError, existing: list[PunchRead]) -> ManualDayEntryResult:
+    return ManualDayEntryResult(
+        employee_id=employee_id,
+        outcome="BLOCKED",
+        code=exc.code,
+        message=exc.message,
+        existing_punches=existing,
+    )
+
+
+def _manual_day_response(
+    body: ManualDayEntryRequest, results: list[ManualDayEntryResult]
+) -> ManualDayEntryResponse:
+    return ManualDayEntryResponse(
+        punch_in_at=_format_instant(body.punch_in_at),
+        punch_out_at=_format_instant(body.punch_out_at),
+        ready_count=sum(r.outcome == "READY" for r in results),
+        recorded_count=sum(r.outcome == "RECORDED" for r in results),
+        blocked_count=sum(r.outcome == "BLOCKED" for r in results),
+        results=results,
+    )
+
+
+def _format_instant(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+async def _lock_manual_day(session: AsyncSession, company_id: UUID, employee_id: UUID) -> None:
+    """Held until the transaction ends. A leaf lock private to manual day entry — see
+    `PunchService.record_manual_days`."""
+    key = f"attendance-manual-day:{company_id}:{employee_id}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
 
 
 class AttendanceDayService:

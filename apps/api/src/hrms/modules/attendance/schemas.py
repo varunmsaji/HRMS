@@ -1,7 +1,7 @@
 """Pydantic request/response shapes for the attendance module (W3)."""
 
 import calendar
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
@@ -1488,6 +1488,93 @@ class PunchCreateOnBehalf(BaseModel):
         return value
 
 
+#: Upper bound on employees in one manual-day request. Each employee costs two punch writes and a
+#: recalculation inside one transaction, so the cap keeps the request short and the blast radius of
+#: a mistaken submission small.
+MANUAL_DAY_MAX_EMPLOYEES = 50
+#: The longest IN→OUT span one manual day may record. A real shift, overnight ones included, fits
+#: comfortably; anything longer is almost always a wrong date.
+MANUAL_DAY_MAX_SPAN = timedelta(hours=20)
+
+
+class ManualDayEntryRequest(BaseModel):
+    """Body for `POST /attendance/punches/day-entries[/preview]` — HR marking a whole day (an IN
+    and an OUT) for one or more employees in one step (`ATTENDANCE.PUNCH_ON_BEHALF`).
+
+    Every punch it writes goes through `PunchService.record_punch_outcome` with `source="ADMIN"`,
+    so it is held to every bound the single on-behalf punch is held to (scope, future time,
+    employment start, last working day, closed period) and is audited the same way. On top of
+    those, a manual day is refused for an employee who already has any punch on that day: a
+    partial day is corrected with a single punch, never by stacking a second IN/OUT pair on it.
+
+    `idempotency_key` covers the whole submission. Each punch is stored under a key derived from
+    it, the employee and the direction, so a retried request records nothing twice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_ids: list[UUID] = Field(min_length=1, max_length=MANUAL_DAY_MAX_EMPLOYEES)
+    punch_in_at: AwareIsoDatetime
+    punch_out_at: AwareIsoDatetime
+    reason: str = Field(min_length=3, max_length=200)
+    #: Short enough that `<key>:<employee uuid>:OUT` fits the 100-character punch key column.
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=50)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 3:
+            raise ValueError("reason must be at least 3 characters")
+        return stripped
+
+    @field_validator("employee_ids")
+    @classmethod
+    def validate_unique_employees(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("employee_ids must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_span(self) -> "ManualDayEntryRequest":
+        if self.punch_out_at <= self.punch_in_at:
+            raise ValueError("punch_out_at must be after punch_in_at")
+        if self.punch_out_at - self.punch_in_at > MANUAL_DAY_MAX_SPAN:
+            hours = int(MANUAL_DAY_MAX_SPAN.total_seconds() // 3600)
+            raise ValueError(f"a manual day can span at most {hours} hours")
+        return self
+
+
+ManualDayOutcome = Literal["READY", "RECORDED", "BLOCKED"]
+
+
+class ManualDayEntryResult(BaseModel):
+    """One employee's line in a manual-day preview or submission.
+
+    `READY` (preview only) — would be recorded. `RECORDED` (submit only) — both punches stored;
+    `replayed` is true when they were stored by an earlier attempt with the same idempotency key.
+    `BLOCKED` — nothing stored for this employee; `code`/`message` say why, using the same error
+    codes the single on-behalf punch returns, plus `EXISTING_PUNCHES`."""
+
+    employee_id: UUID
+    outcome: ManualDayOutcome
+    code: str | None = None
+    message: str | None = None
+    replayed: bool = False
+    #: Punches already on the employee's day(s), so HR can see what a block is about.
+    existing_punches: list["PunchRead"] = Field(default_factory=list)
+    #: The two punches written, on `RECORDED`.
+    punches: list["PunchRead"] = Field(default_factory=list)
+
+
+class ManualDayEntryResponse(BaseModel):
+    punch_in_at: str
+    punch_out_at: str
+    ready_count: int
+    recorded_count: int
+    blocked_count: int
+    results: list[ManualDayEntryResult]
+
+
 class PunchRead(BaseModel):
     id: UUID
     company_id: UUID
@@ -2620,3 +2707,8 @@ class FaceLivenessSessionRead(BaseModel):
     direction: str
     expires_at: datetime
     frames_required: int
+
+
+# `ManualDayEntryResult` names `PunchRead`, which is declared after it.
+ManualDayEntryResult.model_rebuild()
+ManualDayEntryResponse.model_rebuild()

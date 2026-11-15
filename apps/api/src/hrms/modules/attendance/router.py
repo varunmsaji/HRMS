@@ -130,6 +130,8 @@ from hrms.modules.attendance.schemas import (
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
+    ManualDayEntryRequest,
+    ManualDayEntryResponse,
     OvertimePolicyCreate,
     OvertimePolicyRead,
     OvertimePolicySetup,
@@ -978,6 +980,47 @@ async def create_punch_on_behalf(
         source="ADMIN",
         reference=body.reference,
         idempotency_key=body.idempotency_key,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/punches/day-entries/preview", status_code=status.HTTP_200_OK)
+async def preview_manual_day_entries(
+    body: ManualDayEntryRequest,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH_ON_BEHALF))],
+    service: Annotated[PunchService, Depends(get_punch_service)],
+) -> DataEnvelope[ManualDayEntryResponse]:
+    """Dry run of `POST /attendance/punches/day-entries`: each employee's line is `READY` or
+    `BLOCKED` with the reason, and nothing is written. Same permission as the write."""
+    data = await service.preview_manual_days(
+        tenant.company_id, body, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/punches/day-entries", status_code=status.HTTP_200_OK)
+async def record_manual_day_entries(
+    body: ManualDayEntryRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH_ON_BEHALF))],
+    service: Annotated[PunchService, Depends(get_punch_service)],
+) -> DataEnvelope[ManualDayEntryResponse]:
+    """HR marks a whole day — an `ADMIN` IN and OUT — for up to 50 employees in one step
+    (`ATTENDANCE.PUNCH_ON_BEHALF`). Per employee it is both punches or neither; refused employees
+    come back `BLOCKED` while the rest are recorded, so the response is 200 with a line per
+    employee rather than an all-or-nothing error. See `PunchService.record_manual_days`."""
+    data = await service.record_manual_days(
+        tenant.company_id,
+        body,
         scope=scope,
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
