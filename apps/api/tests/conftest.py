@@ -185,6 +185,7 @@ _QA_SANDBOX_ONLY = (
     "test_attendance_r2_migrations.py",
     "test_b13_migrations.py",
     "test_shift_tenant_fk_migrations.py",
+    "test_shift_name_unique_migration.py",
     "test_b13_confirm_terminate_concurrency.py",
     "test_b13_email_outbox.py",
     "test_b13_seat_limit_concurrency.py",

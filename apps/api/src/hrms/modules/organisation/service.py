@@ -276,6 +276,9 @@ EMPLOYEE_ROLE_CODE = "EMPLOYEE"
 # FR-ORG-005 — department hierarchy is capped at 5 levels (root = depth 1).
 DEPARTMENT_MAX_DEPTH = 5
 
+# SC-01: partial unique index on (company_id, lower(btrim(name))) for live shifts.
+SHIFT_NAME_UNIQUE_INDEX = "shift_company_live_name_key"
+
 # Extensibility point (05_Backend_Architecture.md §3.1): Company owns this registry and the
 # aggregation loop in `get_setup_progress`, never the predicate logic for a sibling step once
 # one exists — e.g. a future `SetupStepDefinition(code="BRANCHES", ..., check=lambda repo,
@@ -2176,29 +2179,36 @@ class OrganisationService:
         now = datetime.now(UTC)
         shift_id = uuid4()
         code = await self._repo.next_auto_shift_code(self._session, company_id=company_id)
-        shift = await self._repo.insert_shift(
-            self._session,
-            data={
-                "id": shift_id,
-                "company_id": company_id,
-                "name": body.name,
-                "code": code,
-                "start_time": time(0, 0),
-                "end_time": time(0, 0),
-                "break_minutes_paid": 0,
-                "break_minutes_unpaid": 0,
-                "grace_in_minutes": 0,
-                "grace_out_minutes": 0,
-                "half_day_threshold_hours": None,
-                "min_hours_full_day": None,
-                "is_night_shift": False,
-                "is_cross_midnight": False,
-                "is_ot_eligible": False,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+        try:
+            shift = await self._repo.insert_shift(
+                self._session,
+                data={
+                    "id": shift_id,
+                    "company_id": company_id,
+                    "name": body.name,
+                    "code": code,
+                    "start_time": time(0, 0),
+                    "end_time": time(0, 0),
+                    "break_minutes_paid": 0,
+                    "break_minutes_unpaid": 0,
+                    "grace_in_minutes": 0,
+                    "grace_out_minutes": 0,
+                    "half_day_threshold_hours": None,
+                    "min_hours_full_day": None,
+                    "is_night_shift": False,
+                    "is_cross_midnight": False,
+                    "is_ot_eligible": False,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # SC-01 backstop: a write that reached the database without having waited on the name
+            # lock above is still refused by the unique index.
+            if self._is_shift_name_violation(exc):
+                raise ShiftNameAlreadyExistsError() from exc
+            raise
         draft = await self._shift_version_repo.insert(
             self._session,
             data=self._empty_draft_shift_version_data(
@@ -2234,13 +2244,27 @@ class OrganisationService:
     async def _assert_shift_name_free(
         self, company_id: UUID, name: str, *, except_id: UUID | None = None
     ) -> None:
-        """SH-21 - shift names are unique per company, ignoring case and surrounding spaces.
-        Checked in the service (no unique index yet): two creates racing with one name can
-        still both pass."""
-        from sqlalchemy import func, select
+        """SH-21 / SC-01 - shift names are unique per company, ignoring case and surrounding
+        spaces, and a deactivated shift keeps its name (only a deleted one releases it).
+
+        Two things make this hold for concurrent writers. First, a transaction-scoped advisory
+        lock on the normalised name is taken before the check, so a second create or rename of the
+        same name waits for the first to commit and then sees it (a clean 409 instead of passing
+        the check at the same moment). Second, the partial unique index
+        `shift_company_live_name_key` is the backstop for any writer that does not go through
+        here; `create_shift` and `update_shift` map its violation to the same error."""
+        from sqlalchemy import func, select, text
 
         from hrms.modules.organisation.models import Shift
 
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtext('shift_name:' || CAST(:company_id AS text) "
+                "|| ':' || lower(btrim(:name))))"
+            ),
+            {"company_id": str(company_id), "name": name},
+        )
         stmt = select(Shift.id).where(
             Shift.company_id == company_id,
             Shift.deleted_at.is_(None),
@@ -2250,6 +2274,11 @@ class OrganisationService:
             stmt = stmt.where(Shift.id != except_id)
         if (await self._session.execute(stmt.limit(1))).first() is not None:
             raise ShiftNameAlreadyExistsError()
+
+    @staticmethod
+    def _is_shift_name_violation(exc: IntegrityError) -> bool:
+        """True when the database refused a write because of `shift_company_live_name_key`."""
+        return SHIFT_NAME_UNIQUE_INDEX in str(exc.orig) or SHIFT_NAME_UNIQUE_INDEX in str(exc)
 
     def _empty_draft_shift_version_data(
         self, *, company_id: UUID, shift_id: UUID, now: datetime
@@ -2363,14 +2392,19 @@ class OrganisationService:
             await self._assert_shift_name_free(company_id, values["name"], except_id=shift_id)
 
         now = datetime.now(UTC)
-        updated = await self._repo.update_shift(
-            self._session,
-            company_id=company_id,
-            shift_id=shift_id,
-            values=values,
-            expected_version=expected_version,
-            now=now,
-        )
+        try:
+            updated = await self._repo.update_shift(
+                self._session,
+                company_id=company_id,
+                shift_id=shift_id,
+                values=values,
+                expected_version=expected_version,
+                now=now,
+            )
+        except IntegrityError as exc:
+            if self._is_shift_name_violation(exc):
+                raise ShiftNameAlreadyExistsError() from exc
+            raise
         if updated is None:
             current = await self._repo.get_shift(
                 self._session, company_id=company_id, shift_id=shift_id
@@ -2683,10 +2717,15 @@ class OrganisationService:
 
     @staticmethod
     def _validate_break_durations(brk: ShiftBreakCreate, index: int) -> None:
-        """Duration rules shared by every break kind (V1). `mode=None` legacy breaks keep the
-        pre-V1 rules only, so existing payloads still validate."""
-        if brk.mode is None:
-            return
+        """Duration rules for a break (SC-04, owner decision D-6).
+
+        The first group is about the numbers agreeing with each other, so it holds for every
+        break whatever its `mode` - before SC-04 it was skipped when `mode` was empty, which is
+        every break while `shift_break_modes_enabled` is off: `max_minutes` of 0, a scheduled
+        length above the maximum or below the minimum, or one longer than a fixed window all
+        passed. Only the last rule depends on a mode, and it is unchanged: an automatic
+        deduction of a flexible break needs a length to deduct. No mode is enabled or given new
+        behaviour here."""
         if brk.max_minutes is not None and brk.max_minutes < 1:
             raise InvalidShiftBreakError("max_minutes must be at least 1", index=index)
         if (
@@ -2711,22 +2750,25 @@ class OrganisationService:
             raise InvalidShiftBreakError(
                 "scheduled_minutes must not be below min_minutes", index=index
             )
-        if brk.mode == "AUTO_DEDUCT":
-            if brk.break_kind == "FLEXIBLE_DURATION" and not brk.scheduled_minutes:
-                raise InvalidShiftBreakError(
-                    "scheduled_minutes is required for an AUTO_DEDUCT FLEXIBLE_DURATION break",
-                    index=index,
-                )
-            if brk.break_kind == "FIXED_WINDOW" and brk.scheduled_minutes:
-                # A deduction longer than its own window can never be taken from presence.
-                start, end = brk.start_time, brk.end_time
-                if start and end:
-                    span = _clock_minutes(end) - _clock_minutes(start)
-                    span = span + 1440 if span <= 0 else span
-                    if brk.scheduled_minutes > span:
-                        raise InvalidShiftBreakError(
-                            "scheduled_minutes must not exceed the break window", index=index
-                        )
+        if brk.break_kind == "FIXED_WINDOW" and brk.scheduled_minutes:
+            # A length longer than its own window can never be taken inside it.
+            start, end = brk.start_time, brk.end_time
+            if start and end:
+                span = _clock_minutes(end) - _clock_minutes(start)
+                span = span + 1440 if span <= 0 else span
+                if brk.scheduled_minutes > span:
+                    raise InvalidShiftBreakError(
+                        "scheduled_minutes must not exceed the break window", index=index
+                    )
+        if (
+            brk.mode == "AUTO_DEDUCT"
+            and brk.break_kind == "FLEXIBLE_DURATION"
+            and not brk.scheduled_minutes
+        ):
+            raise InvalidShiftBreakError(
+                "scheduled_minutes is required for an AUTO_DEDUCT FLEXIBLE_DURATION break",
+                index=index,
+            )
 
     def _build_break_rows(
         self, *, company_id: UUID, shift_version_id: UUID, breaks: list[ShiftBreakCreate]
@@ -2845,8 +2887,9 @@ class OrganisationService:
         breaks: list[Any],
         required_minutes: int | None = None,
     ) -> None:
-        """FIXED/FLEXIBLE only — containment of `FIXED_WINDOW` breaks inside the shift's
-        overall span. SPLIT is skipped: `ShiftBreak` has no `duty_block_id` (known
+        """FIXED/FLEXIBLE only — containment of every break (`FIXED_WINDOW` start-end, and since
+        SC-03 `FLEXIBLE_DURATION` window start-end) inside the shift's overall span. SPLIT is
+        skipped (deferred, D-7): `ShiftBreak` has no `duty_block_id` (known
         limitation — the architecture's own field list omits this link), so
         containment-within-duty-block can't be validated.
 
@@ -2873,9 +2916,12 @@ class OrganisationService:
         if bound_start is None or bound_end is None:
             return
         for brk in breaks:
-            if brk.break_kind != "FIXED_WINDOW":
-                continue
-            b_start, b_end = _format_time(brk.start_time), _format_time(brk.end_time)
+            # SC-03 (D-5): a flexible break's window - the span it may be taken in - must also lie
+            # wholly inside the shift's window, or the break can never be taken during the shift.
+            if brk.break_kind == "FIXED_WINDOW":
+                b_start, b_end = _format_time(brk.start_time), _format_time(brk.end_time)
+            else:
+                b_start, b_end = _format_time(brk.window_start), _format_time(brk.window_end)
             if b_start is None or b_end is None:
                 continue
             if not self._interval_contains(bound_start, bound_end, b_start, b_end):

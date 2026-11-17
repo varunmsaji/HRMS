@@ -5,10 +5,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
 from hrms.core.config.settings import get_settings
@@ -1024,6 +1032,11 @@ def build_grade_update_values(patch: GradeUpdate) -> dict[str, Any]:
 
 _TIME_PATTERN = r"^\d{2}:\d{2}$"
 
+# SC-02 - a shift or break name is trimmed before its length is checked, so `"  Morning "` is stored
+# as `"Morning"` and a blank name is refused. The uniqueness checks already compare trimmed values;
+# before this, only the web form trimmed, so an API or mobile caller could store the padded text.
+ShiftName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
 
 class ShiftCreate(BaseModel):
     """W2 — trimmed to identity-only (name/code). The nine schedule/evaluation fields the
@@ -1032,7 +1045,7 @@ class ShiftCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
 
 
 class ShiftUpdate(BaseModel):
@@ -1040,7 +1053,7 @@ class ShiftUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = Field(default=None, min_length=1, max_length=100)
+    name: ShiftName | None = None
     is_active: bool | None = None
 
 
@@ -1210,7 +1223,7 @@ class ShiftBreakCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
     break_kind: str
     start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
     end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
@@ -1480,7 +1493,7 @@ class ShiftSetup(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
     rules: ShiftVersionCreate
     publish: bool = True
     publish_reason: str | None = None
