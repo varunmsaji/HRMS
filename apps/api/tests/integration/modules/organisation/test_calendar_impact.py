@@ -557,7 +557,13 @@ async def test_leave_impact_is_reported_and_leave_records_stay_untouched(
         item = data["leave_impact"]["items"][0]
         assert item["application_id"] == approved and item["status"] == "APPROVED"
         assert item["proposed_day_type"] == "HOLIDAY"
-        assert "LEAVE_NOT_RECALCULATED" in {x["code"] for x in data["warnings"]}
+        # R-8: a holiday is a dated change, so approved leave is adjusted when it is applied -
+        # the warning must say so, not "not changed automatically".
+        codes = {x["code"] for x in data["warnings"]}
+        assert "LEAVE_ADJUSTED_AUTOMATICALLY" in codes and "LEAVE_NOT_RECALCULATED" not in codes
+        assert "refunded" in next(
+            x["message"] for x in data["warnings"] if x["code"] == "LEAVE_ADJUSTED_AUTOMATICALLY"
+        )
         assert "private reason" not in str(data)
 
         pending_data = await _preview_ok(client, w, changes[1])
@@ -568,6 +574,43 @@ async def test_leave_impact_is_reported_and_leave_records_stay_untouched(
         assert cancelled["leave_impact"]["approved_day_records"] == 0
         assert cancelled["leave_impact"]["pending_day_records"] == 0
         assert cancelled["requires_acknowledgement"] is False
+    finally:
+        await _finish(w)
+
+
+async def test_a_calendar_wide_change_says_leave_is_reconciled_by_hr_not_automatically(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """R-8: a weekly-off pattern edit is not a dated change - it does not rewrite approved leave,
+    so its warning must say HR reconciles it (preview, then apply), and not claim an automatic
+    adjustment."""
+    w = await _world(client)
+    try:
+        await _leave_for(client, w, "2026-09-09")  # Wednesday, approved
+        pattern_id = w.calendar["weekly_off_pattern_id"]
+        pattern = (
+            await client.get(f"/v1/weekly-off-patterns/{pattern_id}", headers=w.admin)
+        ).json()["data"]
+        data = await _preview_ok(
+            client,
+            w,
+            {
+                "change_type": "WEEKLY_OFF_PATTERN_UPDATE",
+                "pattern_id": pattern_id,
+                "expected_version": pattern["version"],
+                "patch": {
+                    "rules": [
+                        {"weekday": 2, "off_fraction": "1.00"},
+                        {"weekday": 6, "off_fraction": "1.00"},
+                    ]
+                },
+            },
+        )
+        warnings = {x["code"]: x["message"] for x in data["warnings"]}
+        assert "LEAVE_ADJUSTED_AUTOMATICALLY" not in warnings
+        assert "not changed automatically" in warnings["LEAVE_NOT_RECALCULATED"]
+        assert "Leave reconciliation" in warnings["LEAVE_NOT_RECALCULATED"]
+        assert data["leave_impact"]["approved_day_records"] == 1
     finally:
         await _finish(w)
 
@@ -821,8 +864,9 @@ async def test_stale_preview_is_rejected_and_a_forged_digest_is_not_accepted(
         approved_hash = (await _state(w.company_id))["leave_application_day_hash"]
         ok = await _confirm(client, w, change, fresh["impact_digest"], ack=True)
         assert ok.status_code == 201, ok.text
-        # Approved leave-day snapshots are byte-identical after confirmation.
-        assert (await _state(w.company_id))["leave_application_day_hash"] == approved_hash
+        # Owner decision P-E (16 Nov 2026): a holiday added on approved leave refunds the day, so
+        # the leave-day rows follow the calendar instead of staying as approved.
+        assert (await _state(w.company_id))["leave_application_day_hash"] != approved_hash
     finally:
         await _finish(w)
 

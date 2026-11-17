@@ -4,6 +4,9 @@ import {
   GEOFENCE_ACCURACY_MIN_M,
   GEOFENCE_AGE_MAX_S,
   GEOFENCE_AGE_MIN_S,
+  MARK_CREDIT_CEILING_DEFAULT,
+  MARK_CREDIT_CEILING_MAX,
+  MARK_CREDIT_CEILING_MIN,
 } from "@/lib/attendance-policy/types";
 import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
 
@@ -77,6 +80,7 @@ export interface AttendancePolicyVersionFormValues {
   effectiveFrom: string;
   graceInMinutes: string;
   graceOutMinutes: string;
+  markCreditCeilingMinutes: string;
   earlyInAllowanceMinutes: string;
   maxEarlyPunchMinutes: string;
   maxLatePunchMinutes: string;
@@ -116,6 +120,7 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   effectiveFrom: "",
   graceInMinutes: "0",
   graceOutMinutes: "0",
+  markCreditCeilingMinutes: String(MARK_CREDIT_CEILING_DEFAULT),
   earlyInAllowanceMinutes: "",
   maxEarlyPunchMinutes: "240",
   maxLatePunchMinutes: "720",
@@ -154,6 +159,7 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
 export interface AttendancePolicyVersionFormErrors {
   effectiveFrom?: string;
   earlyInAllowanceMinutes?: string;
+  markCreditCeilingMinutes?: string;
   maxEarlyPunchMinutes?: string;
   maxLatePunchMinutes?: string;
   geofenceMaxAccuracyM?: string;
@@ -188,6 +194,9 @@ export function attendancePolicyVersionToFormValues(
     effectiveFrom: version.effective_from ?? "",
     graceInMinutes: String(version.grace_in_minutes),
     graceOutMinutes: String(version.grace_out_minutes),
+    markCreditCeilingMinutes: String(
+      version.mark_credit_ceiling_minutes ?? MARK_CREDIT_CEILING_DEFAULT,
+    ),
     earlyInAllowanceMinutes:
       version.early_in_allowance_minutes == null ? "" : String(version.early_in_allowance_minutes),
     maxEarlyPunchMinutes: String(version.max_early_punch_minutes ?? 240),
@@ -267,6 +276,8 @@ export function buildAttendancePolicyVersionPayload(
     effective_from: values.effectiveFrom || null,
     grace_in_minutes: intOrNull(values.graceInMinutes) ?? 0,
     grace_out_minutes: intOrNull(values.graceOutMinutes) ?? 0,
+    mark_credit_ceiling_minutes:
+      intOrNull(values.markCreditCeilingMinutes) ?? MARK_CREDIT_CEILING_DEFAULT,
     early_in_allowance_minutes: intOrNull(values.earlyInAllowanceMinutes),
     max_early_punch_minutes: intOrNull(values.maxEarlyPunchMinutes) ?? 240,
     max_late_punch_minutes: intOrNull(values.maxLatePunchMinutes) ?? 720,
@@ -318,6 +329,10 @@ export function validateAttendancePolicyVersionForm(
     });
   }
 
+  const ceiling = intOrNull(values.markCreditCeilingMinutes);
+  if (ceiling === null || ceiling < MARK_CREDIT_CEILING_MIN || ceiling > MARK_CREDIT_CEILING_MAX) {
+    errors.markCreditCeilingMinutes = `Enter ${MARK_CREDIT_CEILING_MIN}-${MARK_CREDIT_CEILING_MAX} minutes.`;
+  }
   const earlyIn = intOrNull(values.earlyInAllowanceMinutes);
   if (earlyIn !== null && earlyIn < 0) {
     errors.earlyInAllowanceMinutes = "Enter 0 or more minutes, or leave blank for no limit.";
@@ -363,6 +378,7 @@ export function mapAttendancePolicyVersionApiErrors(
   for (const detail of details) {
     if (detail.field === "hour_bands") errors.hourBands = detail.message;
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+    if (detail.field === "mark_credit_ceiling_minutes") errors.markCreditCeilingMinutes = detail.message;
     if (detail.field === "early_in_allowance_minutes") errors.earlyInAllowanceMinutes = detail.message;
     if (detail.field === "max_early_punch_minutes") errors.maxEarlyPunchMinutes = detail.message;
     if (detail.field === "max_late_punch_minutes") errors.maxLatePunchMinutes = detail.message;

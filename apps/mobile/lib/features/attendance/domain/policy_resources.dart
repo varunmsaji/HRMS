@@ -27,6 +27,14 @@ const attendancePolicyIdentitySpec = FormSpec(name: 'attendance_policy', label: 
   _active,
 ]);
 
+/// H-02: a day with no punches at all is always absent at close; this choice is for days with at
+/// least one punch (a day with only an IN punch is paid in full under "present").
+const incompleteAtLockLabels = {
+  'TREAT_ABSENT': 'Count as absent (unpaid)',
+  'TREAT_PRESENT': 'Count as present (paid) - for days with at least one punch, even only an IN. A day with no punches is always counted as absent',
+  'KEEP_INCOMPLETE': 'Refuse to close until resolved',
+};
+
 const geofenceModeLabels = {
   'DISABLED': 'Disabled: location is not checked',
   'OPTIONAL': 'Optional: record and flag location, never block a punch',
@@ -39,6 +47,8 @@ const attendancePolicyVersionSpec = FormSpec(name: 'attendance_policy_version', 
   FieldSpec('effective_from', 'Effective from', kind: FieldKind.date),
   FieldSpec('grace_in_minutes', 'Late arrival grace (minutes)', kind: FieldKind.integer),
   FieldSpec('grace_out_minutes', 'Early leaving grace (minutes)', kind: FieldKind.integer),
+  // R-2 (D-01b): one ceiling for late and early marks together; the grace above is separate.
+  FieldSpec('mark_credit_ceiling_minutes', 'Late / early mark credit (minutes, both ends together)', kind: FieldKind.integer, hint: '0 to 120. Default 59. A late or early mark can count up to this many minutes beyond the grace as worked time; 0 means no credit. Standard mark bands cover 59 minutes, so a lower limit credits less than they mark.'),
   FieldSpec('early_in_allowance_minutes', 'Earliest punch-in before shift start (minutes)', kind: FieldKind.integer),
   // P-13: how far before a shift's start and after its end a punch still belongs to that day.
   FieldSpec('max_early_punch_minutes', 'A punch belongs to the shift from this long before it starts (minutes)', kind: FieldKind.integer, hint: 'Default 240 (4 hours)'),
@@ -64,7 +74,7 @@ const attendancePolicyVersionSpec = FormSpec(name: 'attendance_policy_version', 
   FieldSpec('geofence_mode', 'Location check', kind: FieldKind.select, options: ['DISABLED', 'OPTIONAL', 'REQUIRED'], optionLabels: geofenceModeLabels),
   FieldSpec('geofence_max_accuracy_m', 'Worst acceptable GPS accuracy (metres)', kind: FieldKind.integer, hint: '5-500', showWhen: 'geofence_mode!=DISABLED'),
   FieldSpec('geofence_max_age_seconds', 'Oldest acceptable reading (seconds)', kind: FieldKind.integer, hint: '5-300', showWhen: 'geofence_mode!=DISABLED'),
-  FieldSpec('incomplete_at_lock_behaviour', 'Days still incomplete when the month closes', kind: FieldKind.select, options: ['TREAT_ABSENT', 'TREAT_PRESENT', 'KEEP_INCOMPLETE']),
+  FieldSpec('incomplete_at_lock_behaviour', 'Days still incomplete when the month closes', kind: FieldKind.select, options: ['TREAT_ABSENT', 'TREAT_PRESENT', 'KEEP_INCOMPLETE'], optionLabels: incompleteAtLockLabels),
   FieldSpec('hour_bands', 'Worked-hours bands', kind: FieldKind.rows, rowNoun: 'band', orderKey: 'sort_order', rowSpec: FormSpec(name: 'hour_band', label: 'Hour band', fields: [
     FieldSpec('min_minutes', 'From (minutes)', kind: FieldKind.integer, required: true),
     FieldSpec('max_minutes', 'To (minutes)', kind: FieldKind.integer),

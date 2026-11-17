@@ -118,6 +118,20 @@ export function AttendancePolicyVersionForm({
             />
           </FormField>
           <FormField
+            id="mark-credit-ceiling"
+            label="Late / early mark credit (minutes, both ends together)"
+            description="A late or early mark can count up to this many minutes beyond the grace as worked time towards the full-day hours. The limit covers late and early together, and the grace above is separate. 0 means marks give no credit. Standard mark bands cover 59 minutes, so a lower limit credits less than they mark."
+            error={errors.markCreditCeilingMinutes}
+          >
+            <Input
+              type="number"
+              min={0}
+              max={120}
+              value={values.markCreditCeilingMinutes}
+              onChange={(e) => update("markCreditCeilingMinutes", e.target.value)}
+            />
+          </FormField>
+          <FormField
             id="lates-to-half-day"
             label="Late days before a half-day (per month)"
             description="With 3, every third late day (3rd, 6th, 9th) is a half-day. Leave blank to turn this off."

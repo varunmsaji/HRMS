@@ -49,6 +49,9 @@ export function AttendancePolicySummary({ version }: { version: AttendancePolicy
       <Fact label="Grace">
         {version.grace_in_minutes} minutes late, {version.grace_out_minutes} minutes early
       </Fact>
+      <Fact label="Late / early mark credit">
+        {version.mark_credit_ceiling_minutes ?? 59} minutes beyond the grace, both ends together
+      </Fact>
       <Fact label="Late days before a half-day">
         {version.lates_to_half_day_count ?? "Off"}
       </Fact>

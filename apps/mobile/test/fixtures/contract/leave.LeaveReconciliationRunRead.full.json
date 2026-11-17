@@ -1,0 +1,26 @@
+{
+ "applications_changed": 1,
+ "days_added": 1,
+ "days_released": 1,
+ "debited_days": "1.50",
+ "items": [
+  {
+   "balance_effect": "1.50",
+   "calendar_date": "2026-01-15",
+   "employee_id": "00000000-0000-0000-0000-000000001234",
+   "expected_fraction": "1.50",
+   "kind": "x",
+   "leave_application_id": "00000000-0000-0000-0000-000000001234",
+   "leave_type_id": "00000000-0000-0000-0000-000000001234",
+   "outcome": "x",
+   "reason": "x",
+   "stored_fraction": "1.50"
+  }
+ ],
+ "noop": true,
+ "protected_count": 1,
+ "refunded_days": "1.50",
+ "run_id": "00000000-0000-0000-0000-000000001234",
+ "shortfalls_opened": 1,
+ "shortfalls_resolved": 1
+}

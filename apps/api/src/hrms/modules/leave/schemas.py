@@ -969,3 +969,78 @@ def statutory_leave_minimum_to_read(row: "StatutoryLeaveMinimum") -> StatutoryLe
 
 def statutory_leave_minimum_to_audit_dict(read: StatutoryLeaveMinimumRead) -> dict[str, Any]:
     return read.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# R-3 - HR-initiated leave reconciliation (roster / shift / weekly-off / work-calendar drift)
+# ---------------------------------------------------------------------------
+
+#: Longest window one reconciliation request may cover, in days.
+RECONCILIATION_MAX_SPAN_DAYS = 400
+RECONCILIATION_MAX_EMPLOYEES = 200
+
+
+class LeaveReconciliationScope(BaseModel):
+    """Which approved leave to look at: those overlapping `[date_from, date_to]`, optionally for
+    named employees. Only differences on dates inside the window are reported or changed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_from: date
+    date_to: date
+    employee_ids: list[UUID] | None = Field(
+        default=None, min_length=1, max_length=RECONCILIATION_MAX_EMPLOYEES
+    )
+
+    @model_validator(mode="after")
+    def validate_window(self) -> Self:
+        if self.date_to < self.date_from:
+            raise ValueError("date_to must not be before date_from")
+        if (self.date_to - self.date_from).days + 1 > RECONCILIATION_MAX_SPAN_DAYS:
+            raise ValueError(f"the window may cover at most {RECONCILIATION_MAX_SPAN_DAYS} days")
+        return self
+
+
+class LeaveReconciliationApply(LeaveReconciliationScope):
+    reason: str = Field(min_length=3, max_length=500)
+    #: the `digest` of the preview the reviewer looked at
+    preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class LeaveReconciliationItemRead(BaseModel):
+    employee_id: UUID
+    leave_application_id: UUID
+    leave_type_id: UUID
+    calendar_date: date
+    kind: str
+    stored_fraction: Decimal
+    expected_fraction: Decimal
+    outcome: str
+    balance_effect: Decimal
+    reason: str
+
+
+class LeaveReconciliationPreviewRead(BaseModel):
+    digest: str
+    items: list[LeaveReconciliationItemRead]
+    refund_days: Decimal
+    debit_days: Decimal
+    shortfall_days: Decimal
+    protected_count: int
+    #: nothing to change: already reconciled, or only closed-period dates remain
+    nothing_to_do: bool
+
+
+class LeaveReconciliationRunRead(BaseModel):
+    run_id: UUID
+    noop: bool
+    applications_changed: int
+    refunded_days: Decimal
+    debited_days: Decimal
+    days_released: int
+    days_added: int
+    shortfalls_opened: int
+    shortfalls_resolved: int
+    protected_count: int
+    #: the previewed lines the run acted on (the same lines the reviewer approved)
+    items: list[LeaveReconciliationItemRead]

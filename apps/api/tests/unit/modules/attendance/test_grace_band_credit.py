@@ -182,7 +182,8 @@ def test_one_minute_past_grace_still_costs_the_half_day_on_a_tight_shift() -> No
 
 
 def test_credit_never_exceeds_the_net_scheduled_minutes() -> None:
-    """A 7-hour shift (420 net) with bands that need 430: the credit cannot lift 415 past 420."""
+    """A 7-hour shift (420 net) with bands that need 430: the credit cannot lift 415 past 420.
+    (P-05: 420 is the whole of this shift, so against bands scaled to it that IS a full day.)"""
     bands = [c.BandData(0, 429, "HALF_DAY"), c.BandData(430, None, "PRESENT")]
     r = day(
         [punch(9, 5, IN), punch(16, 0, OUT)],
@@ -191,8 +192,8 @@ def test_credit_never_exceeds_the_net_scheduled_minutes() -> None:
         hour_bands=bands,
     )
     assert r.worked_minutes == 415
-    assert r.attendance_status == "HALF_DAY"
-    assert r.snapshot["grace_band_credit"]["band_minutes"] == 420
+    assert r.attendance_status == "PRESENT"  # P-05: 420 of a 420-minute shift
+    assert r.snapshot["grace_band_credit"]["band_minutes"] == 420  # never past the schedule
 
 
 def test_credit_is_zero_when_nothing_was_missed_at_that_end() -> None:
@@ -214,6 +215,13 @@ def test_a_missing_punch_day_gets_no_credit_and_stays_incomplete() -> None:
         "out": 0,
         "band_minutes": 0,
         "worked_minutes": 0,
+        "capped": False,
+        "ceiling": c.DEFAULT_MARK_CREDIT_CEILING_MINUTES,
+        # R-2 (D-01b): the complete credit calculation is kept in the snapshot
+        "plain_grace": {"in": 0, "out": 0},
+        "qualifying_beyond_grace": {"in": 0, "out": 0, "total": 0},
+        "beyond_grace_credit": {"total": 0, "allocated_in": 0, "allocated_out": 0},
+        "net_scheduled_minutes": 540,
     }
 
 
@@ -346,11 +354,13 @@ def test_half_day_leave_keeps_judging_the_worked_half_alone() -> None:
     assert (r.paid_day_fraction, r.lop_fraction) == ("1.00", "0.00")
 
 
-def test_half_day_leave_worked_half_still_lost_when_it_is_really_short() -> None:
+def test_half_day_leave_short_worked_half_is_paid_in_proportion() -> None:
+    """D-02 (engine 16): two of the four hours of the worked half reach the half-day band, so
+    half of that half is paid. Before, the whole worked half was loss of pay."""
     leave = [c.LeaveOverlayEntry("0.50", True, "FIRST")]
     r = day([punch(13, 0, IN), punch(15, 0, OUT)], start=(9, 0), end=(17, 0), leave_entries=leave)
-    assert r.attendance_status == "LEAVE"
-    assert (r.paid_day_fraction, r.lop_fraction) == ("0.50", "0.50")
+    assert r.attendance_status == "HALF_DAY"
+    assert (r.paid_day_fraction, r.lop_fraction) == ("0.75", "0.25")
 
 
 def test_day_off_work_has_no_credit_and_is_unchanged() -> None:

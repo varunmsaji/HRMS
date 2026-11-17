@@ -51,24 +51,26 @@ String? sourceLabel(String? source) {
   return _sourceLabels[source] ?? source[0] + source.substring(1).toLowerCase();
 }
 
-const _sixHours = Duration(hours: 6);
+/// The ids of the punches the backend assigned to this day
+/// (`computation_snapshot.inputs.punch_ids`), or `null` when the row carries none.
+Set<String>? ownedPunchIds(AttendanceDay day) {
+  final snapshot = day.raw['computation_snapshot'];
+  if (snapshot is! Map) return null;
+  final inputs = snapshot['inputs'];
+  if (inputs is! Map) return null;
+  final ids = inputs['punch_ids'];
+  if (ids is! List) return null;
+  return {for (final id in ids) if (id is String) id};
+}
 
-/// Punches that belong to this day. The list endpoint filters by calendar date, so for an overnight
-/// shift it can include neighbouring punches; keep those within six hours of the day's own window.
+/// Punches that belong to this day. The backend decides ownership (shift window, overnight shifts,
+/// the company's business date) and records it on the row, so the screen shows exactly that set
+/// instead of re-deriving it. A day that has never been calculated has no owned set; the fetched
+/// list is shown as is.
 List<Punch> punchesForDay(List<Punch> punches, AttendanceDay day) {
-  final start = (day.raw['scheduled_start'] as String?) ?? day.actualFirstIn;
-  final end = (day.raw['scheduled_end'] as String?) ?? day.actualLastOut;
-  // No window (an off day nobody punched on): the fetch spans the next day too, for overnight
-  // shifts, so keep only this day's punches by the endpoint's own UTC-date rule.
-  if (start == null && end == null) {
-    return [for (final p in punches) if (DateTime.parse(p.punchTime).toUtc().toIso8601String().startsWith(day.attendanceDate)) p];
-  }
-  final lo = start == null ? null : DateTime.parse(start).subtract(_sixHours);
-  final hi = end == null ? null : DateTime.parse(end).add(_sixHours);
-  return [
-    for (final p in punches)
-      if ((lo == null || !DateTime.parse(p.punchTime).isBefore(lo)) && (hi == null || !DateTime.parse(p.punchTime).isAfter(hi))) p,
-  ];
+  final owned = ownedPunchIds(day);
+  if (owned == null) return punches;
+  return [for (final p in punches) if (owned.contains(p.id)) p];
 }
 
 /// One chronological list of the day's punches and break events; a day flagged with a missing

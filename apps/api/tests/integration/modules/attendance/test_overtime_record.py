@@ -684,13 +684,12 @@ async def test_simultaneous_approve_and_reject_only_one_wins(
 # ---------------------------------------------------------------------------
 
 
-async def test_approved_overtime_frozen_across_later_recompute(
+async def test_auto_approved_overtime_follows_a_later_recompute(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """Once approved, a later recompute of the same day (triggered here via the plain
-    `/recompute` endpoint after an extra punch) must not silently revise the decided minutes —
-    the day's `ot_minutes_approved` stays at the originally-approved amount even though fresh
-    detection would now say something different."""
+    """AC-01 — an automatic approval is not a human judgement, so a later recompute of the same
+    day (here after an extra punch pair) re-derives it from the fresh detection instead of
+    freezing the first figure. Same record, new minutes, history kept on its timeline."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
@@ -704,10 +703,8 @@ async def test_approved_overtime_frozen_across_later_recompute(
         )
         assert record["status"] == "AUTO_APPROVED"
 
-        # An additional, later IN/OUT pair (still inside the [07:00, 20:00) punch-load window)
-        # replaces nothing — punches are immutable — but gives the engine a longer total worked
-        # span to detect on recompute. (A pre-shift pair would not do: time before the scheduled
-        # start is recorded but not credited, so it cannot raise detected overtime.)
+        # An additional, later IN/OUT pair (still inside the punch-load window) replaces
+        # nothing — punches are immutable — but gives the engine a longer total worked span.
         await _punch(
             client,
             headers,
@@ -731,16 +728,14 @@ async def test_approved_overtime_frozen_across_later_recompute(
         )
         assert recomputed.status_code == 200, recomputed.text
         recomputed_data = recomputed.json()["data"]
-        # Fresh detection now sees more OT (640m worked - 540m scheduled = 100m)...
         assert recomputed_data["ot_minutes_detected"] == 100
-        # ...but the frozen, terminal decision survives unchanged.
-        assert recomputed_data["ot_minutes_approved"] == 60
+        assert recomputed_data["ot_minutes_approved"] == 100
 
         record_after = await _get_overtime_record_for_day(
             client, headers, employee_id=employee_id, day="2026-08-10"
         )
         assert record_after["id"] == record["id"]
-        assert record_after["minutes_approved"] == 60
+        assert record_after["minutes_approved"] == 100
         assert record_after["status"] == "AUTO_APPROVED"
     finally:
         await _cleanup_overtime(company_id=company_id)

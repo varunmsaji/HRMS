@@ -90,6 +90,12 @@ class AttendancePolicyVersion(Base, TimestampMixin):
     # Grace (§11.6, §6)
     grace_in_minutes: Mapped[int] = mapped_column(Integer, default=0)
     grace_out_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # R-2 (owner decision D-01b): the most beyond-grace minutes, late and early COMBINED, that a
+    # late or early mark may credit to the hour-band lookup on one day. 0 = none. Plain grace is
+    # separate. The database also enforces 0..120 (migration `20261116120000`).
+    mark_credit_ceiling_minutes: Mapped[int] = mapped_column(
+        Integer, default=59, server_default="59"
+    )
     # Minutes before shift start a self-service punch-in is accepted; NULL = no early limit.
     early_in_allowance_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Punch ownership (SH-01/02, P-13): how far before a shift's start and after its end a punch

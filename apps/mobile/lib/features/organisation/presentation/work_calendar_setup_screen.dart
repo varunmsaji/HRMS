@@ -346,7 +346,7 @@ class _ActivateDialogState extends State<_ActivateDialog> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text(
               'From ${widget.effectiveFrom}, leave and attendance will classify days using this working week and the linked holiday calendars. '
-              'Existing approved leave records are not changed, and locked attendance periods and closed payroll are not recalculated.',
+              'Existing approved leave is not rewritten automatically: if it no longer matches the new calendar, attendance period close stops until HR runs leave reconciliation. Locked attendance periods and closed payroll are not recalculated.',
             ),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,

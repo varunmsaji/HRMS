@@ -1339,6 +1339,50 @@
   "year_end_action"
  ],
  "leave.LeavePolicyVersionUpdate": [],
+ "leave.LeaveReconciliationApply": [
+  "date_from",
+  "date_to",
+  "preview_digest",
+  "reason"
+ ],
+ "leave.LeaveReconciliationItemRead": [
+  "balance_effect",
+  "calendar_date",
+  "employee_id",
+  "expected_fraction",
+  "kind",
+  "leave_application_id",
+  "leave_type_id",
+  "outcome",
+  "reason",
+  "stored_fraction"
+ ],
+ "leave.LeaveReconciliationPreviewRead": [
+  "debit_days",
+  "digest",
+  "items",
+  "nothing_to_do",
+  "protected_count",
+  "refund_days",
+  "shortfall_days"
+ ],
+ "leave.LeaveReconciliationRunRead": [
+  "applications_changed",
+  "days_added",
+  "days_released",
+  "debited_days",
+  "items",
+  "noop",
+  "protected_count",
+  "refunded_days",
+  "run_id",
+  "shortfalls_opened",
+  "shortfalls_resolved"
+ ],
+ "leave.LeaveReconciliationScope": [
+  "date_from",
+  "date_to"
+ ],
  "leave.LeaveTypeCreate": [
   "code",
   "name"

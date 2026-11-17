@@ -33,7 +33,10 @@ export const SPLIT_MISSED_BLOCK_LABELS: Record<string, string> = {
 
 export const INCOMPLETE_AT_LOCK_LABELS: Record<string, string> = {
   TREAT_ABSENT: "Count as absent (unpaid)",
-  TREAT_PRESENT: "Count as present (paid)",
+  // H-02: a day with no punches at all is always counted as absent; this choice is for days that
+  // have at least one punch (a day with only an IN punch is paid in full).
+  TREAT_PRESENT:
+    "Count as present (paid) - for days with at least one punch, even only an IN. A day with no punches is always counted as absent",
   KEEP_INCOMPLETE: "Refuse to close until resolved",
 };
 

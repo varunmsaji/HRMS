@@ -135,6 +135,7 @@ _OVERTIME_ACTIONS = (
     "STAGE_APPROVED",
     "APPROVED",
     "REJECTED",
+    "SUPERSEDED_BY_RECALCULATION",
 )
 
 
@@ -368,9 +369,16 @@ def early_departure_band_to_read(
 # Attendance Policy — version
 # ---------------------------------------------------------------------------
 
+# R-2 (owner decision D-01b): the per-version, combined late + early mark-credit ceiling (minutes).
+# The same bounds are a database CHECK; a unit test keeps the default equal to the engine's.
+MARK_CREDIT_CEILING_DEFAULT = 59
+MARK_CREDIT_CEILING_MIN = 0
+MARK_CREDIT_CEILING_MAX = 120
+
 _ATTENDANCE_VERSION_FIELDS = (
     "grace_in_minutes",
     "grace_out_minutes",
+    "mark_credit_ceiling_minutes",
     "early_in_allowance_minutes",
     "max_early_punch_minutes",
     "max_late_punch_minutes",
@@ -411,6 +419,10 @@ class AttendancePolicyVersionCreate(BaseModel):
 
     grace_in_minutes: int = Field(default=0, ge=0)
     grace_out_minutes: int = Field(default=0, ge=0)
+    # R-2: combined late + early beyond-grace credit ceiling, per version (0 = no mark credit).
+    mark_credit_ceiling_minutes: int = Field(
+        default=MARK_CREDIT_CEILING_DEFAULT, ge=MARK_CREDIT_CEILING_MIN, le=MARK_CREDIT_CEILING_MAX
+    )
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
     max_early_punch_minutes: int = Field(default=240, ge=0, le=1440)
     max_late_punch_minutes: int = Field(default=720, ge=0, le=1440)
@@ -500,6 +512,9 @@ class AttendancePolicyVersionUpdate(BaseModel):
     effective_from: date | None = None
     grace_in_minutes: int | None = Field(default=None, ge=0)
     grace_out_minutes: int | None = Field(default=None, ge=0)
+    mark_credit_ceiling_minutes: int | None = Field(
+        default=None, ge=MARK_CREDIT_CEILING_MIN, le=MARK_CREDIT_CEILING_MAX
+    )
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
     max_early_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
     max_late_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
@@ -627,6 +642,7 @@ class AttendancePolicyVersionRead(BaseModel):
 
     grace_in_minutes: int
     grace_out_minutes: int
+    mark_credit_ceiling_minutes: int = MARK_CREDIT_CEILING_DEFAULT
     early_in_allowance_minutes: int | None
     max_early_punch_minutes: int = 240
     max_late_punch_minutes: int = 720
@@ -692,6 +708,7 @@ def attendance_policy_version_to_read(
         effective_to=row.effective_to,
         grace_in_minutes=row.grace_in_minutes,
         grace_out_minutes=row.grace_out_minutes,
+        mark_credit_ceiling_minutes=row.mark_credit_ceiling_minutes,
         early_in_allowance_minutes=row.early_in_allowance_minutes,
         max_early_punch_minutes=row.max_early_punch_minutes,
         max_late_punch_minutes=row.max_late_punch_minutes,

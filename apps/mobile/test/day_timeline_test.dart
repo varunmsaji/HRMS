@@ -44,14 +44,31 @@ void main() {
     expect(items.any((i) => i.kind == TimelineKind.missingOut), isFalse);
   });
 
-  test("drops punches far outside the day's window", () {
-    final kept = punchesForDay([_punch('1', '2026-08-10T09:00:00Z', 'IN'), _punch('2', '2026-08-12T09:00:00Z', 'IN')], _day());
-    expect(kept.map((p) => p.id), ['1']);
+  test('shows exactly the punches the backend owns for the day', () {
+    final owned = _day(over: {
+      'computation_snapshot': {
+        'inputs': {
+          'punch_ids': ['1', '3']
+        }
+      }
+    });
+    final kept = punchesForDay([
+      _punch('1', '2026-08-10T09:00:00Z', 'IN'),
+      _punch('2', '2026-08-10T12:00:00Z', 'IN'), // inside the old six-hour window, owned by another day
+      _punch('3', '2026-08-11T05:30:00Z', 'OUT'), // 12.5 hours after shift end: owned, was hidden
+    ], owned);
+    expect(kept.map((p) => p.id), ['1', '3']);
   });
 
-  test('a day with no window keeps only its own punches, not the next day fetched alongside', () {
-    final offDay = _day(over: {'scheduled_start': null, 'scheduled_end': null, 'actual_first_in': null, 'actual_last_out': null});
-    final kept = punchesForDay([_punch('1', '2026-08-10T11:00:00Z', 'IN'), _punch('2', '2026-08-11T03:30:00Z', 'IN')], offDay);
+  test('a day with no owned punches shows none of the neighbouring ones', () {
+    final offDay = _day(over: {
+      'computation_snapshot': {'inputs': {'punch_ids': []}}
+    });
+    expect(punchesForDay([_punch('1', '2026-08-10T11:00:00Z', 'IN')], offDay), isEmpty);
+  });
+
+  test('an uncalculated day falls back to the list it was given', () {
+    final kept = punchesForDay([_punch('1', '2026-08-10T09:00:00Z', 'IN')], _day());
     expect(kept.map((p) => p.id), ['1']);
   });
 

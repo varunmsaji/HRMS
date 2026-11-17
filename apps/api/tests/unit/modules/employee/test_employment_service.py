@@ -153,7 +153,13 @@ def service() -> Iterator[EmploymentService]:
     # leave. Both need a real session; they are exercised against PostgreSQL in
     # `tests/integration/modules/leave/test_leave_employment_validity.py`.
     svc._assert_no_leave_after = AsyncMock()  # type: ignore[method-assign]
-    with patch("hrms.modules.employee.service.lock_employee_leave_dates", new=AsyncMock()):
+    # AR-09: creating and terminating an employment queue an attendance recalculation, which
+    # reads the company profile. It needs a real session; exercised against PostgreSQL in
+    # `tests/integration/modules/attendance/test_attendance_rules_remediation.py`.
+    with (
+        patch("hrms.modules.employee.service.lock_employee_leave_dates", new=AsyncMock()),
+        patch("hrms.modules.attendance.recalc.request_recalc", new=AsyncMock()),
+    ):
         yield svc
 
 

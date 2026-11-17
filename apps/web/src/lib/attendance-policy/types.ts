@@ -84,6 +84,12 @@ export const GEOFENCE_MODE_LABELS: Record<(typeof GEOFENCE_MODES)[number], strin
   REQUIRED: "Required — block self-service punches outside an approved workplace",
 };
 
+/** R-2 (D-01b): the per-version mark-credit ceiling, in minutes; the API and database enforce the
+ * same bounds. 59 is the default and the length of the standard late/early mark band. */
+export const MARK_CREDIT_CEILING_DEFAULT = 59;
+export const MARK_CREDIT_CEILING_MIN = 0;
+export const MARK_CREDIT_CEILING_MAX = 120;
+
 export const GEOFENCE_ACCURACY_MIN_M = 5;
 export const GEOFENCE_ACCURACY_MAX_M = 500;
 export const GEOFENCE_AGE_MIN_S = 5;
@@ -100,6 +106,8 @@ export interface AttendancePolicyVersion {
 
   grace_in_minutes: number;
   grace_out_minutes: number;
+  /** R-2 (D-01b): beyond-grace minutes, late and early combined, a late/early mark may credit. */
+  mark_credit_ceiling_minutes: number;
   early_in_allowance_minutes: number | null;
   max_early_punch_minutes: number;
   max_late_punch_minutes: number;

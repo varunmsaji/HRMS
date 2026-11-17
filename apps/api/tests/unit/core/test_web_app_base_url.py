@@ -290,7 +290,21 @@ async def test_production_attendance_reminder_links_use_the_configured_origin() 
 
     session.execute = AsyncMock(
         side_effect=[
-            _Result([(employee_id, date(2026, 4, 2), "Ada", "ada@example.com", "ACTIVE")]),
+            # (employee, date, snapshot, first IN, last OUT, first name, email, user status)
+            _Result(
+                [
+                    (
+                        employee_id,
+                        date(2026, 4, 2),
+                        {"inputs": {"punch_ids": []}},
+                        None,
+                        None,
+                        "Ada",
+                        "ada@example.com",
+                        "ACTIVE",
+                    )
+                ]
+            ),
             _Result(["hr@example.com"]),
         ]
     )

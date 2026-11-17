@@ -75,9 +75,11 @@ async def test_full_day_leave_after_approved_overtime_leaves_nothing_payable(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_half_day_leave_keeps_approved_overtime(
+async def test_half_day_leave_with_work_in_the_leave_half_pays_no_overtime(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
+    """AC-05 — 09:00-19:00 worked through a first-half leave: the morning is paid as leave and
+    would be paid again as overtime. The day is flagged for HR and earns none."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
@@ -90,7 +92,10 @@ async def test_half_day_leave_keeps_approved_overtime(
         )
         assert synced.status_code == 201, synced.text
 
-        assert (await _read_day(client, headers, day["id"]))["ot_minutes_approved"] == 60
+        after = await _read_day(client, headers, day["id"])
+        assert after["work_on_leave_flagged"] is True
+        assert after["ot_minutes_approved"] == 0
+        assert after["ot_pending"] is False
     finally:
         await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_overtime(company_id=company_id)

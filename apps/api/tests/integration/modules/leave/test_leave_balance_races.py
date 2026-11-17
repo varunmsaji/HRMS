@@ -435,12 +435,14 @@ async def test_finalisation_waits_for_an_in_flight_approval_and_counts_its_leave
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_an_approval_arriving_during_finalisation_is_refused_cleanly(
+async def test_an_approval_arriving_during_finalisation_waits_and_then_goes_through(
     client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The mirror image: finalisation is in flight (parked after it took its lock) and the
-    approval arrives. It waits, then finds the period closed and is refused - application still
-    SUBMITTED, nothing debited, nothing projected."""
+    approval arrives. It waits for the lock. Since LV-04 a pending leave request blocks the close
+    (`PENDING_LEAVE`), so finalisation is refused and rolled back, and the approval then completes
+    against the still-open period: debited once, never half of each. Before LV-04 the period
+    closed, the approval was refused, and the day locked as absent."""
     from hrms.modules.attendance.service import AttendancePeriodService
 
     headers, company_id, user_id = await _register_tenant(client)
@@ -486,15 +488,14 @@ async def test_an_approval_arriving_during_finalisation_is_refused_cleanly(
         approval = await _approve(client, headers, application)
         finalize = await finalize_task
 
-        assert finalize.status_code == 200, finalize.text
-        assert approval.status_code == 409, approval.text
-        assert approval.json()["error"]["code"] in (
-            "LEAVE_APPLICATION_PERIOD_CLOSED",
-            "ATTENDANCE_PERIOD_CLOSED",
-        )
+        assert finalize.status_code == 409, finalize.text
+        assert "PENDING_LEAVE" in finalize.text
+        assert approval.status_code == 200, approval.text
         fetched = await client.get(f"/v1/leave-applications/{application['id']}", headers=headers)
-        assert fetched.json()["data"]["status"] == "SUBMITTED"
-        assert await _ledger_total(company_id, employee_id) == Decimal("20.00")
+        assert fetched.json()["data"]["status"] == "APPROVED"
+        assert await _ledger_total(company_id, employee_id) == Decimal("19.00")
+        reread = await client.get(f"/v1/attendance-periods/{period['id']}", headers=headers)
+        assert reread.json()["data"]["status"] == "OPEN"
     finally:
         monkeypatch.setattr(AttendancePeriodService, "_run_validation", real_validation)
         await _cleanup_attendance_period(company_id=company_id)

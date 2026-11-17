@@ -106,6 +106,8 @@ void main() {
     expect(body['assign'], {'scope_type': 'COMPANY', 'scope_id': null, 'expected_version': null});
     final rules = body['rules'] as Map<String, dynamic>;
     expect(rules['grace_in_minutes'], 10);
+    // R-2 (D-01b): the per-version mark credit ceiling is always sent, at its default of 59.
+    expect(rules['mark_credit_ceiling_minutes'], 59);
     expect(rules['effective_from'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
     expect((rules['hour_bands'] as List).map((b) => (b as Map)['result_status']), ['ABSENT', 'HALF_DAY', 'PRESENT']);
   });

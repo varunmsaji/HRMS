@@ -1435,6 +1435,30 @@ class LeaveLedgerService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if body.amount > 0:
+            # P-E - granting balance is how HR resolves a leave-balance shortfall: the days that
+            # were waiting for it are debited and projected now, and their exceptions closed.
+            from hrms.modules.leave.reconciliation import (
+                FAR_FUTURE,
+                LeaveCalendarReconciliationService,
+            )
+
+            reconciliation = LeaveCalendarReconciliationService(self._session)
+            waiting = [
+                s
+                for s in await reconciliation.list_open_shortfalls(
+                    company_id, date_from=date(1900, 1, 1), date_to=FAR_FUTURE
+                )
+                if s.employee_id == employee_id
+            ]
+            if waiting:
+                await reconciliation.reconcile(
+                    company_id,
+                    date_from=min(s.calendar_date for s in waiting),
+                    date_to=max(s.calendar_date for s in waiting),
+                    employee_ids=frozenset({employee_id}),
+                    actor_user_id=actor_user_id,
+                )
         return read
 
     @logged_operation("leave.encashment.create")
@@ -3277,6 +3301,7 @@ class LeaveApplicationService:
             "start_date": app_start,
             "end_date": app_end,
             "total_days": total_days,
+            "half_day": body.half_day,
             "reason": body.reason,
             "attachment_reference": body.attachment_reference,
             "expected_delivery_date": body.expected_delivery_date,

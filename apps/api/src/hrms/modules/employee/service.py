@@ -1193,6 +1193,22 @@ class EmploymentService:
             user_agent=user_agent,
         )
 
+        # AR-09 - a joining date in the past turns already-calculated NOT_JOINED / EXITED days
+        # into employed days, so they are queued (Invariant C). A future joining date queues
+        # nothing.
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=body.joining_date,
+            reason="EMPLOYMENT_CREATED",
+            source_entity_type="employment",
+            source_entity_id=read.id,
+            requested_by=actor_user_id,
+        )
+
         # Rehire — a termination ended the login's company membership (and nothing else about the
         # account), so a new ACTIVE employment of a still-active employee reopens exactly that
         # membership. Role assignments are untouched by termination, so they come back as they were;
@@ -1597,6 +1613,21 @@ class EmploymentService:
                 "This employment has been modified by another request",
                 current=employment_to_audit_dict(current_read),
             )
+
+        # AR-09 - days already calculated after the last working day are now outside the
+        # employment (EXITED: neither paid nor loss of pay), so they are queued (Invariant C).
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=body.last_working_day + timedelta(days=1),
+            reason="EMPLOYMENT_TERMINATED",
+            source_entity_type="employment",
+            source_entity_id=employment_id,
+            requested_by=actor_user_id,
+        )
 
         after_read = employment_to_read(updated)
         await self._audit.record(

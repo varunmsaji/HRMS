@@ -3767,6 +3767,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        if {"valid_from", "valid_to", "is_active"} & set(values):
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="HOLIDAY_CALENDAR_CHANGED",
+                source_entity_type="holiday_calendar",
+                source_entity_id=calendar_id,
+                requested_by=actor_user_id,
+                holiday_calendar_id=calendar_id,
+            )
         return after_read
 
     async def deactivate_holiday_calendar(
@@ -3849,6 +3861,18 @@ class OrganisationService:
             after=holiday_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="HOLIDAY_CHANGED",
+            source_entity_type="holiday",
+            source_entity_id=holiday_id,
+            requested_by=actor_user_id,
+            dates=[(body.date, body.date)],
+            holiday_calendar_id=calendar_id,
         )
         return read
 
@@ -3946,6 +3970,19 @@ class OrganisationService:
             after=holiday_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        holiday_dates = sorted({before_read.date, after_read.date})
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="HOLIDAY_CHANGED",
+            source_entity_type="holiday",
+            source_entity_id=holiday_id,
+            requested_by=actor_user_id,
+            dates=[(d, d) for d in holiday_dates],
+            holiday_calendar_id=row.calendar_id,
         )
         return after_read
 
@@ -4159,6 +4196,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        if patch.pattern_kind is not None or patch.rules is not None or patch.is_active is not None:
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="WEEKLY_OFF_PATTERN_CHANGED",
+                source_entity_type="weekly_off_pattern",
+                source_entity_id=pattern_id,
+                requested_by=actor_user_id,
+                weekly_off_pattern_id=pattern_id,
+            )
         return after_read
 
     async def deactivate_weekly_off_pattern(
@@ -4399,6 +4448,25 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        # AR-08 - `model_fields_set`, not `is not None`: clearing the pattern (an explicit null)
+        # turns every weekly off of this calendar into a working day.
+        if (
+            "weekly_off_pattern_id" in patch.model_fields_set
+            or patch.holiday_calendar_ids is not None
+            or patch.restricted_holidays_are_off_by_default is not None
+            or patch.is_active is not None
+        ):
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="WORK_CALENDAR_CHANGED",
+                source_entity_type="work_calendar",
+                source_entity_id=work_calendar_id,
+                requested_by=actor_user_id,
+                work_calendar_id=work_calendar_id,
+            )
         return after_read
 
     async def _calendar_dependents(
@@ -4525,6 +4593,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="CALENDAR_EXCEPTION_CHANGED",
+            source_entity_type="calendar_exception",
+            source_entity_id=read.id,
+            requested_by=actor_user_id,
+            dates=[(read.exception_date, read.exception_date)],
+            work_calendar_id=work_calendar_id,
+        )
         return read
 
     async def list_calendar_exceptions(
@@ -4604,6 +4684,18 @@ class OrganisationService:
             after=calendar_exception_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="CALENDAR_EXCEPTION_CHANGED",
+            source_entity_type="calendar_exception",
+            source_entity_id=exception_id,
+            requested_by=actor_user_id,
+            dates=[(after_read.exception_date, after_read.exception_date)],
+            work_calendar_id=after_read.work_calendar_id,
         )
         return after_read
 

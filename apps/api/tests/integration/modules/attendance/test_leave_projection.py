@@ -311,9 +311,12 @@ async def test_sync_half_day_paid_leave_no_punches(
             client, headers, employee_id=employee_id, fraction="0.50", half="FIRST", is_paid=True
         )
         day = await _get_day(client, headers, employee_id=employee_id)
-        assert day["attendance_status"] == "LEAVE"
+        # H-07: with no punch at all the worked half is PENDING until the period lock (it was
+        # lost as 0.50 LOP at once). The leave half is settled on its own: paid 0.50, debit intact.
+        assert day["attendance_status"] == "INCOMPLETE"
         assert day["paid_day_fraction"] == "0.50"
-        assert day["lop_fraction"] == "0.50"
+        assert day["lop_fraction"] == "0.00"
+        assert day["leave_fraction"] == "0.50"
     finally:
         await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

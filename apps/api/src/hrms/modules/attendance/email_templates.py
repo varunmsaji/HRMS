@@ -71,8 +71,12 @@ def build_incomplete_days_hr_digest_email(
     incomplete_day_count: int,
     employees_without_email: int,
     period_url: str,
+    no_punch_day_count: int = 0,
 ) -> tuple[str, str, str]:
-    """PAY-006 — to users who can close the period (`ATTENDANCE.LOCK`)."""
+    """PAY-006 — to users who can close the period (`ATTENDANCE.LOCK`). H-02: it says how many of
+    the days had no punches at all (counted as absent at close whatever the policy says) and that a
+    day with a punch - an IN-only day included - follows the policy, so "count as present" pays
+    it."""
     subject = f"{period_label}: {incomplete_day_count} incomplete attendance days to resolve"
     summary = (
         f"{employee_count} employees have {incomplete_day_count} incomplete attendance days "
@@ -84,13 +88,24 @@ def build_incomplete_days_hr_digest_email(
         if employees_without_email
         else ""
     )
-    outro = (
-        "Days still incomplete when the period is closed are resolved per the attendance policy."
+    no_punch = (
+        f"{no_punch_day_count} of them have no punches at all and will be counted as absent when "
+        "the period is closed, whatever the policy says."
+        if no_punch_day_count
+        else ""
     )
-    text_body = "\n\n".join(part for part in (summary, unreachable, outro, period_url) if part)
+    outro = (
+        "Days with at least one punch (a day with only an IN punch included) are resolved per the "
+        "attendance policy when the period is closed: where the policy says to count them as "
+        "present, such a day is paid in full."
+    )
+    text_body = "\n\n".join(
+        part for part in (summary, unreachable, no_punch, outro, period_url) if part
+    )
     html_body = (
         f"<p>{escape(summary)}</p>"
         + (f"<p>{escape(unreachable)}</p>" if unreachable else "")
+        + (f"<p>{escape(no_punch)}</p>" if no_punch else "")
         + f"<p>{escape(outro)}</p>"
         f'<p><a href="{escape(period_url)}">Open the attendance period</a></p>'
     )

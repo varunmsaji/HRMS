@@ -197,6 +197,27 @@ def shift_id_for(
     return None, "NONE"
 
 
+def scope_shift_id_for(assignment: Any | None, roster_entry: Any | None) -> UUID | None:
+    """H-04 - the shift whose SHIFT scope applies to a date, for resolving policies and calendars.
+
+    The date's own shift (`shift_id_for`: the published roster row's, else the assignment's). The
+    one difference: a rostered DAY OFF - a published roster row that is a week-off and carries no
+    shift - has no shift of its own, so its SHIFT scope is the employee's ASSIGNED shift. Without
+    it the day skipped its SHIFT-scoped policy and calendar, and a broader scope (or none) decided
+    instead. With no assigned shift either there is no SHIFT scope and resolution falls through to
+    the next scope. A roster row that names a shift, and every other case, is unchanged. This is for
+    scope resolution only: the work schedule of a rostered day off stays "no shift"."""
+    shift_id, _source = shift_id_for(assignment, roster_entry)
+    if (
+        shift_id is None
+        and roster_entry is not None
+        and bool(getattr(roster_entry, "is_week_off_override", False))
+        and assignment is not None
+    ):
+        return assignment.shift_id  # type: ignore[no-any-return]
+    return shift_id
+
+
 async def resolved_shift_id(
     session: AsyncSession, company_id: UUID, employee_id: UUID, target_date: date
 ) -> UUID | None:
@@ -210,7 +231,7 @@ async def resolved_shift_id(
     roster_entry = await ShiftRosterRepository().get_published_for_date(
         session, company_id=company_id, employee_id=employee_id, roster_date=target_date
     )
-    return shift_id_for(assignment, roster_entry)[0]
+    return scope_shift_id_for(assignment, roster_entry)
 
 
 @dataclass

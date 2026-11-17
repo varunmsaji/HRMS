@@ -153,7 +153,9 @@ def test_rejection_error_never_echoes_the_rejected_secret_value() -> None:
 
 
 def test_development_has_no_explicit_origins_but_a_valid_fallback() -> None:
-    settings = Settings(environment="development")
+    # `_env_file=None`: a developer's local `.env` may set CORS_ALLOWED_ORIGINS. This test is about
+    # the code default, so it must not read that file (as the face-gate tests already do).
+    settings = Settings(environment="development", _env_file=None)
     assert settings.cors_allowed_origins == ()
     origins = settings.effective_cors_origins
     assert origins

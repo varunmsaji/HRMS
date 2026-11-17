@@ -26,6 +26,7 @@ from hrms.core.config.settings import Settings
 from hrms.core.db.models.identity import User
 from hrms.core.observability.logging import get_logger
 from hrms.core.rbac.service import RbacRepository
+from hrms.modules.attendance.calculation import day_has_no_punches
 from hrms.modules.attendance.email_templates import (
     build_incomplete_days_hr_digest_email,
     build_incomplete_days_reminder_email,
@@ -95,6 +96,9 @@ class IncompleteDayReminderService:
                 select(
                     AttendanceDay.employee_id,
                     AttendanceDay.attendance_date,
+                    AttendanceDay.computation_snapshot,
+                    AttendanceDay.actual_first_in,
+                    AttendanceDay.actual_last_out,
                     Employee.first_name,
                     User.email,
                     User.status,
@@ -126,7 +130,19 @@ class IncompleteDayReminderService:
         ).all()
 
         by_employee: dict[UUID, dict[str, Any]] = {}
-        for employee_id, attendance_date, first_name, email, user_status in rows:
+        no_punch_days = 0
+        for (
+            employee_id,
+            attendance_date,
+            snapshot,
+            first_in,
+            last_out,
+            first_name,
+            email,
+            user_status,
+        ) in rows:
+            if day_has_no_punches(snapshot, first_in, last_out):
+                no_punch_days += 1
             entry = by_employee.setdefault(
                 employee_id,
                 {
@@ -195,6 +211,7 @@ class IncompleteDayReminderService:
             incomplete_day_count=result.incomplete_days,
             employees_without_email=result.employees_without_email,
             period_url=f"{base_url}/app/attendance-periods/{period.id}",
+            no_punch_day_count=no_punch_days,
         )
         for email in hr_emails:
             if await self._send(
@@ -224,6 +241,7 @@ class IncompleteDayReminderService:
                 "employees_without_email": result.employees_without_email,
                 "hr_recipients": result.hr_recipients,
                 "send_failures": result.send_failures,
+                "no_punch_days": no_punch_days,
             },
         )
         return result

@@ -424,12 +424,13 @@ class CalendarResolutionService:
         # through the one shared resolution, so a rostered night shift brings its own
         # SHIFT-scoped attendance/overtime/regularization policy and calendar with it.
         from hrms.modules.attendance.repository import ShiftRosterRepository
-        from hrms.modules.attendance.work_schedule import shift_id_for
+        from hrms.modules.attendance.work_schedule import scope_shift_id_for
 
         roster_entry = await ShiftRosterRepository().get_published_for_date(
             self._session, company_id=company_id, employee_id=employee_id, roster_date=target_date
         )
-        shift_id, _source = shift_id_for(assignment, roster_entry)
+        # H-04: a rostered day off carries no shift, so its SHIFT scope is the assigned shift
+        shift_id = scope_shift_id_for(assignment, roster_entry)
         if shift_id is not None:
             candidates.append(("SHIFT", shift_id))
         if assignment.designation_id is not None:

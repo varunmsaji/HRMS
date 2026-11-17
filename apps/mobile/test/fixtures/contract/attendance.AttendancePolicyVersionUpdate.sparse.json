@@ -23,6 +23,7 @@
  "late_bands": null,
  "late_count_window": null,
  "lates_to_half_day_count": null,
+ "mark_credit_ceiling_minutes": null,
  "max_early_punch_minutes": null,
  "max_late_punch_minutes": null,
  "missing_punch_behaviour": null,

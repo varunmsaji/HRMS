@@ -22,9 +22,10 @@ Recalculation is idempotent, so a request processed twice costs time, not correc
 
 from collections import defaultdict
 from datetime import UTC, date, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.post_commit import defer_until_commit
@@ -90,6 +91,231 @@ async def request_recalc(
         process_recalc_requests_company.delay(str(company_id))
 
     defer_until_commit(session, _kick)
+
+
+async def earliest_unlocked_day(session: AsyncSession, company_id: UUID) -> date | None:
+    """The oldest calculated, unlocked day the company has: the earliest date a calendar-wide
+    change can still affect. Locked days are never recalculated, so nothing older matters."""
+    return (
+        await session.execute(
+            select(func.min(AttendanceDay.attendance_date)).where(
+                AttendanceDay.company_id == company_id, AttendanceDay.is_locked.is_(False)
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def request_calendar_recalc(
+    session: AsyncSession,
+    *,
+    company_id: UUID,
+    reason: RecalcReason,
+    source_entity_type: str,
+    source_entity_id: UUID | None,
+    requested_by: UUID | None,
+    dates: list[tuple[date, date]] | None = None,
+    holiday_calendar_id: UUID | None = None,
+    weekly_off_pattern_id: UUID | None = None,
+    work_calendar_id: UUID | None = None,
+) -> int:
+    """AC-02 - a holiday, holiday-calendar, weekly-off, work-calendar or calendar-exception change
+    queues a recalculation for the people it can touch, over the dates it can touch.
+
+    *Dates*: the given ranges, or - when the change has no single date (a pattern or calendar
+    edit) - from the oldest unlocked calculated day to today.
+    *People*: the work calendars the change reaches (the calendar itself; every calendar linking
+    the holiday calendar; every calendar using the pattern), then the policy assignments of those
+    calendars (and of the pattern). An employee-scoped assignment queues that employee; a
+    shift-scoped one queues days calculated against that shift; any wider scope, or no assignment
+    found at all, queues the whole company - recalculation is idempotent, so an unneeded request
+    only costs time, while a missed one leaves a stale day.
+
+    Returns the number of requests queued."""
+    from hrms.modules.organisation.models import (
+        PolicyAssignment,
+        WorkCalendar,
+        WorkCalendarHolidayCalendar,
+    )
+
+    # AC-03 / P-E - approved leave follows a *dated* change (a holiday or a calendar exception
+    # added, edited or removed): refund, debit or a shortfall exception, in this transaction,
+    # future leave included. A calendar-wide edit (weekly-off pattern, work calendar, holiday
+    # calendar validity; `dates` None) does not rewrite approved leave: Work Calendar policy A is
+    # not retroactive, and P-E decided holidays only.
+    if dates is not None:
+        from hrms.modules.leave.reconciliation import reconcile_after_calendar_change
+
+        await reconcile_after_calendar_change(
+            session, company_id=company_id, dates=dates, actor_user_id=requested_by
+        )
+
+    ranges = dates
+    if ranges is None:
+        start = await earliest_unlocked_day(session, company_id)
+        if start is None:
+            return 0
+        ranges = [(start, business_today_for(await _company_timezone(session, company_id)))]
+
+    calendar_ids: set[UUID] = set()
+    if work_calendar_id is not None:
+        calendar_ids.add(work_calendar_id)
+    if holiday_calendar_id is not None:
+        calendar_ids.update(
+            (
+                await session.execute(
+                    select(WorkCalendarHolidayCalendar.work_calendar_id).where(
+                        WorkCalendarHolidayCalendar.company_id == company_id,
+                        WorkCalendarHolidayCalendar.holiday_calendar_id == holiday_calendar_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    if weekly_off_pattern_id is not None:
+        calendar_ids.update(
+            (
+                await session.execute(
+                    select(WorkCalendar.id).where(
+                        WorkCalendar.company_id == company_id,
+                        WorkCalendar.weekly_off_pattern_id == weekly_off_pattern_id,
+                        WorkCalendar.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    kinds = []
+    if calendar_ids:
+        kinds.append(
+            (PolicyAssignment.policy_kind == "WORK_CALENDAR")
+            & (PolicyAssignment.policy_id.in_(calendar_ids))
+        )
+    if weekly_off_pattern_id is not None:
+        kinds.append(
+            (PolicyAssignment.policy_kind == "WEEKLY_OFF")
+            & (PolicyAssignment.policy_id == weekly_off_pattern_id)
+        )
+    assignments = []
+    if kinds:
+        from sqlalchemy import or_
+
+        assignments = list(
+            (
+                await session.execute(
+                    select(PolicyAssignment).where(
+                        PolicyAssignment.company_id == company_id,
+                        PolicyAssignment.deleted_at.is_(None),
+                        PolicyAssignment.is_active.is_(True),
+                        or_(*kinds),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    targets = _targets_for_assignments(assignments)
+    queued = 0
+    for date_from, date_to in ranges:
+        for employee_id, shift_id in targets:
+            await request_recalc(
+                session,
+                company_id=company_id,
+                date_from=date_from,
+                date_to=date_to,
+                reason=reason,
+                employee_id=employee_id,
+                shift_id=shift_id,
+                source_entity_type=source_entity_type,
+                source_entity_id=source_entity_id,
+                requested_by=requested_by,
+            )
+            queued += 1
+    return queued
+
+
+def _targets_for_assignments(assignments: list[Any]) -> list[tuple[UUID | None, UUID | None]]:
+    """`(employee_id, shift_id)` request targets for the assignments a change reaches. An
+    employee- or shift-scoped assignment narrows the request; any wider scope, or no assignment
+    at all, is the whole company (a superset: recalculation is idempotent)."""
+    company_wide = not assignments or any(
+        a.scope_type not in ("EMPLOYEE", "SHIFT") or a.scope_id is None for a in assignments
+    )
+    if company_wide:
+        return [(None, None)]
+    employee_ids = {a.scope_id for a in assignments if a.scope_type == "EMPLOYEE" and a.scope_id}
+    shift_ids = {a.scope_id for a in assignments if a.scope_type == "SHIFT" and a.scope_id}
+    return [(e, None) for e in sorted(employee_ids)] + [(None, sh) for sh in sorted(shift_ids)]
+
+
+async def request_policy_version_recalc(
+    session: AsyncSession,
+    *,
+    company_id: UUID,
+    policy_kind: str,
+    policy_id: UUID,
+    effective_from: date,
+    source_entity_type: str,
+    source_entity_id: UUID | None,
+    requested_by: UUID | None,
+) -> int:
+    """AC-07 - publishing a version of an attendance or overtime policy changes the rules for
+    everyone assigned that policy, from the version's `effective_from`. Scope: the policy's own
+    assignments (never unrelated employees); see `_targets_for_assignments`. Returns the number of
+    requests queued. Locked days are untouched, as for every request."""
+    from sqlalchemy import or_
+
+    from hrms.modules.organisation.models import PolicyAssignment
+
+    assignments = list(
+        (
+            await session.execute(
+                select(PolicyAssignment).where(
+                    PolicyAssignment.company_id == company_id,
+                    PolicyAssignment.policy_kind == policy_kind,
+                    PolicyAssignment.policy_id == policy_id,
+                    PolicyAssignment.deleted_at.is_(None),
+                    PolicyAssignment.is_active.is_(True),
+                    or_(
+                        PolicyAssignment.effective_to.is_(None),
+                        PolicyAssignment.effective_to >= effective_from,
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not assignments:
+        return 0  # nobody is on this policy, so no calculated day can use it
+    queued = 0
+    for employee_id, shift_id in _targets_for_assignments(assignments):
+        await request_recalc(
+            session,
+            company_id=company_id,
+            date_from=effective_from,
+            reason="POLICY_VERSION_PUBLISHED",
+            employee_id=employee_id,
+            shift_id=shift_id,
+            source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id,
+            requested_by=requested_by,
+        )
+        queued += 1
+    return queued
+
+
+async def _company_timezone(session: AsyncSession, company_id: UUID) -> str:
+    from hrms.modules.organisation.service import OrganisationService
+
+    return (await OrganisationService(session).get_company_profile(company_id)).timezone
+
+
+def business_today_for(timezone: str) -> date:
+    return business_today(timezone)
 
 
 async def _pending_requests(company_id: UUID) -> list[AttendanceRecalcRequest]:

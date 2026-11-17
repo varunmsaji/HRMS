@@ -57,8 +57,13 @@ def _pay(result: AttendanceCalculationResult) -> tuple[str, str, str]:
     return (result.attendance_status, result.paid_day_fraction, result.lop_fraction)
 
 
-def test_no_punches_loses_the_other_half() -> None:
-    assert _pay(_day([])) == ("LEAVE", "0.50", "0.50")
+def test_no_punches_leaves_the_worked_half_pending_until_the_lock() -> None:
+    """H-07: the leave half is settled (paid 0.50, the leave debit stays 0.50) and the worked half
+    is NOT yet lost: the day stays INCOMPLETE until the period locks, where a no-show half is
+    absent whatever `incomplete_at_lock_behaviour` says (it was resolved as LOP at once before)."""
+    result = _day([])
+    assert _pay(result) == ("INCOMPLETE", "0.50", "0.00")
+    assert result.leave_fraction == "0.50"
 
 
 def test_first_half_leave_arriving_at_the_midpoint_is_on_time() -> None:

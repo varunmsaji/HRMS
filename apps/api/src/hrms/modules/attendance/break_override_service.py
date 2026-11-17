@@ -143,7 +143,33 @@ class EmployeeBreakOverrideService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._queue_recalc(
+            company_id, row.employee_id, row.effective_from, row.id, actor_user_id
+        )
         return read
+
+    async def _queue_recalc(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        date_from: date,
+        override_id: UUID,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """AR-09 - an override changes the break rules of days already calculated from its start
+        date, so those days are queued (Invariant C). A future start date queues nothing."""
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=date_from,
+            reason="BREAK_OVERRIDE_CHANGED",
+            source_entity_type="employee_break_override",
+            source_entity_id=override_id,
+            requested_by=actor_user_id,
+        )
 
     async def _validate_against_shift(
         self, company_id: UUID, candidate: EmployeeBreakOverride
@@ -252,5 +278,8 @@ class EmployeeBreakOverrideService:
             after=read.model_dump(mode="json"),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await self._queue_recalc(
+            company_id, row.employee_id, max(row.effective_from, today), row.id, actor_user_id
         )
         return read
