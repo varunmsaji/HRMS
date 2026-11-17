@@ -3054,6 +3054,11 @@ class PunchService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
+        # Every punch writer takes the employee's punch-write lock, so HR's "no punch on this day
+        # yet" check in `record_manual_days` holds until it commits against an ordinary punch too
+        # (review finding on PR 61). It is re-entrant: a day entry already holds it for each of its
+        # employees and takes it again here for free. Taken before anything else in this method.
+        await _lock_manual_day(self._session, company_id, employee_id)
         if source == "WEB" and direction == "IN":
             # Face verification gates check-in only; a plain check-out is always allowed.
             await self._ensure_plain_punch_allowed(
@@ -3726,9 +3731,11 @@ class PunchService:
 
         A per-employee advisory lock (taken for all employees up front, in sorted order, so two
         overlapping submissions cannot deadlock) makes the "no punch on this day yet" check hold
-        until commit against another manual-day submission for the same person. It is a leaf
-        lock: nothing in `core.db.locks` is taken while it is held, and the day calculation takes
-        no advisory lock."""
+        until commit against another manual-day submission for the same person, and, because
+        `record_punch_outcome` takes the same lock, against a single punch for that person too.
+        Nothing in `core.db.locks` is acquired before it, and no punch path acquires it after
+        one of those, so it cannot take part in a cycle; the day calculation takes no advisory
+        lock."""
         timezone = await self._company_zone(company_id)
         for employee_id in sorted(body.employee_ids):
             await _lock_manual_day(self._session, company_id, employee_id)
@@ -4003,8 +4010,10 @@ def _format_instant(value: datetime) -> str:
 
 
 async def _lock_manual_day(session: AsyncSession, company_id: UUID, employee_id: UUID) -> None:
-    """Held until the transaction ends. A leaf lock private to manual day entry — see
-    `PunchService.record_manual_days`."""
+    """The employee's punch-write lock, held until the transaction ends. Taken by every punch
+    writer (`PunchService.record_punch_outcome`) and, for all of a submission's employees up front
+    and in sorted order, by `PunchService.record_manual_days`. Re-entrant within one transaction.
+    It is acquired before anything in `core.db.locks`, never after."""
     key = f"attendance-manual-day:{company_id}:{employee_id}"
     async with bounded_lock_wait(
         session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms

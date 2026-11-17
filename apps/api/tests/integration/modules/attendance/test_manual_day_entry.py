@@ -5,6 +5,7 @@ punch path, so its bounds still apply; on top, an employee who already has a pun
 refused, each employee is both-punches-or-neither, and a retried submission records nothing twice.
 """
 
+import asyncio
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ from hrms.modules.attendance.permissions import (
     ATTENDANCE_PUNCH_ON_BEHALF,
     ATTENDANCE_VIEW,
 )
+from hrms.modules.attendance.service import _lock_manual_day
 
 from .test_attendance_day import (
     _build_wired_employee,
@@ -390,3 +392,70 @@ async def test_hr_cannot_mark_their_own_attendance(
                     text('DELETE FROM "user" WHERE id = :u'), {"u": str(hr_user_id)}
                 )
                 await session.commit()
+
+
+async def test_a_single_punch_waits_for_an_in_flight_day_entry_of_the_same_employee(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Review finding on PR 61: `record_manual_days` checks "no punch on this day yet" and then
+    inserts, but a single punch did not take the employee's punch-write lock, so one arriving
+    between the two ended up next to the HR pair. Every punch writer now takes the same lock.
+
+    The day entry is stood in for by a transaction that holds the lock, which is exactly what it
+    holds between its check and its commit."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        eid = wired["employee"]["id"]
+        async with get_session_factory()() as holder:
+            await _lock_manual_day(holder, company_id, UUID(eid))
+            punch = asyncio.create_task(
+                _punch(client, headers, employee_id=eid, hour=3, minute=0, direction="IN")
+            )
+            await asyncio.sleep(1.5)
+            assert not punch.done(), "the single punch must wait for the day entry's lock"
+            assert await _punches(client, headers, eid) == [], "and must not have been written"
+            await holder.commit()  # the day entry commits; the lock is released
+            await asyncio.wait_for(punch, timeout=15)
+        assert len(await _punches(client, headers, eid)) == 1
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_punches_of_different_employees_do_not_wait_for_each_other(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The lock is per employee: HR marking one person must not hold up another's punch."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        eid = wired["employee"]["id"]
+        other = await _plain_employee(client, headers)
+        async with get_session_factory()() as holder:
+            await _lock_manual_day(holder, company_id, UUID(eid))
+            done = await asyncio.wait_for(
+                _punch(client, headers, employee_id=other, hour=3, minute=0, direction="IN"),
+                timeout=10,
+            )
+            assert done["employee_id"] == other
+            await holder.rollback()
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_a_day_entry_still_records_when_it_already_holds_the_lock(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The lock is re-entrant: the day entry takes it up front and each punch takes it again."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        eid = wired["employee"]["id"]
+        recorded = await asyncio.wait_for(_record(client, headers, _body([eid])), timeout=15)
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["data"]["recorded_count"] == 1
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

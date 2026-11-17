@@ -147,11 +147,19 @@ def _refused(db: str, target: str, fragment: str, *, still_at: str) -> str:
 # ----------------------------------------------------------------------------- the chain
 
 
-def test_the_chain_has_one_head_and_it_is_the_ceiling_revision(scratch: str) -> None:
+def test_the_chain_has_one_head_and_the_ceiling_revision_is_in_it(scratch: str) -> None:
+    """Later migrations may sit on top of the ceiling revision, so the head is not pinned to it;
+    what matters is one head, and the R2 chain intact up to the ceiling."""
     rc, out = _alembic(scratch, "heads")
     assert rc == 0, out
     heads = [line for line in out.splitlines() if "(head)" in line]
-    assert len(heads) == 1 and heads[0].startswith(REV_CEILING), out
+    assert len(heads) == 1, out
+    rc, history = _alembic(scratch, "history")
+    assert rc == 0, history
+    for revision, parent in ONE_STEP_DOWN.items():
+        assert f"{parent} -> {revision}" in history, (
+            f"{parent} -> {revision} missing from the chain"
+        )
 
 
 def test_each_migration_round_trips_on_an_empty_history(scratch_at: Callable[[str], str]) -> None:
@@ -170,7 +178,7 @@ def test_each_migration_round_trips_on_an_empty_history(scratch_at: Callable[[st
     assert not _has_table(db, "leave_balance_shortfall")
     assert not _has_column(db, "leave_application", "half_day")
     assert not _has_column(db, "attendance_policy_version", "mark_credit_ceiling_minutes")
-    rc, out = _alembic(db, "upgrade", "head")
+    rc, out = _alembic(db, "upgrade", REV_CEILING)
     assert rc == 0, out[-2000:]
     assert _version(db) == REV_CEILING
 
