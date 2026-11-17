@@ -182,6 +182,7 @@ def app_as_runtime_role(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-unt
 # private ports; see docs/testing/qa_harness/stack.sh). A plain run cannot satisfy that, so they
 # are skipped there instead of failing with an isolation error.
 _QA_SANDBOX_ONLY = (
+    "test_attendance_r2_migrations.py",
     "test_b13_migrations.py",
     "test_shift_tenant_fk_migrations.py",
     "test_b13_confirm_terminate_concurrency.py",

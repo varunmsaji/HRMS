@@ -290,6 +290,112 @@ jobs:
           echo "### Backend — API job" >> "$GITHUB_STEP_SUMMARY"
           echo "Ruff, Ruff-format, mypy, import-linter, unit tests, integration+security tests (real Postgres + Redis + MinIO, fresh every run)." >> "$GITHUB_STEP_SUMMARY"
 
+  # Migration tests (R-2 / half-day / downgrade protections). A SEPARATE job on purpose: it needs a
+  # Postgres role that can CREATE and DROP databases and a superuser inside that server (the
+  # production migration role is one too, and `row_security = off` in the downgrade guards needs
+  # it), and none of that may ever exist on - or be pointed at - the database the other jobs use.
+  #
+  # * Its own throwaway Postgres 16 service: nothing else in it, destroyed with the job. The admin
+  #   role (`migtest_admin`) exists only inside this container and is never given to `hrms_app`.
+  # * Loopback only, on the private QA ports that `tests/isolation_guard.py` (strict mode) and
+  #   `test_b13_migrations._admin_url` accept: 127.0.0.1:15432, database `hrms_qa_*`. Anything else
+  #   - the dev port 5433, another host, another database name - fails an assertion first.
+  # * Every test works in its own scratch database (unique random name), dropped in a `finally`.
+  # * `HRMS_REQUIRE_MIGRATION_TESTS=1`: a skipped test, or fewer tests than the floor in
+  #   `tests/integration/migrations/conftest.py`, fails the job. Without the strict sandbox these
+  #   tests skip locally; here a skip is a failure.
+  migrations:
+    name: API — migration tests (disposable PostgreSQL)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      TZ: UTC
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: migtest_admin
+          POSTGRES_PASSWORD: migtest_ci_only_password
+          POSTGRES_DB: hrms_qa_migtest
+        ports:
+          - 127.0.0.1:15432:5432
+        options: >-
+          --health-cmd "pg_isready -U migtest_admin -d hrms_qa_migtest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 127.0.0.1:16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-path: apps/api/uv.lock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-groups --extra liveness
+
+      - name: Migration tests (required - a skip fails the job)
+        env:
+          HRMS_QA_STRICT: "1"
+          HRMS_REQUIRE_MIGRATION_TESTS: "1"
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql://migtest_admin:migtest_ci_only_password@127.0.0.1:15432/hrms_qa_migtest
+          MIGRATIONS_DATABASE_URL: postgresql://migtest_admin:migtest_ci_only_password@127.0.0.1:15432/hrms_qa_migtest
+          REDIS_URL: redis://127.0.0.1:16379/0
+          # Strict mode insists on a private loopback value; no S3 service is started or used here.
+          S3_ENDPOINT_URL: http://127.0.0.1:19000
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
+        run: >-
+          uv run pytest
+          tests/integration/migrations/test_attendance_r2_migrations.py
+          tests/unit/core/test_migration_test_guards.py
+          -rs --junitxml=test-results/backend-migrations.xml
+
+      # The fixtures drop every scratch database; this proves it, so a leak cannot hide until the
+      # service is torn down.
+      - name: No scratch database was left behind
+        if: always()
+        env:
+          PGPASSWORD: migtest_ci_only_password
+        run: |
+          left=$(psql -h 127.0.0.1 -p 15432 -U migtest_admin -d hrms_qa_migtest -At \
+            -c "SELECT datname FROM pg_database WHERE datname LIKE 'r2mig\_%'")
+          if [ -n "$left" ]; then
+            echo "::error::scratch databases left behind: $left"
+            exit 1
+          fi
+
+      # continue-on-error: same account-wide artifact quota constraint as the API job's upload.
+      - name: Upload migration test report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-migration-test-results
+          path: apps/api/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
   web:
     name: Web — lint, typecheck, vitest, build
     runs-on: ubuntu-latest
