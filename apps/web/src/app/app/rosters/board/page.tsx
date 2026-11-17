@@ -8,6 +8,7 @@ import { FormField } from "@/components/common/form-field";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { RosterTabs } from "@/components/shift-roster/roster-tabs";
+import { hhmm, OFF_TONE, PersonAvatar, shiftTone, useShiftSchedules } from "@/components/shift-roster/shift-style";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
@@ -18,6 +19,7 @@ import { usePermissions } from "@/lib/auth/use-permissions";
 import { employeeFullName, employeeNameSearchText } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
+import { cn } from "@/lib/utils";
 
 interface ShiftOption {
   id: string;
@@ -25,11 +27,13 @@ interface ShiftOption {
   code: string | null;
   start_time?: string;
   end_time?: string;
+  is_night_shift?: boolean;
 }
 
 /** Column key for employees with no roster entry on the chosen date (their default shift applies). */
 const UNASSIGNED = "__unassigned__";
 const WEEK_OFF = "__week_off__";
+const NEUTRAL_TONE = "border-border-strong bg-surface-secondary text-foreground";
 /** `GET /employees` is capped at 100 rows per page; the board pulls up to this many pages. */
 const EMPLOYEES_PER_PAGE = 100;
 const MAX_EMPLOYEE_PAGES = 10;
@@ -126,17 +130,25 @@ export default function RosterBoardPage() {
 
   const entryByEmployee = useMemo(() => new Map(entries.map((r) => [r.employee_id, r])), [entries]);
 
+  const shiftIds = useMemo(() => shifts.map((s) => s.id), [shifts]);
+  const schedules = useShiftSchedules(shiftIds, date);
+
   const columns = useMemo(
     () => [
-      { key: UNASSIGNED, title: "Unassigned", sub: "Default shift applies" },
-      ...shifts.map((s) => ({
-        key: s.id,
-        title: s.code ?? s.name,
-        sub: s.start_time ? `${s.name} · ${s.start_time.slice(0, 5)}–${(s.end_time ?? "").slice(0, 5)}` : s.name,
-      })),
-      { key: WEEK_OFF, title: "Week off", sub: "Not working" },
+      { key: UNASSIGNED, title: "Unassigned", sub: "Default shift applies", tone: NEUTRAL_TONE },
+      ...shifts.map((s) => {
+        const sched = schedules.get(s.id);
+        const start = sched?.start ?? s.start_time;
+        const end = sched?.end ?? s.end_time;
+        const brk = sched?.breakMinutes ?? 0;
+        const parts = [s.name];
+        if (start) parts.push(`${hhmm(start)}–${hhmm(end)}`);
+        if (brk > 0) parts.push(`${brk} m break`);
+        return { key: s.id, title: s.code ?? s.name, sub: parts.join(" · "), tone: shiftTone(s) };
+      }),
+      { key: WEEK_OFF, title: "Week off", sub: "Not working", tone: OFF_TONE },
     ],
-    [shifts],
+    [shifts, schedules],
   );
 
   const byColumn = useMemo(() => {
@@ -306,16 +318,18 @@ export default function RosterBoardPage() {
                     setPicked(null);
                     void moveTo(id, col.key);
                   }}
-                  className={`flex max-h-[70vh] w-60 shrink-0 flex-col rounded-md border bg-surface-secondary ${
+                  className={`flex max-h-[70vh] w-64 shrink-0 flex-col overflow-hidden rounded-2xl border bg-surface shadow-elevation-1 ${
                     overCol === col.key ? "border-primary ring-2 ring-primary" : "border-border"
                   }`}
                 >
-                  <header className="border-b border-border px-3 py-2">
+                  <header className={cn("border-b border-l-4 border-b-border px-3 py-2.5", col.tone)}>
                     <div className="flex items-center justify-between text-sm font-semibold">
                       {col.title}
-                      <span className="rounded-full bg-muted px-2 text-xs font-normal">{people.length}</span>
+                      <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-medium text-foreground-secondary">
+                        {people.length}
+                      </span>
                     </div>
-                    <div className="truncate text-2xs text-foreground-muted">{col.sub}</div>
+                    <div className="truncate text-2xs opacity-80">{col.sub}</div>
                   </header>
                   <ul className="flex-1 space-y-2 overflow-y-auto p-2">
                     {people.map((e) => {
@@ -338,18 +352,22 @@ export default function RosterBoardPage() {
                             ev.stopPropagation();
                             setPicked((cur) => (cur === e.id ? null : e.id));
                           }}
-                          className={`rounded border bg-background px-3 py-2 text-sm ${
-                            picked === e.id ? "ring-2 ring-primary " : ""
-                          }
-                            canManage ? "cursor-grab active:cursor-grabbing" : ""
-                          } ${draft ? "border-dashed border-foreground-muted" : "border-border"} ${
-                            savingId === e.id || dragId === e.id ? "opacity-50" : ""
-                          }`}
+                          className={cn(
+                            "flex items-center gap-2.5 rounded-md border-l-4 px-2.5 py-2 text-sm",
+                            col.tone,
+                            canManage && "cursor-grab active:cursor-grabbing",
+                            picked === e.id && "ring-2 ring-primary",
+                            draft && "border-y border-r border-dashed border-y-foreground-muted border-r-foreground-muted",
+                            (savingId === e.id || dragId === e.id) && "opacity-50",
+                          )}
                         >
-                          {fullName(e)}
-                          {e.employee_code ? (
-                            <span className="ml-1 text-foreground-muted">({e.employee_code})</span>
-                          ) : null}
+                          <PersonAvatar name={fullName(e)} className="size-8 bg-surface" />
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-foreground">{fullName(e)}</span>
+                            {e.employee_code ? (
+                              <span className="block text-xs text-foreground-muted">{e.employee_code}</span>
+                            ) : null}
+                          </span>
                         </li>
                       );
                     })}

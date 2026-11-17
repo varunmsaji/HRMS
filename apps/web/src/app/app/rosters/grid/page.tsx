@@ -27,6 +27,14 @@ import { employeeFullName, employeeNameSearchText } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import { buildCoverage } from "@/lib/shift-roster/coverage";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
+import {
+  hhmm,
+  OFF_TONE,
+  PersonAvatar,
+  ShiftCard,
+  shiftTone,
+  useShiftSchedules,
+} from "@/components/shift-roster/shift-style";
 
 interface ShiftOption {
   id: string;
@@ -35,30 +43,6 @@ interface ShiftOption {
   start_time?: string;
   end_time?: string;
   is_night_shift?: boolean;
-}
-
-const SHIFT_TONES = [
-  "bg-primary-subtle text-primary",
-  "bg-success-subtle text-success",
-  "bg-warning-subtle text-warning",
-  "bg-info-subtle text-info",
-  "bg-danger-subtle text-danger",
-] as const;
-const NIGHT_TONE = "bg-foreground text-surface";
-const OFF_TONE = "bg-surface-secondary text-foreground-secondary";
-
-/** A stable colour per shift, so a pattern (all mornings, then nights) reads at a glance. Night
- * shifts are always dark, matching the Schedule coverage tab. */
-function shiftTone(shift: ShiftOption | undefined): string {
-  if (!shift) return SHIFT_TONES[0];
-  if (shift.is_night_shift) return NIGHT_TONE;
-  let h = 0;
-  for (const ch of shift.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return SHIFT_TONES[h % SHIFT_TONES.length];
-}
-
-function hhmm(t: string | undefined): string {
-  return t ? t.slice(0, 5) : "";
 }
 
 function cellTitle(roster: ShiftRoster, shift: ShiftOption | undefined, name: string, date: string): string {
@@ -222,6 +206,12 @@ export default function RosterGridPage() {
       });
   }, [beginRosterRequest, start, end]);
 
+  const usedShiftIds = useMemo(
+    () => (range?.entries ?? []).map((r) => r.shift_id).filter((id): id is string => Boolean(id)),
+    [range],
+  );
+  const schedules = useShiftSchedules(usedShiftIds, start);
+
   const shiftById = useMemo(() => new Map(shifts.map((s) => [s.id, s])), [shifts]);
 
   const cells = useMemo(() => {
@@ -367,7 +357,7 @@ export default function RosterGridPage() {
           />
         ) : (
           <BusyRegion busy={loading} label="Refreshing roster…">
-            <div className="max-h-[70vh] overflow-auto rounded-md border border-border">
+            <div className="max-h-[70vh] overflow-auto rounded-2xl border border-border bg-surface shadow-elevation-1">
               <table className="min-w-full border-collapse text-xs">
                 <thead>
                   <tr className="bg-surface-secondary">
@@ -402,22 +392,29 @@ export default function RosterGridPage() {
                 </thead>
                 <tbody>
                   {rows.map((e) => (
-                    <tr key={e.id} className="border-t border-border">
-                      <td className="sticky left-0 z-10 bg-background px-3 py-2 text-sm">
-                        {employeeLabel(e)}
-                        {e.employee_code ? (
-                          <span className="ml-1 text-foreground-muted">({e.employee_code})</span>
-                        ) : null}
+                    <tr key={e.id} className="border-t border-border-subtle">
+                      <td className="sticky left-0 z-10 min-w-52 bg-surface px-4 py-3 text-sm">
+                        <div className="flex items-center gap-3">
+                          <PersonAvatar name={employeeLabel(e)} />
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-foreground">{employeeLabel(e)}</span>
+                            {e.employee_code ? (
+                              <span className="block text-xs text-foreground-muted">{e.employee_code}</span>
+                            ) : null}
+                          </span>
+                        </div>
                       </td>
                       {dates.map((d) => {
                         const r = cells.get(`${e.id}|${d}`);
                         const off = r?.is_week_off_override;
                         const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
                         const shift = r?.shift_id ? shiftById.get(r.shift_id) : undefined;
+                        const sched = r?.shift_id ? schedules.get(r.shift_id) : undefined;
+                        const breakMins = sched?.breakMinutes ?? 0;
                         return (
                           <td
                             key={d}
-                            className={`px-1 py-1 text-center ${
+                            className={`min-w-28 px-1.5 py-2 align-top ${
                               d === today
                                 ? "border-x-2 border-primary bg-primary-subtle/30"
                                 : dow === 0 || dow === 6
@@ -434,13 +431,22 @@ export default function RosterGridPage() {
                                 }
                                 title={cellTitle(r, shift, employeeLabel(e), d)}
                                 aria-label={cellTitle(r, shift, employeeLabel(e), d)}
-                                className={`inline-block min-w-10 rounded px-1.5 py-1 font-medium ${
-                                  off ? OFF_TONE : shiftTone(shift)
-                                } ${r.status === "DRAFT" ? "border border-dashed border-foreground-muted" : ""} ${
+                                className={`block w-full rounded-md ${
                                   canManage ? "cursor-pointer hover:ring-2 hover:ring-primary" : "cursor-default"
                                 }`}
                               >
-                                {cellLabel(r, shiftById)}
+                                <ShiftCard
+                                  tone={off ? OFF_TONE : shiftTone(shift)}
+                                  draft={r.status === "DRAFT"}
+                                  time={
+                                    !off && (sched?.start ?? shift?.start_time)
+                                      ? `${hhmm(sched?.start ?? shift?.start_time)} – ${hhmm(sched?.end ?? shift?.end_time)}`
+                                      : undefined
+                                  }
+                                  label={cellLabel(r, shiftById)}
+                                  subLabel={!off && shift?.code && shift.name !== shift.code ? shift.name : undefined}
+                                  breakMins={off ? 0 : breakMins}
+                                />
                               </button>
                             ) : canManage ? (
                               <button
@@ -449,7 +455,7 @@ export default function RosterGridPage() {
                                   setEditTarget({ roster: null, employeeId: e.id, employeeName: employeeLabel(e), date: d })
                                 }
                                 aria-label={`Add roster entry for ${employeeLabel(e)} on ${d}`}
-                                className="inline-block min-w-10 rounded px-1.5 py-1 text-foreground-muted opacity-0 hover:bg-muted hover:opacity-100 focus-visible:opacity-100"
+                                className="flex h-full min-h-12 w-full items-center justify-center rounded-md text-foreground-muted opacity-0 hover:bg-muted hover:opacity-100 focus-visible:opacity-100"
                               >
                                 +
                               </button>
@@ -515,12 +521,12 @@ export default function RosterGridPage() {
       {legend.length > 0 ? (
         <ul className="flex flex-wrap items-center gap-2 text-xs" aria-label="Shift colour legend">
           {legend.map((s) => (
-            <li key={s.id} className={`rounded px-2 py-1 font-medium ${shiftTone(s)}`}>
+            <li key={s.id} className={`rounded-md border-l-4 px-2 py-1 font-medium ${shiftTone(s)}`}>
               {s.code ?? s.name}
               {s.code ? <span className="ml-1 font-normal opacity-80">{s.name}</span> : null}
             </li>
           ))}
-          <li className={`rounded px-2 py-1 font-medium ${OFF_TONE}`}>OFF</li>
+          <li className={`rounded-md border-l-4 px-2 py-1 font-medium ${OFF_TONE}`}>OFF</li>
         </ul>
       ) : null}
       <RosterEntryDialog

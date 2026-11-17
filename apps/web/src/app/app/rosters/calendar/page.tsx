@@ -11,9 +11,9 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { RosterTabs } from "@/components/shift-roster/roster-tabs";
+import { hhmm, OFF_TONE, ShiftCard, shiftTone, useShiftSchedules } from "@/components/shift-roster/shift-style";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -29,11 +29,9 @@ interface ShiftOption {
   id: string;
   name: string;
   code: string | null;
-}
-
-function shiftLabel(shift: ShiftOption | undefined): string {
-  if (!shift) return "";
-  return shift.code ? `${shift.name} (${shift.code})` : shift.name;
+  start_time?: string;
+  end_time?: string;
+  is_night_shift?: boolean;
 }
 
 function toIsoDate(year: number, monthIndex: number, day: number): string {
@@ -118,6 +116,13 @@ export default function RosterCalendarPage() {
     for (const roster of rosters ?? []) map.set(roster.roster_date, roster);
     return map;
   }, [rosters]);
+
+  const usedShiftIds = useMemo(
+    () => (rosters ?? []).map((r) => r.shift_id).filter((id): id is string => Boolean(id)),
+    [rosters],
+  );
+  const schedules = useShiftSchedules(usedShiftIds, toIsoDate(year, monthIndex, 1));
+  const todayIso = toIsoDate(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
 
   const load = useCallback(async () => {
     if (!employeeId) {
@@ -285,19 +290,21 @@ export default function RosterCalendarPage() {
           ) : null}
 
           {employeeId && !loading && !error ? (
-            <div className="space-y-2">
-              <div className="grid grid-cols-7 gap-px overflow-hidden rounded-md border border-border bg-border text-xs font-medium uppercase tracking-wide text-foreground-muted">
+            <div>
+              <div className="grid grid-cols-7 gap-px overflow-hidden rounded-t-2xl border border-border bg-border text-xs font-medium uppercase tracking-wide text-foreground-muted">
                 {WEEKDAY_LABELS.map((label) => (
-                  <div key={label} className="bg-surface-secondary px-2 py-1.5 text-center">
+                  <div key={label} className="bg-surface-secondary px-2 py-3 text-center">
                     {label}
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-px overflow-hidden rounded-md border border-border bg-border">
+              <div className="grid grid-cols-7 gap-px overflow-hidden rounded-b-2xl border border-border bg-border">
                 {weeks.flatMap((week) =>
                   week.map((cell) => {
                     const roster = rosterByDate.get(cell.iso);
                     const dayNumber = Number(cell.iso.slice(8, 10));
+                    const shift = roster?.shift_id ? shiftById.get(roster.shift_id) : undefined;
+                    const sched = roster?.shift_id ? schedules.get(roster.shift_id) : undefined;
                     return (
                       <button
                         key={cell.iso}
@@ -305,28 +312,46 @@ export default function RosterCalendarPage() {
                         onClick={() => openCell(cell.iso)}
                         disabled={!canManage}
                         className={cn(
-                          "flex min-h-24 flex-col items-start gap-1 bg-surface p-2 text-left text-xs transition-colors",
-                          cell.inMonth ? "text-foreground" : "text-foreground-muted/60",
-                          canManage ? "hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" : "cursor-default",
+                          "flex min-h-28 flex-col items-stretch gap-1.5 bg-surface p-2 text-left text-xs transition-colors",
+                          cell.inMonth ? "text-foreground" : "bg-surface-secondary text-foreground-muted/60",
+                          canManage ? "hover:bg-primary-subtle/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" : "cursor-default",
                         )}
                       >
-                        <span className="text-sm font-medium">{dayNumber}</span>
+                        <span
+                          className={cn(
+                            "flex size-6 items-center justify-center rounded-full text-xs font-medium",
+                            cell.iso === todayIso && "bg-primary text-on-primary",
+                          )}
+                        >
+                          {dayNumber}
+                        </span>
                         {roster ? (
-                          <>
-                            <Badge
-                              variant={roster.status === "PUBLISHED" ? "success" : "outline"}
-                              className={cn(roster.status === "DRAFT" && "border-dashed")}
-                            >
-                              {roster.is_week_off_override
+                          <ShiftCard
+                            tone={roster.is_week_off_override ? OFF_TONE : shiftTone(shift)}
+                            draft={roster.status === "DRAFT"}
+                            time={
+                              !roster.is_week_off_override && (sched?.start ?? shift?.start_time)
+                                ? `${hhmm(sched?.start ?? shift?.start_time)} – ${hhmm(sched?.end ?? shift?.end_time)}`
+                                : undefined
+                            }
+                            label={
+                              roster.is_week_off_override
                                 ? "Week off"
                                 : roster.is_holiday_working_override
                                   ? "Holiday working"
-                                  : shiftLabel(roster.shift_id ? shiftById.get(roster.shift_id) : undefined) || "Shift"}
-                            </Badge>
+                                  : (shift ? (shift.code ?? shift.name) : "Shift")
+                            }
+                            subLabel={
+                              !roster.is_week_off_override && shift?.code && shift.name !== shift.code
+                                ? shift.name
+                                : undefined
+                            }
+                            breakMins={roster.is_week_off_override ? 0 : (sched?.breakMinutes ?? 0)}
+                          >
                             {roster.status === "DRAFT" ? (
-                              <span className="text-[10px] text-foreground-muted">Draft</span>
+                              <span className="mt-1 block text-[10px] font-normal opacity-75">Draft</span>
                             ) : null}
-                          </>
+                          </ShiftCard>
                         ) : null}
                       </button>
                     );
