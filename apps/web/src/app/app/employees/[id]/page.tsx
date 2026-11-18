@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { EmployeeAttendancePanel } from "@/components/attendance/employee-attendance-panel";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
+import { AssignmentChangeDialog } from "@/components/employee/assignment-change-dialog";
 import { AssignmentPanel } from "@/components/employee/assignment-panel";
 import { BankingPanel } from "@/components/employee/banking-panel";
 import { CompensationPanel } from "@/components/employee/compensation-panel";
@@ -47,7 +48,7 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { employeeFullName } from "@/lib/employee/names";
-import type { Employee } from "@/lib/employee/types";
+import type { AssignmentChangeType, Employee } from "@/lib/employee/types";
 import {
   buildUpdatePatch,
   employeeToFormValues,
@@ -90,6 +91,11 @@ export default function EmployeeDetailPage() {
   }
 
   const [editing, setEditing] = useState(false);
+  // The assignment-change dialog, opened from the Overview's edit buttons.
+  const [workDialog, setWorkDialog] = useState<{ open: boolean; changeType: AssignmentChangeType | "" }>({
+    open: false,
+    changeType: "",
+  });
   const [formValues, setFormValues] = useState<EmployeeFormValues | null>(null);
   const [formErrors, setFormErrors] = useState<EmployeeFormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -333,6 +339,7 @@ export default function EmployeeDetailPage() {
   const canDeactivate = can("EMPLOYEE.DEACTIVATE");
   const canConfirm = can("EMPLOYEE.CONFIRM");
   const canInvite = can("EMPLOYEE.INVITE");
+  const canChangeWork = can("EMPLOYEE.TRANSFER") || can("EMPLOYEE.PROMOTE");
 
   return (
     <div className="space-y-6">
@@ -459,6 +466,13 @@ export default function EmployeeDetailPage() {
               work={work.data}
               workLoading={work.loading}
               workError={work.error}
+              actions={{
+                canEditDetails: canUpdate,
+                canChangeWork,
+                onEditDetails: startEditing,
+                onChangeWork: (changeType) => setWorkDialog({ open: true, changeType }),
+                onOpenSection: setTab,
+              }}
             />
           ) : null}
           {tab === "employment" ? <EmploymentPanel employeeId={employee.id} /> : null}
@@ -480,6 +494,16 @@ export default function EmployeeDetailPage() {
           ) : null}
           </div>
         </div>
+      ) : null}
+
+      {employee ? (
+        <AssignmentChangeDialog
+          employeeId={employee.id}
+          open={workDialog.open}
+          initialChangeType={workDialog.changeType}
+          onOpenChange={(open) => setWorkDialog((prev) => ({ ...prev, open }))}
+          onSaved={() => work.reload()}
+        />
       ) : null}
 
       <Dialog
