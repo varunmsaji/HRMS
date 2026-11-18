@@ -93,6 +93,16 @@ void main() {
       expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Leave 1'), findsOneWidget);
     });
 
+    testWidgets('late arrivals, punctuality and hours come from the month rows', (tester) async {
+      await _pumpMonth(tester, _Repo([_row('d1', yesterdayish, 'PRESENT', over: {'is_late': true, 'late_minutes': 30})]));
+      Finder figure(String label, String text) => find.descendant(of: find.byKey(Key('month-figure-$label')), matching: find.text(text));
+      expect(figure('Late arrivals', '1'), findsOneWidget);
+      expect(figure('Late arrivals', '0h 30m in total'), findsOneWidget);
+      expect(figure('Punctuality', '0%'), findsOneWidget);
+      expect(figure('Hours worked', '8h 30m'), findsOneWidget);
+      expect(figure('Hours worked', '8h 30m a day on average'), findsOneWidget);
+    });
+
     testWidgets('today carries a ring', (tester) async {
       await _pumpMonth(tester, _Repo([]));
       final ringed = tester.widgetList<Container>(find.byType(Container)).where((c) {

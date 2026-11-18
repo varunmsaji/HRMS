@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/ui.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/employee_analytics.dart';
+import 'accent_stat_tile.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart' show attendanceBucketLabels;
 import 'attendance_widgets.dart' show AttendanceStatusBadge;
@@ -261,21 +263,6 @@ class _EmployeeInsightsState extends ConsumerState<EmployeeInsights> {
 
   // ---- Month ----------------------------------------------------------------------------------
 
-  Widget _tile(BuildContext context, String label, String value, {String? hint, Color? tone}) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      key: Key('insights-tile-$label'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant)),
-        const SizedBox(height: 2),
-        Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: tone, fontFeatures: const [FontFeature.tabularFigures()])),
-        if (hint != null) Text(hint, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      ]),
-    );
-  }
-
   Widget _monthCard(BuildContext context, String today) {
     final days = _days;
     final thisMonth = today.substring(0, 7);
@@ -306,20 +293,73 @@ class _EmployeeInsightsState extends ConsumerState<EmployeeInsights> {
 
   Widget _tiles(BuildContext context, MonthStats s) {
     final scheme = Theme.of(context).colorScheme;
-    final tiles = [
-      _tile(context, 'Days worked', formatWorkedDays(s.daysWorked), hint: 'of ${s.expectedDays} working days'),
-      _tile(context, 'Absent', '${s.absent}', tone: s.absent > 0 ? scheme.error : null, hint: s.leave > 0 ? '${s.leave} on leave' : 'No leave taken'),
-      _tile(context, 'Late arrivals', '${s.lateDays}', hint: s.lateDays > 0 ? '${formatMinutes(s.lateMinutes)} in total' : 'None'),
-      _tile(context, 'Punctuality', s.punctuality == null ? '—' : '${s.punctuality}%', hint: 'days on time'),
-      _tile(context, 'Hours worked', formatMinutes(s.workedMinutes), hint: s.missingPunch > 0 ? '${s.missingPunch} missing a punch' : null),
-      _tile(context, 'Average a day', s.avgWorkedMinutes == null ? '—' : formatMinutes(s.avgWorkedMinutes)),
-      _tile(context, 'Overtime', formatMinutes(s.otApprovedMinutes), hint: s.otDetectedMinutes > s.otApprovedMinutes ? '${formatMinutes(s.otDetectedMinutes)} detected' : 'approved'),
-      _tile(context, 'Early exits', '${s.earlyOutDays}', hint: s.earlyOutDays > 0 ? '${formatMinutes(s.earlyOutMinutes)} in total' : 'None'),
-    ];
-    return LayoutBuilder(builder: (context, c) {
-      final w = (c.maxWidth - 10) / 2;
-      return Wrap(spacing: 10, runSpacing: 10, children: [for (final t in tiles) SizedBox(width: w, child: t)]);
-    });
+    final c = Theme.of(context).extension<AppStatusColors>() ?? AppStatusColors.light;
+    final primarySubtle = scheme.primary.withValues(alpha: 0.12);
+    return AccentStatGrid(keyPrefix: 'insights-tile-', stats: [
+      AccentStat(
+        'Days worked',
+        formatWorkedDays(s.daysWorked),
+        icon: Icons.event_available_rounded,
+        accent: c.success,
+        accentSubtle: c.successSubtle,
+        hint: 'of ${s.expectedDays} working days',
+        progress: s.expectedDays > 0 ? s.daysWorked / s.expectedDays * 100 : null,
+      ),
+      AccentStat(
+        'Absent',
+        '${s.absent}',
+        icon: Icons.person_off_rounded,
+        accent: c.danger,
+        accentSubtle: c.dangerSubtle,
+        tone: s.absent > 0 ? scheme.error : null,
+        hint: s.leave > 0 ? '${s.leave} on leave' : 'No leave taken',
+      ),
+      AccentStat(
+        'Late arrivals',
+        '${s.lateDays}',
+        icon: Icons.schedule_rounded,
+        accent: c.warning,
+        accentSubtle: c.warningSubtle,
+        tone: s.lateDays > 0 ? c.warning : null,
+        hint: s.lateDays > 0 ? '${formatMinutes(s.lateMinutes)} in total' : 'None',
+      ),
+      AccentStat(
+        'Punctuality',
+        s.punctuality == null ? '—' : '${s.punctuality}%',
+        icon: Icons.track_changes_rounded,
+        accent: scheme.primary,
+        accentSubtle: primarySubtle,
+        hint: 'days on time',
+        progress: s.punctuality?.toDouble(),
+        showPercent: false,
+      ),
+      AccentStat(
+        'Hours worked',
+        formatMinutes(s.workedMinutes),
+        icon: Icons.timer_outlined,
+        accent: c.info,
+        accentSubtle: c.infoSubtle,
+        hint: s.missingPunch > 0 ? '${s.missingPunch} missing a punch' : null,
+      ),
+      AccentStat('Average a day', s.avgWorkedMinutes == null ? '—' : formatMinutes(s.avgWorkedMinutes), icon: Icons.speed_rounded, accent: c.info, accentSubtle: c.infoSubtle),
+      AccentStat(
+        'Overtime',
+        formatMinutes(s.otApprovedMinutes),
+        icon: Icons.trending_up_rounded,
+        accent: c.onLeave,
+        accentSubtle: c.onLeaveSubtle,
+        hint: s.otDetectedMinutes > s.otApprovedMinutes ? '${formatMinutes(s.otDetectedMinutes)} detected' : 'approved',
+      ),
+      AccentStat(
+        'Early exits',
+        '${s.earlyOutDays}',
+        icon: Icons.logout_rounded,
+        accent: c.warning,
+        accentSubtle: c.warningSubtle,
+        tone: s.earlyOutDays > 0 ? c.warning : null,
+        hint: s.earlyOutDays > 0 ? '${formatMinutes(s.earlyOutMinutes)} in total' : 'None',
+      ),
+    ]);
   }
 
   Widget _calendar(BuildContext context, List<AttendanceDay> days, String today) {

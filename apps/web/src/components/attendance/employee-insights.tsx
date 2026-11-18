@@ -1,10 +1,22 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  CalendarCheck,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Gauge,
+  LogOut,
+  Target,
+  Timer,
+  TrendingUp,
+  UserX,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { StatTile as Tile } from "@/components/attendance/stat-tile";
 import {
   DailyHoursChart,
   StatusBreakdown,
@@ -80,35 +92,6 @@ function monthTitle(month: string): string {
     year: "numeric",
     timeZone: "UTC",
   });
-}
-
-function Tile({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: string;
-}) {
-  return (
-    <div className="min-w-0 rounded-xl border border-border-subtle bg-surface-secondary/60 px-4 py-3">
-      <dt className="text-xs font-medium text-foreground-muted">{label}</dt>
-      <dd
-        className={cn(
-          "mt-1 truncate text-xl font-semibold tabular-nums text-foreground",
-          tone,
-        )}
-      >
-        {value}
-      </dd>
-      {hint ? (
-        <p className="mt-0.5 truncate text-xs text-foreground-muted">{hint}</p>
-      ) : null}
-    </div>
-  );
 }
 
 function Fact({
@@ -377,14 +360,23 @@ export function EmployeeInsights({
           <Skeleton className="mt-4 h-40 w-full" />
         ) : (
           <>
-            <dl className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <dl className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
               <Tile
                 label="Days worked"
+                icon={CalendarCheck}
+                accent="success"
+                progress={
+                  stats.expectedDays > 0
+                    ? (stats.daysWorked / stats.expectedDays) * 100
+                    : null
+                }
                 value={formatDayCount(stats.daysWorked)}
                 hint={`of ${stats.expectedDays} working days`}
               />
               <Tile
                 label="Absent"
+                icon={UserX}
+                accent="danger"
                 value={String(stats.absent)}
                 tone={stats.absent > 0 ? "text-danger" : undefined}
                 hint={
@@ -393,6 +385,9 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Late arrivals"
+                icon={Clock}
+                accent="warning"
+                tone={stats.lateDays > 0 ? "text-warning" : undefined}
                 value={String(stats.lateDays)}
                 hint={
                   stats.lateDays > 0
@@ -402,6 +397,10 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Punctuality"
+                icon={Target}
+                accent="primary"
+                progress={stats.punctuality}
+                showPercent={false}
                 value={
                   stats.punctuality === null ? "—" : `${stats.punctuality}%`
                 }
@@ -409,6 +408,8 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Hours worked"
+                icon={Timer}
+                accent="info"
                 value={formatMinutes(stats.workedMinutes)}
                 hint={
                   stats.missingPunch > 0
@@ -418,6 +419,8 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Average a day"
+                icon={Gauge}
+                accent="info"
                 value={
                   stats.avgWorkedMinutes === null
                     ? "—"
@@ -426,6 +429,8 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Overtime"
+                icon={TrendingUp}
+                accent="leave"
                 value={formatMinutes(stats.otApprovedMinutes)}
                 hint={
                   stats.otDetectedMinutes > stats.otApprovedMinutes
@@ -435,6 +440,9 @@ export function EmployeeInsights({
               />
               <Tile
                 label="Early exits"
+                icon={LogOut}
+                accent="warning"
+                tone={stats.earlyOutDays > 0 ? "text-warning" : undefined}
                 value={String(stats.earlyOutDays)}
                 hint={
                   stats.earlyOutDays > 0

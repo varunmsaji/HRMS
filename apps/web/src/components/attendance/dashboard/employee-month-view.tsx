@@ -1,6 +1,18 @@
+import {
+  CalendarCheck,
+  CalendarOff,
+  Clock,
+  Hourglass,
+  LogOut,
+  Plane,
+  Timer,
+  TrendingUp,
+  UserX,
+} from "lucide-react";
 import Link from "next/link";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { StatTile, type StatTileProps } from "@/components/attendance/stat-tile";
 import { MonthCalendar } from "@/components/attendance/dashboard/month-calendar";
 import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -37,25 +49,28 @@ export function EmployeeMonthView({ month, days, regularizations, regularization
   const summary = summarizeMonth(days);
   const c = summary.counts;
   const issues = days.filter(hasException).sort((a, b) => b.attendance_date.localeCompare(a.attendance_date));
-  const stats: [string, string][] = [
-    ["Present", String(c.PRESENT + c.REMOTE + c.ON_DUTY)],
-    ["Half days", String(c.HALF_DAY)],
-    ["Absent", String(c.ABSENT)],
-    ["On leave", String(c.LEAVE)],
-    ["Holidays / weekly offs", String(c.HOLIDAY + c.WEEKLY_OFF)],
-    ["Late arrivals", String(summary.late)],
-    ["Early departures", String(summary.earlyOut)],
-    ["Worked", formatMinutes(summary.workedMinutes)],
-    ["Overtime", summary.otDetectedMinutes > 0 ? `${formatMinutes(summary.otDetectedMinutes)} (${formatMinutes(summary.otApprovedMinutes)} approved)` : "None"],
+  const stats: StatTileProps[] = [
+    { label: "Present", value: String(c.PRESENT + c.REMOTE + c.ON_DUTY), icon: CalendarCheck, accent: "success" },
+    { label: "Half days", value: String(c.HALF_DAY), icon: Hourglass, accent: "warning" },
+    { label: "Absent", value: String(c.ABSENT), icon: UserX, accent: "danger", tone: c.ABSENT > 0 ? "text-danger" : undefined },
+    { label: "On leave", value: String(c.LEAVE), icon: Plane, accent: "leave" },
+    { label: "Holidays / weekly offs", value: String(c.HOLIDAY + c.WEEKLY_OFF), icon: CalendarOff, accent: "holiday" },
+    { label: "Late arrivals", value: String(summary.late), icon: Clock, accent: "warning", tone: summary.late > 0 ? "text-warning" : undefined },
+    { label: "Early departures", value: String(summary.earlyOut), icon: LogOut, accent: "warning", tone: summary.earlyOut > 0 ? "text-warning" : undefined },
+    { label: "Worked", value: formatMinutes(summary.workedMinutes), icon: Timer, accent: "info" },
+    {
+      label: "Overtime",
+      value: summary.otDetectedMinutes > 0 ? formatMinutes(summary.otDetectedMinutes) : "None",
+      hint: summary.otDetectedMinutes > 0 ? `${formatMinutes(summary.otApprovedMinutes)} approved` : undefined,
+      icon: TrendingUp,
+      accent: "leave",
+    },
   ];
   return (
     <div className="space-y-6">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-md border border-border p-3">
-            <dt className="text-xs text-foreground-muted">{label}</dt>
-            <dd className="mt-1 text-lg font-semibold tabular-nums text-foreground">{value}</dd>
-          </div>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        {stats.map((stat) => (
+          <StatTile key={stat.label} {...stat} />
         ))}
       </dl>
 

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/providers.dart';
 import '../../../core/requests/request_screens.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/employee/employee_status_chip.dart';
 import '../../../core/widgets/employee/layout.dart';
@@ -13,6 +14,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/employee_attendance_summary.dart';
 import '../domain/request_resources.dart';
+import 'accent_stat_tile.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_month_card.dart';
 import 'attendance_summary.dart';
@@ -160,21 +162,23 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
   List<Widget> _monthSections(BuildContext context) {
     final theme = Theme.of(context);
     final s = AttendanceRangeSummary.compute(_monthDays);
+    final c = theme.extension<AppStatusColors>() ?? AppStatusColors.light;
     final issues = [for (final d in _monthDays) if (hasAttendanceException(d)) d]..sort((a, b) => b.attendanceDate.compareTo(a.attendanceDate));
     final note = _regsLoading ? 'Loading requests…' : (_regsFailed ? "Correction requests couldn't be loaded." : null);
     return [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: StatTiles(stats: [
-          ('Present', '${s.present}'),
-          ('Half days', '${s.count('HALF_DAY')}'),
-          ('Absent', '${s.count('ABSENT')}'),
-          ('On leave', '${s.count('LEAVE')}'),
-          ('Holidays / weekly offs', '${s.count('HOLIDAY') + s.count('WEEKLY_OFF')}'),
-          ('Late arrivals', '${s.late}'),
-          ('Early departures', '${s.earlyOut}'),
-          ('Worked', formatMinutes(s.workedMinutes)),
-          ('Overtime', s.otDetectedMinutes > 0 ? '${formatMinutes(s.otDetectedMinutes)} (${formatMinutes(s.otApprovedMinutes)} approved)' : 'None'),
+        child: AccentStatGrid(stats: [
+          AccentStat('Present', '${s.present}', icon: Icons.event_available_rounded, accent: c.success, accentSubtle: c.successSubtle),
+          AccentStat('Half days', '${s.count('HALF_DAY')}', icon: Icons.hourglass_bottom_rounded, accent: c.halfDay, accentSubtle: c.halfDaySubtle),
+          AccentStat('Absent', '${s.count('ABSENT')}', icon: Icons.person_off_rounded, accent: c.danger, accentSubtle: c.dangerSubtle, tone: s.count('ABSENT') > 0 ? c.danger : null),
+          AccentStat('On leave', '${s.count('LEAVE')}', icon: Icons.flight_takeoff_rounded, accent: c.onLeave, accentSubtle: c.onLeaveSubtle),
+          AccentStat('Holidays / weekly offs', '${s.count('HOLIDAY') + s.count('WEEKLY_OFF')}', icon: Icons.event_busy_rounded, accent: c.holiday, accentSubtle: c.holidaySubtle),
+          AccentStat('Late arrivals', '${s.late}', icon: Icons.schedule_rounded, accent: c.warning, accentSubtle: c.warningSubtle, tone: s.late > 0 ? c.warning : null),
+          AccentStat('Early departures', '${s.earlyOut}', icon: Icons.logout_rounded, accent: c.warning, accentSubtle: c.warningSubtle, tone: s.earlyOut > 0 ? c.warning : null),
+          AccentStat('Worked', formatMinutes(s.workedMinutes), icon: Icons.timer_outlined, accent: c.info, accentSubtle: c.infoSubtle),
+          AccentStat('Overtime', s.otDetectedMinutes > 0 ? formatMinutes(s.otDetectedMinutes) : 'None',
+              icon: Icons.trending_up_rounded, accent: c.onLeave, accentSubtle: c.onLeaveSubtle, hint: s.otDetectedMinutes > 0 ? '${formatMinutes(s.otApprovedMinutes)} approved' : null),
         ]),
       ),
       const EmployeeSectionHeader('Attendance issues'),
@@ -238,6 +242,8 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
                 employeeId: widget.employeeId,
                 zone: _zone,
                 now: widget.now,
+                // The month grid just below already has late arrivals, hours and the rest.
+                showFigures: false,
                 onLoaded: (month, days) => setState(() {
                   _month = month;
                   _monthDays = days;
