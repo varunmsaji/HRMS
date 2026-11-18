@@ -102,8 +102,9 @@ void main() {
       child: MaterialApp(home: EmployeeDetailScreen(employee: Employee.fromJson(_employee(1, 'Asha')))),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('Compensation'), findsOneWidget);
-    expect(find.text('Salary'), findsOneWidget);
+    final tabs = find.byType(TabBar);
+    expect(find.descendant(of: tabs, matching: find.text('Compensation')), findsOneWidget);
+    expect(find.descendant(of: tabs, matching: find.text('Salary')), findsOneWidget);
   });
 
   testWidgets('the record offers Email, says "Confirm employment", and keeps Deactivate in the menu (MOB-UX-045/046)', (tester) async {

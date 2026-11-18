@@ -28,9 +28,11 @@ class _FakeEmployees implements EmployeeRepository {
   final EmployeeWorkSummary? work;
   final ApiError? workError;
   final List<EmployeeDocumentRow>? documents;
+  int workLoads = 0;
 
   @override
   Future<EmployeeWorkSummary> workSummary(String employeeId) async {
+    workLoads += 1;
     if (workError != null) throw workError!;
     return work!;
   }
@@ -66,7 +68,7 @@ class _FakeLeave implements LeaveRepository {
 
 final _now = DateTime.utc(2026, 11, 18, 6);
 
-Future<void> _pump(WidgetTester tester, {required _FakeEmployees employees, required _FakeLeave leave}) async {
+Future<void> _pump(WidgetTester tester, {required _FakeEmployees employees, required _FakeLeave leave, OverviewActions? overview}) async {
   tester.view.physicalSize = const Size(800, 4000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -76,7 +78,7 @@ Future<void> _pump(WidgetTester tester, {required _FakeEmployees employees, requ
       leaveRepositoryProvider.overrideWithValue(leave),
       fakeAuth(const []),
     ],
-    child: MaterialApp(home: Scaffold(body: EmployeeOverview(employee: _employee(), now: _now))),
+    child: MaterialApp(home: Scaffold(body: EmployeeOverview(employee: _employee(), overview: overview, now: _now))),
   ));
   await tester.pumpAndSettle();
 }
@@ -149,5 +151,114 @@ void main() {
     expect(find.byKey(const Key('overview-leave-balances')), findsNothing);
     expect(find.byKey(const Key('overview-documents')), findsNothing);
     expect(find.byKey(const Key('overview-work')), findsOneWidget);
+  });
+
+  group('edit controls', () {
+    final changes = <String?>[];
+    final opened = <String>[];
+    var editedDetails = 0;
+    var saved = true;
+
+    OverviewActions actions({bool update = true, bool change = true, List<String> sections = const ['Employment', 'Compensation', 'Banking', 'Documents']}) => OverviewActions(
+          canEditDetails: update,
+          canChangeWork: change,
+          onEditDetails: () => editedDetails += 1,
+          onChangeWork: (t) async {
+            changes.add(t);
+            return saved;
+          },
+          onOpenSection: opened.add,
+          openableSections: sections,
+        );
+
+    setUp(() {
+      changes.clear();
+      opened.clear();
+      editedDetails = 0;
+      saved = true;
+    });
+
+    testWidgets('Change shift and Change assignment open the assignment form, and a save reloads the work card', (tester) async {
+      final employees = _FakeEmployees(work: _work(), documents: const []);
+      await _pump(tester, employees: employees, leave: _FakeLeave(balances: const []), overview: actions());
+      expect(employees.workLoads, 1);
+      await tester.tap(find.byKey(const Key('overview-change-shift')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('overview-change-assignment')));
+      await tester.pumpAndSettle();
+      expect(changes, ['SHIFT_CHANGE', null]);
+      expect(employees.workLoads, 3);
+    });
+
+    testWidgets('a cancelled change does not reload', (tester) async {
+      saved = false;
+      final employees = _FakeEmployees(work: _work(), documents: const []);
+      await _pump(tester, employees: employees, leave: _FakeLeave(balances: const []), overview: actions());
+      await tester.tap(find.byKey(const Key('overview-change-shift')));
+      await tester.pumpAndSettle();
+      expect(employees.workLoads, 1);
+    });
+
+    testWidgets('each row pencil preselects the fitting change type', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []), overview: actions());
+      for (final label in ['designation', 'department', 'reporting manager', 'branch', 'work location', 'shift']) {
+        await tester.tap(find.byTooltip('Edit $label'));
+        await tester.pumpAndSettle();
+      }
+      expect(changes, ['PROMOTION', 'TRANSFER', 'MANAGER_CHANGE', 'TRANSFER', 'TRANSFER', 'SHIFT_CHANGE']);
+    });
+
+    testWidgets('without transfer or promote there are no work controls, but employment still opens its section', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []), overview: actions(change: false));
+      expect(find.byKey(const Key('overview-change-shift')), findsNothing);
+      expect(find.byTooltip('Edit department'), findsNothing);
+      await tester.tap(find.byKey(const Key('overview-edit-employment')));
+      await tester.pumpAndSettle();
+      expect(opened, ['Employment']);
+      await tester.tap(find.byTooltip('Edit pay basis'));
+      expect(opened, ['Employment', 'Employment']);
+    });
+
+    testWidgets('personal details show only what is filled, list what is missing once, and Add details edits', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []), overview: actions());
+      final personal = find.byKey(const Key('overview-personal'));
+      expect(find.descendant(of: personal, matching: find.text('Legal name')), findsOneWidget);
+      expect(find.descendant(of: personal, matching: find.text('Gender')), findsNothing);
+      final missing = tester.widget<Text>(find.descendant(of: find.byKey(const Key('overview-not-added')), matching: find.byType(Text)).first);
+      expect(missing.textSpan!.toPlainText(), startsWith('Not added yet: Gender, Marital status, Blood group, Nationality, Personal email, Personal mobile'));
+      await tester.tap(find.text('Add details'));
+      await tester.tap(find.text('Edit'));
+      expect(editedDetails, 2);
+    });
+
+    testWidgets('without update access there is no Edit or Add details', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []), overview: actions(update: false));
+      expect(find.text('Add details'), findsNothing);
+      expect(find.byKey(const Key('overview-not-added')), findsOneWidget);
+    });
+
+    testWidgets('More to edit links only the sections the viewer can open', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []), overview: actions());
+      final more = find.byKey(const Key('overview-more-to-edit'));
+      expect(find.descendant(of: more, matching: find.text('Banking')), findsOneWidget);
+      expect(find.descendant(of: more, matching: find.text('Statutory')), findsNothing);
+      await tester.tap(find.descendant(of: more, matching: find.text('Banking')));
+      expect(opened, ['Banking']);
+    });
+
+    testWidgets('My Profile (no actions) has no edit controls, no More to edit and no attendance analytics', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []));
+      expect(find.byKey(const Key('overview-change-shift')), findsNothing);
+      expect(find.byKey(const Key('overview-edit-employment')), findsNothing);
+      expect(find.byKey(const Key('overview-more-to-edit')), findsNothing);
+      expect(find.byKey(const Key('employee-insights')), findsNothing);
+      expect(find.byTooltip('Edit shift'), findsNothing);
+    });
+
+    testWidgets('the header shows the shift and the time with the company', (tester) async {
+      await _pump(tester, employees: _FakeEmployees(work: _work(), documents: const []), leave: _FakeLeave(balances: const []));
+      expect(find.text('Shift General'), findsOneWidget);
+      expect(find.text('Time with company 2 yrs 7 mos'), findsOneWidget);
+    });
   });
 }
