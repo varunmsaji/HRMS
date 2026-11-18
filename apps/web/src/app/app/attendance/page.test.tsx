@@ -51,6 +51,7 @@ const ADMIN_PERMISSIONS = [
   "ORG.LEGAL_ENTITY.MANAGE",
   "ATTENDANCE.REGULARIZATION_APPROVE",
   "ATTENDANCE.OVERTIME_APPROVE",
+  "ATTENDANCE.RECOMPUTE",
 ];
 
 // `employment_joining_date`/`employment_last_working_day` (F-1 remediation) — all three joined
@@ -194,6 +195,16 @@ function inList() {
   return within(document.getElementById("att-whos-in") as HTMLElement);
 }
 
+/** The headcount line in the summary ("3 employees · …"); it is text, not a card. */
+function total(n: number) {
+  return within(kpiRegion()).getByText(new RegExp(`^${n} employees? · `));
+}
+
+async function findTotal(n: number) {
+  const region = await screen.findByRole("region", { name: "Attendance summary" });
+  return within(region).findByText(new RegExp(`^${n} employees? · `));
+}
+
 async function findKpi(name: RegExp) {
   const region = await screen.findByRole("region", { name: "Attendance summary" });
   return within(region).findByRole("button", { name });
@@ -226,7 +237,7 @@ describe("AttendanceDashboardPage", () => {
       mockApi({ days: [], employees: [] });
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/no attendance days match these filters/i)).toBeInTheDocument();
-      expect(kpi(/^Total employees: 0\./)).toBeInTheDocument();
+      expect(total(0)).toBeInTheDocument();
     });
 
     it("shows the permission-denied message on a 403", async () => {
@@ -279,7 +290,7 @@ describe("AttendanceDashboardPage", () => {
       expect(present).toHaveTextContent("66.7% of workforce");
       expect(kpi(/^Absent: 1\./)).toHaveTextContent("33.3% of workforce");
       expect(kpi(/^Late: 1\./)).toHaveTextContent("33.3% of checked-in employees".replace("33.3", "50.0"));
-      expect(kpi(/^Total employees: 3\./)).toBeInTheDocument();
+      expect(total(3)).toBeInTheDocument();
     });
 
     it("counts active employees with no attendance row yet as not checked in", async () => {
@@ -288,7 +299,24 @@ describe("AttendanceDashboardPage", () => {
       // emp-3 has no row today.
       const card = await findKpi(/^Not checked in: 1\./);
       expect(card).toBeInTheDocument();
-      expect(kpi(/^Total employees: 3\./)).toHaveTextContent("1 with no record yet");
+      expect(total(3)).toHaveTextContent("1 with no record yet");
+    });
+
+    it("says when the figures were loaded", async () => {
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      await screen.findByRole("heading", { name: /today's attendance/i });
+      expect(screen.getByText(/not a live presence feed\. Loaded at \d/i)).toBeInTheDocument();
+    });
+
+    it("shows no comparison chips, and no 'nobody expected', before anything is calculated for the day", async () => {
+      mockApi({ days: [], employees: EMPLOYEES });
+      render(<AttendanceDashboardPage />);
+      await findTotal(3);
+      expect(screen.queryByText(/vs last/)).not.toBeInTheDocument();
+      expect(screen.queryByText("No comparison yet")).not.toBeInTheDocument();
+      expect(screen.queryByText("Nobody was expected to work on this day.")).not.toBeInTheDocument();
+      expect(screen.getByText("Attendance for today hasn't been calculated yet.")).toBeInTheDocument();
     });
 
     it("labels the list as today's attendance, never 'live'", async () => {
@@ -342,7 +370,7 @@ describe("AttendanceDashboardPage", () => {
       mockApi({ days: [], employees: [stillActive, terminated] });
       render(<AttendanceDashboardPage />);
       // Only emp-2 (still employed) should inflate the count — terminated emp-3 must not.
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
       expect(kpi(/^Not checked in: 1\./)).toBeInTheDocument();
       expect(inList().queryAllByText("Chitra Nair")).toHaveLength(0);
       expect(inList().getAllByText("Ben Iyer").length).toBeGreaterThan(0);
@@ -351,7 +379,7 @@ describe("AttendanceDashboardPage", () => {
     it("excludes an employee who joins after today", async () => {
       mockApi({ days: [], employees: [stillActive, notYetJoined] });
       render(<AttendanceDashboardPage />);
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
       expect(inList().queryAllByText("Dev Shah")).toHaveLength(0);
     });
 
@@ -360,12 +388,12 @@ describe("AttendanceDashboardPage", () => {
       const { unmount } = render(<AttendanceDashboardPage />);
       // Same inputs, rendered twice independently (fresh mount each time) — both must land on
       // the one genuinely-employed person (emp-2), never the terminated emp-3.
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
       unmount();
 
       mockApi({ days: [], employees: [stillActive, terminated] });
       render(<AttendanceDashboardPage />);
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
     });
 
     it("does not apply the 'no record yet' inference to a historical date (yesterday)", async () => {
@@ -377,7 +405,7 @@ describe("AttendanceDashboardPage", () => {
       searchParams = new URLSearchParams({ range: "custom", from: yesterday, to: yesterday });
       mockApi({ days: [], employees: [stillActive, terminated] });
       render(<AttendanceDashboardPage />);
-      expect(await findKpi(/^Total employees: 0\./)).toBeInTheDocument();
+      expect(await findTotal(0)).toBeInTheDocument();
       expect(kpi(/^Not checked in: 0\./)).toBeInTheDocument();
     });
   });
@@ -411,16 +439,12 @@ describe("AttendanceDashboardPage", () => {
       expect(screen.getByRole("button", { name: /remove filter late arrivals/i })).toBeInTheDocument();
     });
 
-    it("drills from a status-chart row", async () => {
+    it("drills from a summary tile and comes back to the list from Trends", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
-      searchParams = new URLSearchParams("view=trends");
       render(<AttendanceDashboardPage />);
-      const chart = await screen.findByRole("heading", { name: /status distribution/i });
-      const card = chart.closest("[id='att-status']") as HTMLElement;
-      await user.click(within(card).getByRole("button", { name: /^Absent: 1\./ }));
+      await user.click(await findKpi(/^Absent: 1\./));
       await waitFor(() => expect(inList().queryAllByText("Asha Rao")).toHaveLength(0));
-      // The list lives on the Today view, so a drill from Trends brings the user back to it.
       expect(screen.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
     });
 
@@ -462,9 +486,14 @@ describe("AttendanceDashboardPage", () => {
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
       await findKpi(/^Absent: 1\./);
-      await user.selectOptions(screen.getByLabelText("Employee"), "emp-2");
-      await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
+      // Type to find the person, pick the match: no dropdown listing everyone.
+      await user.type(screen.getByRole("combobox", { name: "Employee" }), "ben");
+      await user.click(await screen.findByRole("option", { name: /Ben Iyer/ }));
+      await waitFor(() => expect(total(1)).toBeInTheDocument());
       expect(kpi(/^Absent: 0\./)).toBeInTheDocument();
+      // The choice shows as a pill that clears it.
+      await user.click(screen.getByRole("button", { name: /^Clear employee/ }));
+      await waitFor(() => expect(total(3)).toBeInTheDocument());
     });
 
     it("filters by shift using the shift names the API returned", async () => {
@@ -475,7 +504,7 @@ describe("AttendanceDashboardPage", () => {
       await user.click(screen.getByRole("button", { name: /more filters/i }));
       const shiftSelect = await screen.findByLabelText("Shift");
       await user.selectOptions(shiftSelect, "shift-1");
-      await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
+      await waitFor(() => expect(total(1)).toBeInTheDocument());
     });
 
     it("filters by employment status from the employee directory", async () => {
@@ -485,7 +514,7 @@ describe("AttendanceDashboardPage", () => {
       await findKpi(/^Absent: 1\./);
       await user.click(screen.getByRole("button", { name: /more filters/i }));
       await user.selectOptions(await screen.findByLabelText("Employment status"), "PROBATION");
-      await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
+      await waitFor(() => expect(total(1)).toBeInTheDocument());
       expect(kpi(/^Absent: 1\./)).toBeInTheDocument();
     });
 
@@ -552,20 +581,20 @@ describe("AttendanceDashboardPage", () => {
       await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith(`/app/attendance?dept=${GROUP_IDS.Sales}&view=trends`, { scroll: false }));
       expect(await screen.findByRole("button", { name: /remove filter department: sales/i })).toBeInTheDocument();
       await user.click(screen.getByRole("tab", { name: "Today" }));
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
       expect(kpi(/^Absent: 1\./)).toBeInTheDocument();
 
       await user.click(screen.getByRole("tab", { name: "Trends" }));
       await user.click(await screen.findByRole("button", { name: /^Sales: .*Clear department/ }));
       await user.click(screen.getByRole("tab", { name: "Today" }));
-      expect(await findKpi(/^Total employees: 3\./)).toBeInTheDocument();
+      expect(await findTotal(3)).toBeInTheDocument();
     });
 
     it("restores a department filter from a shared link", async () => {
       searchParams = new URLSearchParams(`dept=${ENG}`);
       mockApi({ days: sampleDays(), directory: DIRECTORY });
       render(<AttendanceDashboardPage />);
-      expect(await findKpi(/^Total employees: 2\./)).toBeInTheDocument();
+      expect(await findTotal(2)).toBeInTheDocument();
       expect(kpi(/^Absent: 0\./)).toBeInTheDocument();
     });
 
@@ -576,7 +605,7 @@ describe("AttendanceDashboardPage", () => {
       await findKpi(/^Absent: 1\./);
       await user.click(screen.getByRole("button", { name: /more filters/i }));
       await user.selectOptions(await screen.findByLabelText("Branch"), "Mumbai");
-      await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
+      await waitFor(() => expect(total(1)).toBeInTheDocument());
       expect(screen.getByRole("button", { name: /remove filter branch: mumbai/i })).toBeInTheDocument();
     });
 
@@ -593,7 +622,7 @@ describe("AttendanceDashboardPage", () => {
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/applies to the totals but not to the employee lists/i)).toBeInTheDocument();
       // The backend applies the filter: only Chitra is in Sales.
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
       expect(inList().getAllByText("Asha Rao").length).toBeGreaterThan(0);
     });
 
@@ -614,7 +643,7 @@ describe("AttendanceDashboardPage", () => {
       expect(screen.getByRole("status", { name: /loading attendance/i })).toBeInTheDocument();
       expect(screen.queryByRole("region", { name: "Attendance summary" })).not.toBeInTheDocument();
       await act(async () => release(DIRECTORY));
-      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(await findTotal(1)).toBeInTheDocument();
     });
 
     it("compares departments from the summary alone, without permission to list employees", async () => {
@@ -651,9 +680,9 @@ describe("AttendanceDashboardPage", () => {
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
       await findKpi(/^Absent: 1\./);
-      await user.click(screen.getByRole("tab", { name: "Muster" }));
-      expect(await screen.findByRole("heading", { name: /attendance heatmap/i })).toBeInTheDocument();
-      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?view=muster", { scroll: false }));
+      await user.click(screen.getByRole("tab", { name: "Trends" }));
+      expect(await screen.findByRole("heading", { name: /attendance trend/i })).toBeInTheDocument();
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?view=trends", { scroll: false }));
       await user.click(screen.getByRole("tab", { name: "Today" }));
       await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance", { scroll: false }));
     });
@@ -666,56 +695,89 @@ describe("AttendanceDashboardPage", () => {
       expect(await screen.findByRole("heading", { name: /attendance trend/i })).toBeInTheDocument();
       screen.getByRole("tab", { name: "Trends" }).focus();
       await user.keyboard("{ArrowRight}");
-      expect(screen.getByRole("tab", { name: "Muster", selected: true })).toHaveFocus();
+      expect(screen.getByRole("tab", { name: "Reports", selected: true })).toHaveFocus();
+    });
+
+    it("has three tabs: Today, Trends and Reports (Muster and Periods are no longer tabs)", async () => {
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Today", "Trends", "Reports"]);
+    });
+
+    it("keeps links from before the merge working: view=periods is Reports", async () => {
+      searchParams = new URLSearchParams("view=reports");
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByRole("heading", { name: "Reports" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Reports", selected: true })).toBeInTheDocument();
+    });
+  });
+
+  describe("list or grid", () => {
+    it("shows the same people as a day-by-day grid from a switch on the list, and remembers it in the URL", async () => {
+      mockApi({ days: sampleDays() });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      expect(screen.getByRole("button", { name: "list", pressed: true })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "grid" }));
+      expect(await screen.findByRole("heading", { name: "Attendance grid" })).toBeInTheDocument();
+      expect(screen.getByRole("table", { name: /attendance status by employee and day/i })).toBeInTheDocument();
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?layout=grid", { scroll: false }));
+      await user.click(screen.getByRole("button", { name: "list" }));
+      expect(await screen.findByRole("heading", { name: /today's attendance/i })).toBeInTheDocument();
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance", { scroll: false }));
+    });
+
+    it("opens as a grid from a shared link, including the old view=muster link", async () => {
+      searchParams = new URLSearchParams("view=muster");
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByRole("heading", { name: "Attendance grid" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Today", selected: true })).toBeInTheDocument();
+    });
+
+    it("goes back to the list when a summary tile is clicked, since that tile filters the list", async () => {
+      searchParams = new URLSearchParams("layout=grid");
+      mockApi({ days: sampleDays() });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await user.click(await findKpi(/^Absent: 1\./));
+      expect(await screen.findByRole("heading", { name: /today's attendance/i })).toBeInTheDocument();
     });
   });
 
   describe("company + periods", () => {
-    it("scopes the attendance periods to the chosen company", async () => {
+    it("offers a Company filter under More filters, and scopes the payroll period to it", async () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
       const user = userEvent.setup();
-      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
-      const select = await screen.findByLabelText("Company (periods)");
-      await user.selectOptions(select, "le-2");
-      await waitFor(() =>
-        expect(mockedGet).toHaveBeenCalledWith("/attendance-periods?legal_entity_id=le-2"),
-      );
+      await user.click(await screen.findByRole("button", { name: /more filters/i }));
+      await user.selectOptions(await screen.findByLabelText("Company"), "le-2");
+      await waitFor(() => expect(mockedGet).toHaveBeenCalledWith("/attendance-periods?legal_entity_id=le-2"));
       expect(screen.getByRole("button", { name: /remove filter company: abc services llp/i })).toBeInTheDocument();
     });
 
-    it("shows period state with its entity, and surfaces a blocked period as a payroll blocker", async () => {
+    it("surfaces a blocked period as a payroll blocker, with no period panels left on the dashboard", async () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
-      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
-      const section = (await screen.findByRole("heading", { name: /attendance periods/i })).closest("[id='att-periods']") as HTMLElement;
-      expect(await within(section).findByText("Current month")).toBeInTheDocument();
-      expect(within(section).getByText(/ABC India Pvt Ltd ·/)).toBeInTheDocument();
-      expect(within(section).getByText("Validation blocked")).toBeInTheDocument();
-      expect(within(section).getByRole("link", { name: /current month/i })).toHaveAttribute("href", "/app/attendance-periods/per-1");
-      await userEvent.setup().click(screen.getByRole("tab", { name: "Today" }));
-      // The blocker shows in Needs attention and again in the payroll-readiness card beside it.
+      // The blocker is listed once, in Needs attention; the payroll line under it is one row that
+      // only says how many items stand in the way and links to the period.
       const attention = (await screen.findByRole("heading", { name: /needs attention/i })).closest("[id='att-attention']") as HTMLElement;
       expect(within(attention).getByText("Payroll period blocked")).toBeInTheDocument();
       const readiness = screen.getByRole("region", { name: "Payroll readiness" });
-      expect(within(readiness).getByText("Payroll period blocked")).toBeInTheDocument();
+      expect(within(readiness).queryByText("Payroll period blocked")).not.toBeInTheDocument();
       expect(within(readiness).getByText("Validation blocked")).toBeInTheDocument();
-    });
+      expect(within(readiness).getByText(/1 item to clear before close/)).toBeInTheDocument();
+      expect(within(readiness).getByRole("link", { name: /open period/i })).toHaveAttribute("href", "/app/attendance-periods/per-1");
 
-    it("totals the period summary for the monthly view", async () => {
-      mockApi({
-        days: sampleDays(),
-        periods: [PERIOD_OPEN],
-        summary: [
-          { employee_id: "emp-1", present_days: "20", absent_days: "1", leave_days: "2", holiday_days: "1", weekly_off_days: "4", half_days: "0", lop_days: "1", on_duty_days: "0", incomplete_days: "0", not_employed_days: "0", unpaid_off_days: "0", paid_days: "29", payable_days: "29", ot_minutes_normal: 60, ot_minutes_weekly_off: 0, ot_minutes_holiday: 0, ot_minutes_night: 0, comp_off_minutes_earned: 0, late_count: 2, worked_minutes_total: 9000, generated_at: "x", frozen: false },
-        ],
-      });
-      searchParams = new URLSearchParams("view=periods");
-      render(<AttendanceDashboardPage />);
-      const section = (await screen.findByRole("heading", { name: /monthly attendance summary/i })).closest("[id='att-monthly']") as HTMLElement;
-      expect(await within(section).findByText("Live preview")).toBeInTheDocument();
-      expect(within(section).getByText("Payable days").nextSibling).toHaveTextContent("29");
-      expect(within(section).getByText("LOP").nextSibling).toHaveTextContent("1");
+      // Period list and monthly summary now live on the Attendance periods page.
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Reports" }));
+      await screen.findByRole("heading", { name: "Reports" });
+      expect(screen.queryByRole("heading", { name: /attendance periods/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /monthly attendance summary/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /payroll → attendance periods/i })).toHaveAttribute("href", "/app/attendance-periods");
     });
   });
 
@@ -735,6 +797,79 @@ describe("AttendanceDashboardPage", () => {
 
       await user.click(within(section).getByRole("button", { name: /view all: missing punches/i }));
       expect(await screen.findByRole("button", { name: /remove filter missing punch/i })).toBeInTheDocument();
+    });
+
+    describe("fixing a mismatch from the list", () => {
+      const missingOut = () =>
+        makeDay({ id: "d-miss", employee_id: "emp-1", attendance_date: TODAY, attendance_status: "INCOMPLETE", missing_punch: true, actual_last_out: null });
+      const rowFor = (name: RegExp) => within(document.getElementById("att-whos-in") as HTMLElement).getAllByText(name)[0].closest("tr") as HTMLElement;
+
+      it("says what is wrong and opens the punch dialog already set to the missing punch-out", async () => {
+        mockApi({ days: [missingOut(), makeDay({ employee_id: "emp-2", attendance_date: TODAY })] });
+        const user = userEvent.setup();
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        const row = within(rowFor(/Asha Rao/));
+        expect(row.getByText("Checked in but never checked out.")).toBeInTheDocument();
+        await user.click(row.getByRole("button", { name: /^Add punch-out for Asha Rao/ }));
+        const dialog = await screen.findByRole("dialog", { name: "Record punch" });
+        expect(within(dialog).getByLabelText("Employee")).toHaveValue("Asha Rao");
+        expect(within(dialog).getByRole("combobox")).toHaveValue("OUT"); // the Direction select
+        // Never a time that has not happened yet; the fixture shift ends 18:00 UTC today.
+        expect((within(dialog).getByLabelText(/Punch time/) as HTMLInputElement).value.startsWith(TODAY)).toBe(true);
+      });
+
+      it("offers the employee's own correction request first, not a second way to fix the same day", async () => {
+        mockApi({
+          days: [missingOut()],
+          regularizations: [{ id: "reg-9", employee_id: "emp-1", attendance_date: TODAY, status: "SUBMITTED" }],
+        });
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        const row = within(rowFor(/Asha Rao/));
+        expect(row.getByRole("link", { name: /^Review correction request from Asha Rao/ })).toHaveAttribute("href", "/app/regularizations/reg-9");
+        expect(row.queryByRole("button", { name: /^Add punch/ })).not.toBeInTheDocument();
+        expect(row.getByRole("link", { name: /^Open Asha Rao/ })).toHaveAttribute("href", expect.stringContaining("/app/attendance/d-miss"));
+      });
+
+      it("keeps leave from the row for work on approved leave", async () => {
+        mockApi({
+          days: [makeDay({ id: "d-leave", employee_id: "emp-1", attendance_date: TODAY, work_on_leave_flagged: true, work_on_leave_resolution: null })],
+        });
+        const user = userEvent.setup();
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        const row = within(rowFor(/Asha Rao/));
+        expect(row.getByText("Punched in on a day of approved leave.")).toBeInTheDocument();
+        expect(row.getByRole("link", { name: /^Cancel Asha Rao/ })).toHaveAttribute("href", "/app/leave-applications");
+        await user.click(row.getByRole("button", { name: /^Keep leave for Asha Rao/ }));
+        expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      });
+
+      it("offers Mark present, not a single punch, when nothing was punched at all", async () => {
+        mockApi({
+          days: [
+            makeDay({ id: "d-none", employee_id: "emp-1", attendance_date: TODAY, attendance_status: "INCOMPLETE", missing_punch: true, actual_first_in: null, actual_last_out: null }),
+          ],
+        });
+        const user = userEvent.setup();
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        const row = within(rowFor(/Asha Rao/));
+        expect(row.getByText("Nothing was punched on a working day.")).toBeInTheDocument();
+        expect(row.queryByRole("button", { name: /^Add punch/ })).not.toBeInTheDocument();
+        // The repeated "Missing punch" badge is replaced by the reason above.
+        expect(row.queryByText("Missing punch")).not.toBeInTheDocument();
+        await user.click(row.getByRole("button", { name: /^Mark Asha Rao present/ }));
+        expect(await screen.findByRole("dialog", { name: "Mark attendance" })).toBeInTheDocument();
+      });
+
+      it("shows no fix controls on a fine day", async () => {
+        mockApi({ days: sampleDays() });
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        expect(screen.queryByText(/need fixing/)).not.toBeInTheDocument();
+      });
     });
 
     // F5-1: Needs Attention counts a whole-range item ("missing punches") across the whole
@@ -847,7 +982,7 @@ describe("AttendanceDashboardPage", () => {
     it("switches between reports built from existing data and offers no export controls", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
-      searchParams = new URLSearchParams("view=periods");
+      searchParams = new URLSearchParams("view=reports");
       render(<AttendanceDashboardPage />);
       const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
       expect(within(reports).getByRole("tab", { name: "Daily attendance", selected: true })).toBeInTheDocument();
@@ -864,7 +999,7 @@ describe("AttendanceDashboardPage", () => {
     it("searches within a report", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
-      searchParams = new URLSearchParams("view=periods");
+      searchParams = new URLSearchParams("view=reports");
       render(<AttendanceDashboardPage />);
       const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
       await user.type(within(reports).getByLabelText("Search report"), "chitra");
@@ -890,7 +1025,7 @@ describe("AttendanceDashboardPage", () => {
       it("excludes an overtime row before the selected range even though it falls inside the wider trend window", async () => {
         const start = addDays(TODAY, -3);
         const outOfRange = addDays(TODAY, -10); // before `start`, but inside the ≥14-day trend window
-        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=periods`);
+        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=reports`);
         mockApi({
           days: sampleDays(),
           overtime: [
@@ -909,7 +1044,7 @@ describe("AttendanceDashboardPage", () => {
 
       it("includes both range boundary dates (inclusive start and end)", async () => {
         const start = addDays(TODAY, -3);
-        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=periods`);
+        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=reports`);
         mockApi({
           days: sampleDays(),
           overtime: [
@@ -952,8 +1087,8 @@ describe("AttendanceDashboardPage", () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
       render(<AttendanceDashboardPage />);
       await findKpi(/^Present: 2\./);
-      await userEvent.setup().click(screen.getByRole("tab", { name: "Periods & reports" }));
-      await screen.findByText("Current month");
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Reports" }));
+      await screen.findByRole("heading", { name: "Reports" });
       await waitFor(() => {
         const total = mockedGet.mock.calls.length + mockedGetList.mock.calls.length;
         expect(total).toBeLessThanOrEqual(10);

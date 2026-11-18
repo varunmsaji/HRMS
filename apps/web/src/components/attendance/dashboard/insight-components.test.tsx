@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DeltaChip } from "@/components/attendance/dashboard/delta-chip";
 import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboard/insight-panels";
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
-import { PayrollReadiness } from "@/components/attendance/dashboard/payroll-readiness";
+import { PayrollReadiness, payrollNeedsAttention } from "@/components/attendance/dashboard/payroll-readiness";
 import { TodayPulse } from "@/components/attendance/dashboard/today-pulse";
 import { DEFAULT_FILTERS, type AttentionItem } from "@/lib/attendance/dashboard";
 import { makeKpis, makeSummary, makeSummaryDay, makeWeekdays } from "@/lib/attendance/__fixtures__/summary";
@@ -59,19 +59,15 @@ describe("TodayPulse", () => {
   });
   const points = toRatePoints(summary.daily);
 
-  function renderPulse(onDrill = vi.fn()) {
+  function renderPulse() {
     render(
       <TodayPulse
         points={points}
         focusDate={TODAY}
         focusLabel="today"
         comparison={compareRates(points, TODAY, LAST_WEEK)}
-        distribution={toDistribution(summary.distribution)}
-        filters={DEFAULT_FILTERS}
-        onDrill={onDrill}
       />,
     );
-    return onDrill;
   }
 
   it("shows today's rate, who made it up, and the change on the same weekday last week", () => {
@@ -83,10 +79,10 @@ describe("TodayPulse", () => {
     expect(within(pulse).getByText("+16.7 pts vs last Mon")).toBeInTheDocument();
   });
 
-  it("drills into a status from the breakdown", async () => {
-    const onDrill = renderPulse();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Show Absent employees (1)" }));
-    expect(onDrill).toHaveBeenCalledWith("ABSENT");
+  it("does not repeat the status counts: they live in the summary tiles", () => {
+    renderPulse();
+    expect(screen.queryByRole("button", { name: /^Show .* employees/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Who's who")).not.toBeInTheDocument();
   });
 
   it("shows a dash, not 0%, when nobody was expected", () => {
@@ -96,13 +92,25 @@ describe("TodayPulse", () => {
         focusDate={TODAY}
         focusLabel="today"
         comparison={{ delta: null, baselineDate: LAST_WEEK, baselineRate: null }}
-        distribution={[]}
-        filters={DEFAULT_FILTERS}
-        onDrill={vi.fn()}
       />,
     );
     expect(screen.getByText("Nobody was expected to work on this day.")).toBeInTheDocument();
     expect(screen.queryByText("0.0%")).not.toBeInTheDocument();
+  });
+
+  it("when nothing is calculated yet, says so instead of 'nobody expected', and shows no comparison", () => {
+    render(
+      <TodayPulse
+        points={toRatePoints(makeSummary(LAST_WEEK, TODAY).daily)}
+        focusDate={TODAY}
+        focusLabel="today"
+        comparison={{ delta: null, baselineDate: LAST_WEEK, baselineRate: 70 }}
+        awaitingRecords
+      />,
+    );
+    expect(screen.getByText("Attendance for today hasn't been calculated yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Nobody was expected to work on this day.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No comparison yet")).not.toBeInTheDocument();
   });
 });
 
@@ -117,6 +125,19 @@ describe("KpiGrid comparison", () => {
     expect(within(present).getByText("+1 vs last Mon").className).toMatch(/text-success/);
     const absent = screen.getByRole("button", { name: /^Absent: 1\./ });
     expect(within(absent).getByText("−1 vs last Mon").className).toMatch(/text-success/);
+  });
+
+  it("shows the headcount as a line of text, not as a card", () => {
+    render(<KpiGrid kpi={now} filters={DEFAULT_FILTERS} focusLabel="today" compare={null} onDrill={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Total employees/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Attendance summary" })).getByText(/employees · /)).toHaveTextContent("3 employees");
+  });
+
+  it("keeps five everyday cards in view and the rest behind More statuses", () => {
+    render(<KpiGrid kpi={now} filters={DEFAULT_FILTERS} focusLabel="today" compare={null} onDrill={vi.fn()} />);
+    for (const label of ["Present", "Absent", "On leave", "Late", "Not checked in"]) {
+      expect(screen.getByRole("button", { name: new RegExp(`^${label}: `) })).toBeInTheDocument();
+    }
   });
 
   it("shows no change chips when there is no comparison day", () => {
@@ -202,6 +223,34 @@ describe("PayrollReadiness", () => {
     unit: "records",
     employees: null,
     severity: "high",
+  });
+
+  it("lets a long period name and company wrap in full instead of cutting them off", () => {
+    const long = { ...period, label: "November 2026 (mock) — Varun Company Private Limited" } as AttendancePeriod;
+    render(<PayrollReadiness period={long} companyName="Varun Company Private Limited" today="2026-11-18" blockers={[]} rangeLabel="18 Nov" />);
+    const title = screen.getByText("November 2026 (mock) — Varun Company Private Limited");
+    expect(title.className).not.toMatch(/\btruncate\b/);
+    expect(title).toHaveAttribute("title", "November 2026 (mock) — Varun Company Private Limited");
+  });
+
+  it("compact: one line with the countdown and how many items stand in the way", () => {
+    render(
+      <PayrollReadiness compact period={period} companyName="ABC India" today="2026-10-28" blockers={[blocker("missing_punch", "Missing punches", 6)]} rangeLabel="28 Oct" />,
+    );
+    const line = screen.getByRole("region", { name: "Payroll readiness" });
+    expect(within(line).getByText("3 days left")).toBeInTheDocument();
+    expect(within(line).getByText("6 items to clear before close")).toBeInTheDocument();
+    expect(within(line).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(line).getByRole("link", { name: /open period/i })).toHaveAttribute("href", "/app/attendance-periods/per-1");
+  });
+
+  it("only asks for attention when something blocks the close, validation is blocked, or the period is ending", () => {
+    const calm = { ...period, last_validation_status: null } as AttendancePeriod;
+    expect(payrollNeedsAttention(calm, "2026-10-10", [])).toBe(false); // plenty of time, nothing in the way
+    expect(payrollNeedsAttention(calm, "2026-10-10", [blocker("x", "Missing punches", 1)])).toBe(true);
+    expect(payrollNeedsAttention(period, "2026-10-10", [])).toBe(true); // validation BLOCKED
+    expect(payrollNeedsAttention(calm, "2026-10-29", [])).toBe(true); // 2 days left
+    expect(payrollNeedsAttention({ ...calm, status: "CLOSED" } as AttendancePeriod, "2026-10-29", [blocker("x", "x", 1)])).toBe(false);
   });
 
   it("shows progress, time left, the validation state and what is still in the way", () => {

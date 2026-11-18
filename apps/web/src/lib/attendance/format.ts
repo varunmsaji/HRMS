@@ -151,3 +151,11 @@ export function nowInZoneForDatetimeLocal(tz: string): string {
   const parts = datetimePartsInZone(new Date(), tz);
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
+
+/** A UTC instant as a `<input type="datetime-local">` value ("YYYY-MM-DDTHH:mm") read in `tz` —
+ * the inverse of `wallTimeToUtcIso`. Used to prefill a punch time from a shift's scheduled start
+ * or end, which the API serves as UTC. */
+export function isoToDatetimeLocal(iso: string, tz: string): string {
+  const parts = datetimePartsInZone(new Date(iso), tz);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}

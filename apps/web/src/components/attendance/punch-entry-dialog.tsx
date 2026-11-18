@@ -29,6 +29,10 @@ interface PunchEntryDialogProps {
    * show a full employee picker (admin on-behalf punch from the team dashboard). */
   employeeId?: string;
   employeeLabel?: string;
+  /** Opening values for fixing a known gap (e.g. a missing OUT): the direction and the wall-clock
+   * time in the business zone ("YYYY-MM-DDTHH:mm"). Omitted = IN, now. */
+  initialDirection?: PunchDirection;
+  initialTime?: string;
   onRecorded: (punch: Punch) => void;
 }
 
@@ -55,6 +59,8 @@ export function PunchEntryDialog({
   onOpenChange,
   employeeId,
   employeeLabel: lockedLabel,
+  initialDirection,
+  initialTime,
   onRecorded,
 }: PunchEntryDialogProps) {
   const { toast } = useToast();
@@ -78,11 +84,11 @@ export function PunchEntryDialog({
   useEffect(() => {
     if (!open) return;
     setSelectedEmployeeId(employeeId ?? "");
-    setDirection("IN");
-    setPunchTime(nowInZoneForDatetimeLocal(punchTz));
+    setDirection(initialDirection ?? "IN");
+    setPunchTime(initialTime ?? nowInZoneForDatetimeLocal(punchTz));
     setReference("");
     setError(null);
-  }, [open, employeeId, punchTz]);
+  }, [open, employeeId, punchTz, initialDirection, initialTime]);
 
   async function handleSubmit() {
     if (!employeeId && !selectedEmployeeId) {

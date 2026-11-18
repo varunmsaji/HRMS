@@ -103,7 +103,8 @@ export function buildKpis(
     (target.flag ?? "") === filters.flag;
   const mk = (k: Omit<Kpi, "active">): Kpi => ({
     ...k,
-    active: k.drill ? isActive(k.drill) : false,
+    // "Total employees" only clears the drill-down; with nothing drilled it must not look selected.
+    active: k.drill && !k.drill.clear ? isActive(k.drill) : false,
   });
   const change = (now: number, before: number | undefined, good: DeltaGood): Kpi["delta"] =>
     compare ? { value: before === undefined ? null : now - before, good, versus: compare.label } : undefined;
@@ -118,7 +119,7 @@ export function buildKpis(
       context:
         kpi.noRecord > 0
           ? `${kpi.noRecord} with no record yet for ${focusLabel}`
-          : `Employed on ${focusLabel}`,
+          : `employed ${focusLabel === "today" ? "today" : `on ${focusLabel}`}`,
       icon: Users,
       tone: "neutral",
       drill: { clear: true },
@@ -360,24 +361,33 @@ function KpiCard({
   );
 }
 
-/** How many tiles are always visible; the rest sit behind "More". */
-const ALWAYS_VISIBLE = 6;
+/** How many tiles are always visible; the rest sit behind "More". "Total employees" is not a tile. */
+const ALWAYS_VISIBLE = 5;
 
-/** KPI summary row. Each card is a drill-down button — it narrows the Who's In list below (and
- * the URL) to the matching employees; clicking the active card again clears the drill. Only the
- * six everyday figures are shown by default; the rarer ones (remote, overtime, half day, holiday…)
- * are one click away, and open by themselves while one of them is the active drill. */
+/** KPI summary. Each card is a drill-down button — it narrows the Who's In list below (and the
+ * URL) to the matching employees; clicking the active card again clears the drill. Only the five
+ * everyday figures are shown by default (present, absent, on leave, late, not checked in); the
+ * rarer ones (remote, overtime, half day, holiday…) are one click away, and open by themselves
+ * while one of them is the active drill. The headcount is a line of text above them, not a card:
+ * it never needs action. */
 export function KpiGrid({ kpi, filters, focusLabel, compare, onDrill }: KpiGridProps) {
   const { primary, secondary } = buildKpis(kpi, filters, focusLabel, compare);
-  const visible = primary.slice(0, ALWAYS_VISIBLE);
-  const more = [...primary.slice(ALWAYS_VISIBLE), ...secondary];
+  const everyday = primary.filter((item) => item.key !== "total");
+  const total = primary.find((item) => item.key === "total");
+  const visible = everyday.slice(0, ALWAYS_VISIBLE);
+  const more = [...everyday.slice(ALWAYS_VISIBLE), ...secondary];
   const [expanded, setExpanded] = useState(false);
   const hasActiveMore = more.some((item) => item.active);
   const showMore = expanded || hasActiveMore;
   const moreWithData = more.filter((item) => item.count > 0).length;
   return (
-    <section aria-label="Attendance summary" className="space-y-2.5">
-      <div className="-mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 xl:grid-cols-6">
+    <section aria-label="Attendance summary" className="min-w-0 space-y-2.5">
+      {total ? (
+        <p className="text-xs text-foreground-secondary">
+          {`${total.value} ${total.value === "1" ? "employee" : "employees"} · ${total.context}`}
+        </p>
+      ) : null}
+      <div className="-mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0">
         {visible.map((item) => (
           <div key={item.key} className="min-w-[10rem] snap-start sm:min-w-0">
             <KpiCard item={item} onDrill={onDrill} />
@@ -395,7 +405,7 @@ export function KpiGrid({ kpi, filters, focusLabel, compare, onDrill }: KpiGridP
         {showMore ? "Fewer statuses" : `More statuses${moreWithData > 0 ? ` (${moreWithData} with data)` : ""}`}
       </button>
       <Collapse open={showMore}>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {more.map((item) => (
             <KpiCard key={item.key} item={item} onDrill={onDrill} compact />
           ))}

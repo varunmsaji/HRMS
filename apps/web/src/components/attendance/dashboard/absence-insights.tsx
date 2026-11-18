@@ -5,13 +5,10 @@ import {
   REPEAT_ABSENCE_THRESHOLD,
   employeeName,
   type EmployeeLite,
-  type KpiSet,
   type RepeatAbsence,
 } from "@/lib/attendance/dashboard";
 
 interface AbsenceInsightsProps {
-  kpi: KpiSet;
-  focusLabel: string;
   rangeAbsentDays: number;
   rangeLeaveDays: number;
   repeat: RepeatAbsence[];
@@ -19,19 +16,12 @@ interface AbsenceInsightsProps {
   onDrillEmployee: (employeeId: string) => void;
 }
 
-/** Operational absence picture only — leave balances, policies and approvals stay in Leave. */
-export function AbsenceInsights({ kpi, focusLabel, rangeAbsentDays, rangeLeaveDays, repeat, employeesById, onDrillEmployee }: AbsenceInsightsProps) {
+/** Operational absence picture only — leave balances, policies and approvals stay in Leave. The
+ * single-day absent / on-leave counts are in the Today summary, so only the range is shown here. */
+export function AbsenceInsights({ rangeAbsentDays, rangeLeaveDays, repeat, employeesById, onDrillEmployee }: AbsenceInsightsProps) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-md border border-border p-3">
-          <p className="text-xs text-foreground-muted">Absent on {focusLabel}</p>
-          <p className="mt-1 text-lg font-semibold tabular-nums">{kpi.absent}</p>
-        </div>
-        <div className="rounded-md border border-border p-3">
-          <p className="text-xs text-foreground-muted">On leave on {focusLabel}</p>
-          <p className="mt-1 text-lg font-semibold tabular-nums">{kpi.leave}</p>
-        </div>
         <div className="rounded-md border border-border p-3">
           <p className="text-xs text-foreground-muted">Absent days in range</p>
           <p className="mt-1 text-lg font-semibold tabular-nums">{rangeAbsentDays}</p>
