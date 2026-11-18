@@ -65,13 +65,25 @@ describe("EmployeeOverview edit actions", () => {
     expect(screen.getByText("General")).toBeInTheDocument();
   });
 
-  it("opens the details editor from the Personal details and Contact cards", async () => {
+  it("opens the details editor from Personal details, and from the prompt to add what is missing", async () => {
     const a = actions();
     renderOverview(a);
     const user = userEvent.setup();
-    await user.click(within(screen.getByRole("region", { name: "Personal details" })).getByRole("button", { name: /edit/i }));
-    await user.click(within(screen.getByRole("region", { name: "Contact" })).getByRole("button", { name: /edit/i }));
+    const card = screen.getByRole("region", { name: "Personal details" });
+    await user.click(within(card).getByRole("button", { name: "Edit personal details" }));
+    await user.click(within(card).getByRole("button", { name: "Add details" }));
     expect(a.onEditDetails).toHaveBeenCalledTimes(2);
+    // Contact is part of the same card now, and what is missing is listed once.
+    expect(within(card).getByRole("region", { name: "Contact" })).toBeInTheDocument();
+    expect(within(card).getByText(/marital status, blood group, nationality/i)).toBeInTheDocument();
+  });
+
+  it("shows only what is filled in, not a column of empty values", () => {
+    renderOverview(actions());
+    const card = screen.getByRole("region", { name: "Personal details" });
+    expect(within(card).getByText("Asha Rao")).toBeInTheDocument();
+    expect(within(card).getByText("asha@example.com")).toBeInTheDocument();
+    expect(within(card).queryByText("Not provided")).not.toBeInTheDocument();
   });
 
   it("changes the shift from the Overview, with the shift change type selected", async () => {
@@ -124,11 +136,11 @@ describe("EmployeeOverview edit actions", () => {
     const a = actions();
     renderOverview(a);
     const user = userEvent.setup();
-    const card = screen.getByRole("region", { name: "Other details" });
+    const card = screen.getByRole("region", { name: "More to edit" });
     for (const name of ["Compensation", "Salary", "Statutory", "Banking", "Identity", "Experience", "Education", "Dependents", "Documents"]) {
-      expect(within(card).getByRole("button", { name: new RegExp(`^${name}\\b`, "i") })).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: new RegExp(`^${name}$`, "i") })).toBeInTheDocument();
     }
-    await user.click(within(card).getByRole("button", { name: /^banking\b/i }));
+    await user.click(within(card).getByRole("button", { name: /^banking$/i }));
     expect(a.onOpenSection).toHaveBeenCalledWith("banking");
   });
 
@@ -140,8 +152,9 @@ describe("EmployeeOverview edit actions", () => {
     expect(screen.queryByRole("button", { name: "Edit department" })).not.toBeInTheDocument();
     const personal = screen.getByRole("region", { name: "Personal details" });
     expect(within(personal).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add details" })).not.toBeInTheDocument();
     // Employment and the other sections still open, and they decide for themselves.
     expect(screen.getByRole("button", { name: "Edit employment" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Other details" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "More to edit" })).toBeInTheDocument();
   });
 });
