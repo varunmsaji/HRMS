@@ -7,6 +7,7 @@ import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 import '../domain/attendance_totals.dart';
 import '../domain/day_timeline.dart';
+import '../domain/mark_day.dart';
 import '../domain/punch_location.dart';
 
 class Shift {
@@ -518,6 +519,22 @@ class AttendanceRepository {
         '/attendance/punches',
         body: {'employee_id': employeeId, 'punch_time': punchTimeUtcIso, 'direction': direction, 'reference': reference},
         parse: (d) => Punch.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// `POST /attendance/punches/day-entries/preview`: what recording would do for each employee.
+  Future<ManualDayResponse> previewDayEntries({required List<String> employeeIds, required String punchInAt, required String punchOutAt, required String reason}) => _client.post(
+        '/attendance/punches/day-entries/preview',
+        body: {'employee_ids': employeeIds, 'punch_in_at': punchInAt, 'punch_out_at': punchOutAt, 'reason': reason},
+        parse: (d) => ManualDayResponse.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// `POST /attendance/punches/day-entries`: records an IN and an OUT for each employee. The
+  /// [idempotencyKey] is kept for the whole review so a retry after a network failure cannot record
+  /// anyone twice.
+  Future<ManualDayResponse> recordDayEntries({required List<String> employeeIds, required String punchInAt, required String punchOutAt, required String reason, required String idempotencyKey}) => _client.post(
+        '/attendance/punches/day-entries',
+        body: {'employee_ids': employeeIds, 'punch_in_at': punchInAt, 'punch_out_at': punchOutAt, 'reason': reason, 'idempotency_key': idempotencyKey},
+        parse: (d) => ManualDayResponse.fromJson(d as Map<String, dynamic>),
       );
 
   Future<List<LeaveDayProjection>> listLeaveProjections({required String employeeId, required String dateFrom, required String dateTo}) => _client

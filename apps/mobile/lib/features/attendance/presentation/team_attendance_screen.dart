@@ -17,6 +17,7 @@ import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import 'attendance_widgets.dart';
+import 'mark_attendance_screen.dart';
 import '../../../core/widgets/ui.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
@@ -180,6 +181,14 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
           IconButton(tooltip: 'Insights', icon: const Icon(Icons.insights_outlined), onPressed: () => context.push('/app/attendance-insights')),
           if (canPunch)
             IconButton(
+              tooltip: 'Mark attendance',
+              icon: const Icon(Icons.fact_check_outlined),
+              onPressed: () async {
+                if (await openMarkAttendance(context, date: _date) && mounted) _load();
+              },
+            ),
+          if (canPunch)
+            IconButton(
               tooltip: 'Record punch',
               icon: const Icon(Icons.more_time),
               onPressed: () async {
@@ -229,6 +238,11 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                             AttendanceDayTile(
                               day: d,
                               employeeLabel: _name(d.employeeId),
+                              onMarkPresent: canPunch && d.employeeId != ref.read(authControllerProvider).user?.employeeId
+                                  ? () async {
+                                      if (await openMarkAttendance(context, employees: [(value: d.employeeId, label: _name(d.employeeId))], date: d.attendanceDate) && mounted) _load();
+                                    }
+                                  : null,
                               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: d.id, initial: d))),
                             ),
                         ],
