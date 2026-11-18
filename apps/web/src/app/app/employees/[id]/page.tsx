@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { EmployeeAttendancePanel } from "@/components/attendance/employee-attendance-panel";
+import { EmployeeInsights } from "@/components/attendance/employee-insights";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { AssignmentChangeDialog } from "@/components/employee/assignment-change-dialog";
 import { AssignmentPanel } from "@/components/employee/assignment-panel";
@@ -460,6 +461,9 @@ export default function EmployeeDetailPage() {
         <div className="grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6">
           <EmployeeSectionNav value={tab} onChange={setTab} />
           <div className="min-w-0 space-y-5">
+          {tab === "overview" && can("ATTENDANCE.VIEW") ? (
+            <EmployeeInsights employeeId={employee.id} shiftName={work.data?.shift ?? null} />
+          ) : null}
           {tab === "overview" ? (
             <EmployeeOverview
               employee={employee}
