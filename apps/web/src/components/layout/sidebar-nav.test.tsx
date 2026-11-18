@@ -52,6 +52,9 @@ describe("SidebarNav active state", () => {
     ["/app/rosters/coverage", "Shift Rosters"],
     ["/app/me/calendar", "My Calendar"],
     ["/app/payroll/pay-runs/abc", "Payroll"],
+    // In Settings too, but under Payroll first: only the Payroll entry lights up, and Settings does not.
+    ["/app/attendance-periods", "Attendance Periods"],
+    ["/app/attendance-periods/period-1", "Attendance Periods"],
   ])("highlights exactly one item on %s", (path, label) => {
     mockPathname = path;
     render(<SidebarNav />);

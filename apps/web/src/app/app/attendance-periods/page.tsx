@@ -3,6 +3,8 @@
 import { Lock, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { MonthlySummary } from "@/components/attendance/dashboard/monthly-summary";
+import type { Section } from "@/components/attendance/dashboard/use-dashboard-data";
 import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -25,6 +27,8 @@ import {
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { AttendancePeriod } from "@/lib/attendance-period/types";
 import type { LegalEntity } from "@/lib/legal-entity/types";
@@ -35,7 +39,9 @@ import type { LegalEntity } from "@/lib/legal-entity/types";
  * company (decision 14), so the list shows and filters by entity. */
 export default function AttendancePeriodsPage() {
   const { can } = usePermissions();
+  const { user } = useAuth();
   const canManage = can("ATTENDANCE.LOCK");
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
 
   const [periods, setPeriods] = useState<AttendancePeriod[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +76,14 @@ export default function AttendancePeriodsPage() {
     void load();
   }, [load]);
 
+  // The monthly summary reads the same list through the dashboard's section shape.
+  const periodsSection: Section<AttendancePeriod[]> = {
+    status: loading ? "loading" : error ? "error" : "ready",
+    data: periods,
+    error,
+    retry: () => void load(),
+  };
+
   const entityName = (id: string) => legalEntities.find((e) => e.id === id)?.name ?? "—";
   const visiblePeriods = periods?.filter(
     (period) => !entityFilter || period.legal_entity_id === entityFilter,
@@ -78,8 +92,8 @@ export default function AttendancePeriodsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings/attendance"
-        backLabel="Attendance"
+        backHref="/app/payroll/pay-runs"
+        backLabel="Payroll"
         title="Attendance Periods"
         description="Close and lock each company's attendance for a month once every exception in it is resolved."
         actions={
@@ -173,6 +187,8 @@ export default function AttendancePeriodsPage() {
           </Table>
         ) : null}
       </TableContainer>
+
+      {!error ? <MonthlySummary periods={periodsSection} today={today} /> : null}
 
       <CreatePeriodDialog
         open={createOpen}

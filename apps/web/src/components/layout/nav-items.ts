@@ -95,6 +95,7 @@ export const PRIMARY_NAV_GROUPS: PrimaryNavGroup[] = [
       { href: "/app/leave-applications", label: "Leave", icon: Palmtree },
       { href: "/app/leave-balances", label: "Leave Balances", icon: Wallet },
       { href: "/app/payroll/pay-runs", label: "Payroll", icon: Banknote },
+      { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock, matchPrefix: "/app/attendance-periods" },
     ],
   },
   {

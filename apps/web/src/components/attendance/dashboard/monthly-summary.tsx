@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   AlarmClock,
   Ban,
@@ -20,11 +19,9 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { AttendancePeriodStatusBadge } from "@/components/attendance-period/attendance-period-status-badge";
 import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { usePeriodSummary, type Section } from "@/components/attendance/dashboard/use-dashboard-data";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import type { AttendancePeriod } from "@/lib/attendance-period/types";
 import { formatMinutes } from "@/lib/attendance/format";
@@ -32,84 +29,6 @@ import { formatShortDate, pickDefaultPeriod, sumPeriodSummary } from "@/lib/atte
 
 function periodTitle(period: AttendancePeriod): string {
   return period.label ?? `${formatShortDate(period.period_start)} – ${formatShortDate(period.period_end)}`;
-}
-
-interface PeriodStatusProps {
-  periods: Section<AttendancePeriod[]>;
-  entityNames: Map<string, string>;
-  today: string;
-  /** Company picker — periods are the only data that is legal-entity scoped, so the filter lives here. */
-  entities?: { id: string; name: string }[];
-  legalEntityId?: string;
-  onEntityChange?: (legalEntityId: string) => void;
-}
-
-/** Attendance periods are legal-entity scoped; this only surfaces their state and links to the
- * existing period detail page — no period action is exposed from the dashboard. The backend
- * records a validation verdict (READY/BLOCKED) but exposes the blocker breakdown only through the
- * period's own validate action, so counts live on the detail page. */
-export function PeriodStatus({ periods, entityNames, today, entities = [], legalEntityId = "", onEntityChange }: PeriodStatusProps) {
-  const list = (periods.data ?? []).slice().sort((a, b) => b.period_start.localeCompare(a.period_start)).slice(0, 6);
-  return (
-    <SectionCard
-      id="att-periods"
-      title="Attendance periods"
-      description="Payroll-facing cycles, one per company."
-      status={periods.status}
-      error={periods.error}
-      onRetry={periods.retry}
-      empty={list.length === 0 ? { title: "No attendance periods yet.", description: "Periods are opened per company." } : null}
-      actions={
-        <div className="flex items-center gap-2">
-          {entities.length > 0 && onEntityChange ? (
-            <NativeSelect
-              aria-label="Company (periods)"
-              value={legalEntityId}
-              onChange={(e) => onEntityChange(e.target.value)}
-              className="h-8 w-44 text-xs"
-            >
-              <option value="">All companies</option>
-              {entities.map((entity) => (
-                <option key={entity.id} value={entity.id}>
-                  {entity.name}
-                </option>
-              ))}
-            </NativeSelect>
-          ) : null}
-          <Button asChild size="sm" variant="outline">
-            <Link href="/app/attendance-periods">All periods →</Link>
-          </Button>
-        </div>
-      }
-    >
-      <ul className="divide-y divide-border rounded-md border border-border">
-        {list.map((period) => (
-          <li key={period.id}>
-            <Link href={`/app/attendance-periods/${period.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 hover:bg-accent">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground">{periodTitle(period)}</p>
-                <p className="text-xs text-foreground-muted">
-                  {entityNames.get(period.legal_entity_id) ?? "Company"} · {formatShortDate(period.period_start)} – {formatShortDate(period.period_end)}
-                </p>
-              </div>
-              <AttendancePeriodStatusBadge status={period.status} />
-              {period.status === "OPEN" && period.last_validation_status === "BLOCKED" ? (
-                <Badge variant="danger">Validation blocked</Badge>
-              ) : null}
-              {period.status === "OPEN" && period.last_validation_status === "READY" ? (
-                <Badge variant="success">Ready to finalize</Badge>
-              ) : null}
-              {period.status === "OPEN" && period.last_validation_status === null ? (
-                <Badge variant="outline">Not validated</Badge>
-              ) : null}
-              {period.reopened_at ? <Badge variant="warning">Reopened</Badge> : null}
-            </Link>
-          </li>
-        ))}
-      </ul>
-      <p className="text-xs text-foreground-muted">As of {formatShortDate(today)}.</p>
-    </SectionCard>
-  );
 }
 
 type StatTone = "success" | "danger" | "warning" | "info" | "muted";
@@ -166,7 +85,8 @@ function fmtDays(value: number | null): string {
 }
 
 /** Totals of the backend's own period summary (live preview while OPEN, frozen snapshot once
- * CLOSED) — these are the numbers Payroll reads. */
+ * CLOSED) — these are the numbers Payroll reads. Lives on the Attendance periods page, next to
+ * closing the month. */
 export function MonthlySummary({ periods, today }: { periods: Section<AttendancePeriod[]>; today: string }) {
   const list = useMemo(() => (periods.data ?? []).slice().sort((a, b) => b.period_start.localeCompare(a.period_start)), [periods.data]);
   const defaultPeriod = useMemo(() => pickDefaultPeriod(list, today), [list, today]);

@@ -65,7 +65,10 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     );
   }
 
-  const activeSettingsItem = SETTINGS_ITEMS.find((item) => matchesHref(pathname, item.href));
+  // A page that is also a primary nav entry (Attendance Periods sits under Payroll and in Settings)
+  // belongs to that entry: Settings must not claim it and leave the primary entry unlit.
+  const primaryHrefs = new Set(PRIMARY_NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href)));
+  const activeSettingsItem = SETTINGS_ITEMS.find((item) => !primaryHrefs.has(item.href) && matchesHref(pathname, item.href));
   const settingsActive = Boolean(activeSettingsItem) || matchesHref(pathname, "/app/settings");
   const activePrimaryHref = findActiveHref(
     pathname,
