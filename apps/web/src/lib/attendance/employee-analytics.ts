@@ -244,3 +244,72 @@ export function formatCountdown(minutes: number): string {
   if (h === 0) return `${rest}m`;
   return rest === 0 ? `${h}h` : `${h}h ${rest}m`;
 }
+
+export interface DailyHoursBar {
+  date: string;
+  dayOfMonth: number;
+  minutes: number;
+  bucket: DayBucket;
+  isLate: boolean;
+}
+
+/** One bar per day that has worked time, up to today, plus the shift length to draw as a
+ * reference line (the most common scheduled length that month; null when none is scheduled). */
+export function dailyHours(
+  days: AttendanceDay[],
+  today: string,
+): { bars: DailyHoursBar[]; scheduledMinutes: number | null } {
+  const bars: DailyHoursBar[] = [];
+  const lengths = new Map<number, number>();
+  for (const day of days.slice().sort((a, b) => a.attendance_date.localeCompare(b.attendance_date))) {
+    if (day.attendance_date > today) continue;
+    if (day.scheduled_minutes) lengths.set(day.scheduled_minutes, (lengths.get(day.scheduled_minutes) ?? 0) + 1);
+    if (!day.actual_first_in || day.worked_minutes <= 0) continue;
+    bars.push({
+      date: day.attendance_date,
+      dayOfMonth: Number(day.attendance_date.slice(8, 10)),
+      minutes: day.worked_minutes,
+      bucket: bucketOf(day),
+      isLate: day.is_late,
+    });
+  }
+  let scheduledMinutes: number | null = null;
+  let best = 0;
+  for (const [len, n] of lengths) {
+    if (n > best) {
+      best = n;
+      scheduledMinutes = len;
+    }
+  }
+  return { bars, scheduledMinutes };
+}
+
+export interface MonthTrendPoint {
+  month: string;
+  expectedDays: number;
+  daysWorked: number;
+  lateDays: number;
+  absent: number;
+}
+
+/** The last `count` months ending at `endMonth` (YYYY-MM), oldest first. */
+export function monthlyTrend(
+  days: AttendanceDay[],
+  endMonth: string,
+  count: number,
+  today: string,
+): MonthTrendPoint[] {
+  const out: MonthTrendPoint[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const month = shiftMonthLocal(endMonth, -i);
+    const rows = days.filter((d) => d.attendance_date.startsWith(month));
+    const s = monthStats(rows, today);
+    out.push({ month, expectedDays: s.expectedDays, daysWorked: s.daysWorked, lateDays: s.lateDays, absent: s.absent });
+  }
+  return out;
+}
+
+function shiftMonthLocal(month: string, delta: number): string {
+  const d = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}

@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { DailyHoursChart, SixMonthTrend } from "@/components/attendance/employee-insights-charts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiClient } from "@/lib/api/client";
 import { BUCKET_GLYPHS, BUCKET_LABELS, BUCKET_TONES } from "@/lib/attendance/dashboard";
 import {
+  dailyHours,
   formatCountdown,
   formatDayCount,
   monthRange,
   monthStats,
+  monthlyTrend,
   monthWeeks,
   shiftMonth,
   todayStatus,
@@ -88,6 +91,7 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
 
   const [month, setMonth] = useState(today.slice(0, 7));
   const [days, setDays] = useState<AttendanceDay[] | null>(null);
+  const [history, setHistory] = useState<AttendanceDay[] | null>(null);
   const [todayDay, setTodayDay] = useState<AttendanceDay | null>(null);
   const [punches, setPunches] = useState<Punch[] | null>(null);
   const [failed, setFailed] = useState<"denied" | "error" | null>(null);
@@ -141,6 +145,15 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
     };
   }, [loadToday]);
 
+  // Six months ending this month, for the trend. Independent of the month being browsed.
+  useEffect(() => {
+    const from = monthRange(shiftMonth(today.slice(0, 7), -5)).from;
+    apiClient
+      .get<AttendanceDay[]>(`/attendance/days?employee_id=${employeeId}&date_from=${from}&date_to=${today}`)
+      .then(setHistory)
+      .catch(() => setHistory(null));
+  }, [employeeId, today]);
+
   useEffect(() => {
     void loadMonth();
     setSelected(null);
@@ -151,6 +164,11 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
     [todayDay, punches, now],
   );
   const stats = useMemo(() => (days ? monthStats(days, today) : null), [days, today]);
+  const hours = useMemo(() => dailyHours(days ?? [], today), [days, today]);
+  const trend = useMemo(
+    () => (history ? monthlyTrend(history, today.slice(0, 7), 6, today) : null),
+    [history, today],
+  );
   const weeks = useMemo(() => monthWeeks(month, days ?? [], today), [month, days, today]);
   const selectedCell = useMemo(
     () => weeks.flat().find((c): c is CalendarCell => c !== null && c.date === selected) ?? null,
@@ -376,6 +394,8 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
               </ul>
             </div>
 
+            <DailyHoursChart bars={hours.bars} scheduledMinutes={hours.scheduledMinutes} />
+
             {selectedCell ? (
               <div className="mt-4 rounded-xl border border-border bg-surface-secondary/50 p-4" data-testid="day-detail">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -423,6 +443,7 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
           </>
         )}
       </section>
+      {trend ? <SixMonthTrend points={trend} /> : null}
     </div>
   );
 }
