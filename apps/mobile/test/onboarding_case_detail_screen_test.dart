@@ -121,6 +121,22 @@ void main() {
     expect(repo.calls.last, 'request-changes');
   });
 
+  testWidgets('Verify all verifies every pending section and document and leaves the rejected one alone', (tester) async {
+    final repo = _FakeRepo('UNDER_REVIEW');
+    await _pump(tester, repo, [onboardingReview]);
+    await tester.tap(find.byKey(const Key('onboarding-verify-all')));
+    await tester.pumpAndSettle();
+    expect(repo.calls, isNotEmpty);
+    expect(repo.calls.where((c) => c.startsWith('section:')), isNot(contains('section:bank_info:verified')));
+    expect(repo.calls.where((c) => c.startsWith('section:')).every((c) => c.endsWith(':verified')), isTrue);
+    expect(repo.calls.last, 'doc:d-1:verified');
+  });
+
+  testWidgets('Verify all is hidden without the review permission', (tester) async {
+    await _pump(tester, _FakeRepo('UNDER_REVIEW'), const []);
+    expect(find.byKey(const Key('onboarding-verify-all')), findsNothing);
+  });
+
   testWidgets('without the review permission there are no review buttons', (tester) async {
     await _pump(tester, _FakeRepo('UNDER_REVIEW'), const []);
     expect(find.text('Verify'), findsNothing);

@@ -106,6 +106,29 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
     }
   }
 
+  /// Web's "Verify All": verifies every section and document still pending, one review call at a
+  /// time (rejected items are left alone; HR rejected those on purpose). The API moves the case to
+  /// VERIFIED itself when the last one lands.
+  Future<void> _verifyAll(OnboardingCaseDetail detail) async {
+    setState(() => _busy = true);
+    try {
+      final sections = [for (final s in onboardingSections) if (!{'VERIFIED', 'REJECTED'}.contains(detail.reviewStatus(s.name))) s.name];
+      final documents = [for (final d in _documents ?? const <OnboardingDocument>[]) if (d.status == 'PENDING') d];
+      for (final name in sections) {
+        await _repo.reviewSection(_id, name, verified: true);
+      }
+      for (final d in documents) {
+        await _repo.reviewDocument(_id, d.id, verified: true);
+      }
+      _toast('Everything verified.');
+    } catch (e) {
+      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to review this case." : 'Could not verify everything. ${e.message}') : 'Could not verify everything.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      await _load();
+    }
+  }
+
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> _run(Future<void> Function() action, {String? success}) async {
@@ -444,6 +467,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
     } else {
       final status = detail.status;
       final reviewable = _reviewableStatuses.contains(status);
+      final hasUnverified = onboardingSections.any((s) => !{'VERIFIED', 'REJECTED'}.contains(detail.reviewStatus(s.name))) || (_documents ?? const []).any((d) => d.status == 'PENDING');
       final hasRejection = detail.sectionReviews.any((r) => r['status'] == 'REJECTED') || (_documents ?? const []).any((d) => d.status == 'REJECTED');
       body = RefreshIndicator(
         onRefresh: _load,
@@ -475,6 +499,13 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (canInvite && _invitableStatuses.contains(status))
                 FilledButton(onPressed: _busy ? null : (status == 'ACTIVATED' ? _sendInvite : _compose), child: Text(status == 'DRAFT' ? 'Send invite' : status == 'ACTIVATED' ? 'Get link' : 'Resend invite')),
+              if (canReview && reviewable && hasUnverified)
+                FilledButton.icon(
+                  key: const Key('onboarding-verify-all'),
+                  onPressed: _busy ? null : () => _verifyAll(detail),
+                  icon: const Icon(Icons.verified_outlined, size: 18),
+                  label: Text(_busy ? 'Verifying…' : 'Verify all'),
+                ),
               if (canReview && status == 'UNDER_REVIEW' && hasRejection)
                 OutlinedButton(onPressed: _busy ? null : () => _run(() => _repo.requestChanges(_id), success: 'Changes requested.'), child: const Text('Request changes')),
               if (canActivate && status == 'VERIFIED') FilledButton(onPressed: _busy ? null : _activate, child: const Text('Activate employee')),
