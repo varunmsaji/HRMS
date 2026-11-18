@@ -84,7 +84,7 @@ export const PRIMARY_NAV_GROUPS: PrimaryNavGroup[] = [
     label: "Time & Attendance",
     items: [
       { href: "/app/attendance", label: "Attendance", icon: CalendarClock },
-      { href: "/app/rosters/schedule", label: "Shift Rosters", icon: CalendarCheck, matchPrefix: "/app/rosters" },
+      { href: "/app/rosters", label: "Shift Rosters", icon: CalendarCheck, matchPrefix: "/app/rosters" },
       { href: "/app/regularizations", label: "Regularizations", icon: ClipboardEdit },
       { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
     ],

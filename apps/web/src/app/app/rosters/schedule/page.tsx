@@ -1,5 +1,5 @@
 import { RosterLanding } from "@/components/shift-roster/roster-landing";
 
-export default function RostersLandingPage() {
-  return <RosterLanding />;
+export default function RosterScheduleLandingPage() {
+  return <RosterLanding to="schedule" />;
 }

@@ -58,6 +58,11 @@ describe("SidebarNav active state", () => {
     expect(activeLabels()).toEqual([label]);
   });
 
+  it("sends Shift Rosters to its entry address, which opens Coverage", () => {
+    render(<SidebarNav />);
+    expect(screen.getByRole("link", { name: /shift rosters/i })).toHaveAttribute("href", "/app/rosters");
+  });
+
   it("highlights only Settings on a settings screen, even under a primary route's prefix", () => {
     mockPathname = "/app/payroll/salary-components";
     render(<SidebarNav />);
