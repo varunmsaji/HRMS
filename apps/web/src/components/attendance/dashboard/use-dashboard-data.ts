@@ -19,6 +19,8 @@ export interface Section<T> {
   data: T | null;
   error: ApiError | null;
   retry: () => void;
+  /** `Date.now()` when the data last arrived; unset until the first load. */
+  loadedAt?: number;
 }
 
 export function toApiError(err: unknown): ApiError {
@@ -47,7 +49,7 @@ export function useSection<T>(loader: () => Promise<T>, key: string, enabled: bo
     loaderRef
       .current()
       .then((data) => {
-        if (!cancelled) setState({ status: "ready", data, error: null });
+        if (!cancelled) setState({ status: "ready", data, error: null, loadedAt: Date.now() });
       })
       .catch((err: unknown) => {
         if (!cancelled) setState({ status: "error", data: null, error: toApiError(err) });

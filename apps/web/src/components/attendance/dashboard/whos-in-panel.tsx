@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Search } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -26,7 +26,23 @@ export interface WhosInRow {
   day: AttendanceDay | null;
 }
 
-type SortKey = "name" | "checkin" | "hours";
+/** One thing HR can do about a mismatched row. A link (`href`) or a button (`onClick`). */
+export interface RowFix {
+  key: string;
+  label: string;
+  ariaLabel: string;
+  onClick?: () => void;
+  href?: string;
+  primary?: boolean;
+}
+
+/** What is wrong with a row and how to settle it from here. */
+export interface RowMismatch {
+  reason: string;
+  fixes: RowFix[];
+}
+
+type SortKey = "attention" | "name" | "checkin" | "hours";
 const PAGE_SIZE = 25;
 
 interface WhosInPanelProps {
@@ -39,11 +55,16 @@ interface WhosInPanelProps {
   showDate?: boolean;
   /** Department per employee, when it has loaded — shown under the name. */
   directory?: Map<string, { department: string | null }>;
-  /** When set, rows with no punches (absent, or no record yet) get a "Mark present" action. The
-   * caller gates it on `ATTENDANCE.PUNCH_ON_BEHALF`. */
-  onMarkPresent?: (target: { employeeId: string; label: string; date: string }) => void;
+  /** When set, rows with no punches (absent, or no record yet) can be ticked and marked present
+   * together. The caller gates it on `ATTENDANCE.PUNCH_ON_BEHALF`. Single-day lists only: a range
+   * drill can list one person on several days, so it never offers this. */
+  onMarkMany?: (target: { employees: { id: string; label: string }[]; date: string }) => void;
   /** The date a row with no attendance record belongs to (the focus date). */
   fallbackDate?: string;
+  /** What is wrong with a row and the actions that settle it; `null` for a fine row. When given,
+   * mismatched rows say what is wrong and offer the fix in place, and the list can be narrowed to
+   * just them. */
+  mismatchFor?: (row: WhosInRow) => RowMismatch | null;
 }
 
 function Avatar({ name }: { name: string }) {
@@ -57,14 +78,14 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
-function flagBadges(day: AttendanceDay) {
+function flagBadges(day: AttendanceDay, hasMismatch = false) {
   return (
     <>
       {day.is_late ? <Badge variant="warning">Late {day.late_minutes > 0 ? `${day.late_minutes}m` : ""}</Badge> : null}
       {day.is_early_out ? (
         <Badge variant="warning">Early out {day.early_departure_minutes > 0 ? `${day.early_departure_minutes}m` : ""}</Badge>
       ) : null}
-      {day.missing_punch ? <Badge variant="danger">Missing punch</Badge> : null}
+      {day.missing_punch && !hasMismatch ? <Badge variant="danger">Missing punch</Badge> : null}
     </>
   );
 }
@@ -78,6 +99,15 @@ function canMarkPresent(day: AttendanceDay | null): boolean {
   return day.attendance_status === "ABSENT" && !day.actual_first_in && !day.actual_last_out;
 }
 
+/** Lower sorts first: rows HR has to fix or chase come before rows that are simply fine. */
+function attentionRank(day: AttendanceDay | null): number {
+  if (!day) return 1; // no record yet: chase it
+  if (day.attendance_status === "CONFIG_ERROR" || day.attendance_status === "INCOMPLETE" || day.missing_punch) return 0;
+  if (day.attendance_status === "ABSENT") return 1;
+  if (day.is_late || day.is_early_out || day.is_pending_approval) return 2;
+  return 3;
+}
+
 export function WhosInPanel({
   rows,
   employeesById,
@@ -85,11 +115,14 @@ export function WhosInPanel({
   timezone,
   showDate = false,
   directory,
-  onMarkPresent,
+  onMarkMany,
   fallbackDate,
+  mismatchFor,
 }: WhosInPanelProps) {
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "attention", dir: 1 });
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [onlyMismatches, setOnlyMismatches] = useState(false);
   const [page, setPage] = useState(1);
   // A new `rows` array means the drill-down, range or filters changed. Count those changes so the
   // list can fade in fresh instead of snapping (adjusting state during render, not in an effect).
@@ -98,20 +131,27 @@ export function WhosInPanel({
   if (seenRows !== rows) {
     setSeenRows(rows);
     setGeneration((g) => g + 1);
+    setSelected(new Set());
   }
+
+  const mismatchCount = useMemo(() => (mismatchFor ? rows.filter((row) => mismatchFor(row) !== null).length : 0), [rows, mismatchFor]);
+  const narrowToMismatches = onlyMismatches && mismatchCount > 0;
 
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const decorated = rows.map((row) => {
-      const employee = employeesById.get(row.employeeId);
-      return { row, employee, name: employeeName(employee, row.employeeId) };
-    });
+    const decorated = rows
+      .filter((row) => !narrowToMismatches || (mismatchFor?.(row) ?? null) !== null)
+      .map((row) => {
+        const employee = employeesById.get(row.employeeId);
+        return { row, employee, name: employeeName(employee, row.employeeId) };
+      });
     const filtered = q
       ? decorated.filter(
           (d) => d.name.toLowerCase().includes(q) || (d.employee?.employee_code ?? "").toLowerCase().includes(q),
         )
       : decorated;
     const value = (d: (typeof decorated)[number]): string | number => {
+      if (sort.key === "attention") return attentionRank(d.row.day);
       if (sort.key === "name") return d.name.toLowerCase();
       if (sort.key === "checkin") return d.row.day?.actual_first_in ?? "";
       return d.row.day?.worked_minutes ?? -1;
@@ -119,9 +159,11 @@ export function WhosInPanel({
     return filtered.slice().sort((a, b) => {
       const av = value(a);
       const bv = value(b);
-      return (av < bv ? -1 : av > bv ? 1 : 0) * sort.dir;
+      const order = (av < bv ? -1 : av > bv ? 1 : 0) * sort.dir;
+      // Ties (most of a day's rows share a rank) read alphabetically, whichever way it is sorted.
+      return order !== 0 || sort.key === "name" ? order : a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     });
-  }, [rows, employeesById, query, sort]);
+  }, [rows, employeesById, query, sort, narrowToMismatches, mismatchFor]);
 
   const pageCount = Math.max(1, Math.ceil(view.length / PAGE_SIZE));
   const current = Math.min(page, pageCount);
@@ -146,25 +188,86 @@ export function WhosInPanel({
     };
   };
 
-  const markButton = (d: (typeof slice)[number]) => {
-    const date = d.row.day?.attendance_date ?? fallbackDate;
-    if (!onMarkPresent || !date || !canMarkPresent(d.row.day)) return null;
+  // Rows HR can tick: only on a single-day list, and only ones with nothing punched.
+  const markable = useMemo(
+    () => (onMarkMany && !showDate ? view.filter((d) => canMarkPresent(d.row.day)) : []),
+    [onMarkMany, showDate, view],
+  );
+  const bulkDate = fallbackDate ?? markable.find((d) => d.row.day)?.row.day?.attendance_date;
+  const selectable = markable.length > 0 && Boolean(bulkDate);
+  const markableIds = new Set(markable.map((d) => d.row.id));
+  const pickedCount = markable.filter((d) => selected.has(d.row.id)).length;
+  const allPicked = selectable && pickedCount === markable.length;
+
+  function togglePick(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+  const selectAll = () => setSelected(new Set(markable.map((d) => d.row.id)));
+  const clearPicks = () => setSelected(new Set());
+  function markPicked() {
+    if (!onMarkMany || !bulkDate) return;
+    onMarkMany({
+      employees: markable.filter((d) => selected.has(d.row.id)).map((d) => ({ id: d.row.employeeId, label: d.name })),
+      date: bulkDate,
+    });
+  }
+  const pickBox = (d: (typeof slice)[number]) =>
+    selectable && markableIds.has(d.row.id) ? (
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-border accent-primary"
+        aria-label={`Select ${d.name}`}
+        checked={selected.has(d.row.id)}
+        onChange={() => togglePick(d.row.id)}
+      />
+    ) : null;
+
+  const fixBlock = (d: (typeof slice)[number]) => {
+    const m = mismatchFor?.(d.row);
+    if (!m) return null;
     return (
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        className="mt-1.5"
-        aria-label={`Mark ${d.name} present on ${formatShortDate(date)}`}
-        onClick={() => onMarkPresent({ employeeId: d.row.employeeId, label: d.name, date })}
-      >
-        Mark present
-      </Button>
+      <div className="mt-1.5 space-y-1.5">
+        <p className="flex items-start gap-1 text-xs text-warning">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{m.reason}</span>
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {m.fixes.map((fix) =>
+            fix.href ? (
+              <Button key={fix.key} asChild size="xs" variant={fix.primary ? "default" : "outline"}>
+                <Link href={fix.href} aria-label={fix.ariaLabel}>
+                  {fix.label}
+                </Link>
+              </Button>
+            ) : (
+              <Button key={fix.key} type="button" size="xs" variant={fix.primary ? "default" : "outline"} aria-label={fix.ariaLabel} onClick={fix.onClick}>
+                {fix.label}
+              </Button>
+            ),
+          )}
+        </div>
+      </div>
     );
   };
 
   return (
     <div className="space-y-3">
+      {mismatchCount > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning-border bg-warning-subtle px-3 py-2 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <span className="text-foreground">
+            <span className="font-semibold tabular-nums">{mismatchCount}</span> {mismatchCount === 1 ? "day doesn't" : "days don't"} add up and need fixing.
+          </span>
+          <Button type="button" size="sm" variant="outline" aria-pressed={narrowToMismatches} onClick={() => setOnlyMismatches((on) => !on)}>
+            {narrowToMismatches ? "Show everyone" : "Show only these"}
+          </Button>
+        </div>
+      ) : null}
+
       <div className="relative max-w-xs">
         <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-foreground-muted" aria-hidden="true" />
         <Input
@@ -180,6 +283,33 @@ export function WhosInPanel({
         />
       </div>
 
+      {selectable ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-md bg-surface-secondary px-3 py-2 text-sm">
+          {pickedCount > 0 ? (
+            <>
+              <span className="text-foreground">
+                <span className="font-semibold tabular-nums">{pickedCount}</span> selected
+              </span>
+              <Button type="button" size="sm" onClick={markPicked}>
+                Mark {pickedCount} present
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={clearPicks}>
+                Clear
+              </Button>
+            </>
+          ) : (
+            <>
+              <span className="text-foreground-secondary">
+                {markable.length} {markable.length === 1 ? "employee has" : "employees have"} nothing punched.
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={selectAll}>
+                Select {markable.length === 1 ? "them" : `all ${markable.length}`}
+              </Button>
+            </>
+          )}
+        </div>
+      ) : null}
+
       {view.length === 0 ? (
         <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-foreground-secondary">
           No attendance days match these filters.
@@ -190,6 +320,20 @@ export function WhosInPanel({
             <table className="w-full text-sm">
               <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                 <tr>
+                  {selectable ? (
+                    <th scope="col" className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-border accent-primary"
+                        aria-label={`Select all ${markable.length} that can be marked present`}
+                        checked={allPicked}
+                        ref={(el) => {
+                          if (el) el.indeterminate = pickedCount > 0 && !allPicked;
+                        }}
+                        onChange={() => (allPicked ? clearPicks() : selectAll())}
+                      />
+                    </th>
+                  ) : null}
                   <th scope="col" aria-sort={ariaSort("name")} className="px-3 py-2 text-left font-medium">
                     <button type="button" className="inline-flex items-center gap-1 uppercase" onClick={() => toggleSort("name")}>
                       Employee {sortIcon("name")}
@@ -208,7 +352,11 @@ export function WhosInPanel({
                       Worked {sortIcon("hours")}
                     </button>
                   </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">Status</th>
+                  <th scope="col" aria-sort={ariaSort("attention")} className="px-3 py-2 text-left font-medium">
+                    <button type="button" className="inline-flex items-center gap-1 uppercase" onClick={() => toggleSort("attention")}>
+                      Status {sortIcon("attention")}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -216,6 +364,7 @@ export function WhosInPanel({
                   const c = cells(d);
                   return (
                     <tr key={d.row.id} className="hover:bg-accent">
+                      {selectable ? <td className="w-8 px-3 py-2">{pickBox(d)}</td> : null}
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2.5">
                           <Avatar name={d.name} />
@@ -241,14 +390,15 @@ export function WhosInPanel({
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-1">
                               <AttendanceStatusBadge status={d.row.day.attendance_status} />
-                              {flagBadges(d.row.day)}
+                              {flagBadges(d.row.day, Boolean(mismatchFor?.(d.row)))}
                             </div>
-                            {c.presence !== "—" ? <p className="text-xs text-foreground-muted">{c.presence}</p> : null}
+                            {/* "Working" / "Not checked in" would repeat or contradict the reason shown below. */}
+                            {c.presence !== "—" && !mismatchFor?.(d.row) ? <p className="text-xs text-foreground-muted">{c.presence}</p> : null}
                           </div>
                         ) : (
-                          <Badge variant="outline">No record</Badge>
+                          <Badge variant="outline" className="whitespace-nowrap">No record</Badge>
                         )}
-                        {markButton(d)}
+                        {fixBlock(d)}
                       </td>
                     </tr>
                   );
@@ -263,6 +413,7 @@ export function WhosInPanel({
               return (
                 <li key={d.row.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center gap-2.5">
+                    {pickBox(d)}
                     <Avatar name={d.name} />
                     <div className="min-w-0 flex-1">
                       <Link href={`/app/attendance/employee/${d.row.employeeId}`} className="block truncate font-medium text-foreground">
@@ -270,7 +421,7 @@ export function WhosInPanel({
                       </Link>
                       <p className="text-xs text-foreground-muted">{d.employee?.employee_code ?? "—"}</p>
                     </div>
-                    {d.row.day ? <AttendanceStatusBadge status={d.row.day.attendance_status} /> : <Badge variant="outline">No record</Badge>}
+                    {d.row.day ? <AttendanceStatusBadge status={d.row.day.attendance_status} /> : <Badge variant="outline" className="whitespace-nowrap">No record</Badge>}
                   </div>
                   <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
                     {showDate ? <div><dt className="text-foreground-muted">Date</dt><dd>{c.date}</dd></div> : null}
@@ -278,8 +429,8 @@ export function WhosInPanel({
                     <div><dt className="text-foreground-muted">Out</dt><dd>{c.checkOut}</dd></div>
                     <div><dt className="text-foreground-muted">Worked</dt><dd>{c.hours}</dd></div>
                   </dl>
-                  {d.row.day ? <div className="mt-2 flex flex-wrap gap-1">{flagBadges(d.row.day)}</div> : null}
-                  {markButton(d)}
+                  {d.row.day ? <div className="mt-2 flex flex-wrap gap-1">{flagBadges(d.row.day, Boolean(mismatchFor?.(d.row)))}</div> : null}
+                  {fixBlock(d)}
                 </li>
               );
             })}

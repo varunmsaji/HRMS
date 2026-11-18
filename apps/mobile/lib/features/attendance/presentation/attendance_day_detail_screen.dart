@@ -9,7 +9,6 @@ import '../../../core/providers.dart';
 import '../../../core/requests/request_screens.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
-import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../leave/presentation/leave_application_detail_screen.dart';
 import '../../profile/data/employee_repository.dart' show Employee;
@@ -23,6 +22,7 @@ import '../../../core/widgets/employee/employee_status_chip.dart';
 import '../../../core/widgets/employee/layout.dart';
 import '../../../core/widgets/employee/status_map.dart';
 import 'attendance_summary.dart';
+import 'mismatch_fixes.dart' show askKeepLeaveReason;
 import 'raise_correction.dart';
 import 'employee_attendance_profile_screen.dart';
 import '../../../core/widgets/ui.dart';
@@ -324,36 +324,11 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
   }
 
   Future<void> _keepLeave() async {
-    final reason = TextEditingController();
-    String? error;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Keep leave'),
-          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Confirms the approved leave stands over the punches recorded on this day.'),
-            const SizedBox(height: 12),
-            if (error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
-            AuthFormField(label: 'Reason', required: true, child: TextField(controller: reason)),
-          ]),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                if (reason.text.trim().isEmpty) return setLocal(() => error = 'A reason is required.');
-                Navigator.of(ctx).pop(true);
-              },
-              child: const Text('Keep leave'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
+    final reason = await askKeepLeaveReason(context);
+    if (reason == null) return;
     setState(() => _busy = true);
     try {
-      final day = await _repo.keepLeaveOverPunches(_dayId, reason: reason.text.trim());
+      final day = await _repo.keepLeaveOverPunches(_dayId, reason: reason);
       if (mounted) setState(() => _day = day);
       _toast('Leave kept.');
     } catch (e) {

@@ -3,6 +3,7 @@
 import { Filter, X } from "lucide-react";
 import { useState } from "react";
 
+import { EmployeePicker } from "@/components/attendance/dashboard/employee-picker";
 import { Collapse } from "@/components/common/collapse";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,10 +89,23 @@ function activeChips(f: DashboardFilters, range: DateRange, lookups: FilterLooku
   return chips;
 }
 
-function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
+function Field({
+  id,
+  label,
+  children,
+  hideLabel = false,
+  className,
+}: {
+  id: string;
+  label: string;
+  children: React.ReactNode;
+  /** Keep the label for screen readers but not on screen (the inline command-bar fields). */
+  hideLabel?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="min-w-0 space-y-1">
-      <label htmlFor={id} className="block text-xs font-medium text-foreground-secondary">
+    <div className={cn("min-w-0", hideLabel ? "" : "space-y-1", className)}>
+      <label htmlFor={id} className={cn("block text-xs font-medium text-foreground-secondary", hideLabel && "sr-only")}>
         {label}
       </label>
       {children}
@@ -105,8 +119,11 @@ function FilterFields({
   onChange,
   idPrefix,
   group,
+  inline = false,
 }: Pick<ToolbarProps, "filters" | "lookups" | "onChange"> & {
   idPrefix: string;
+  /** Command-bar layout: labels hidden on screen, fields sized to sit on one row. */
+  inline?: boolean;
   /** "primary" = the everyday filters, "more" = the rarely-used ones, "all" = both (the drawer). */
   group: "primary" | "more" | "all";
 }) {
@@ -115,20 +132,17 @@ function FilterFields({
   return (
     <>
       {showPrimary && lookups.employees.length > 0 ? (
-        <Field id={`${idPrefix}-employee`} label="Employee">
-          <NativeSelect id={`${idPrefix}-employee`} value={filters.employeeId} onChange={(e) => onChange({ employeeId: e.target.value })}>
-            <option value="">All employees</option>
-            {lookups.employees.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employeeName(employee, employee.id)}
-                {employee.employee_code ? ` (${employee.employee_code})` : ""}
-              </option>
-            ))}
-          </NativeSelect>
+        <Field id={`${idPrefix}-employee`} label="Employee" hideLabel={inline} className={inline ? "w-56" : undefined}>
+          <EmployeePicker
+            id={`${idPrefix}-employee`}
+            employees={lookups.employees}
+            value={filters.employeeId}
+            onChange={(employeeId) => onChange({ employeeId })}
+          />
         </Field>
       ) : null}
       {showPrimary ? (
-      <Field id={`${idPrefix}-status`} label="Attendance status">
+      <Field id={`${idPrefix}-status`} label="Attendance status" hideLabel={inline} className={inline ? "w-44" : undefined}>
         <NativeSelect
           id={`${idPrefix}-status`}
           value={filters.bucket}
@@ -181,6 +195,18 @@ function FilterFields({
           </NativeSelect>
         </Field>
       ) : null}
+      {showMore && lookups.entities.length > 1 ? (
+        <Field id={`${idPrefix}-company`} label="Company">
+          <NativeSelect id={`${idPrefix}-company`} value={filters.legalEntityId} onChange={(e) => onChange({ legalEntityId: e.target.value })}>
+            <option value="">All companies</option>
+            {lookups.entities.map((entity) => (
+              <option key={entity.id} value={entity.id}>
+                {entity.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
+      ) : null}
       {showMore && lookups.employeeStatuses.length > 1 ? (
         <Field id={`${idPrefix}-estatus`} label="Employment status">
           <NativeSelect id={`${idPrefix}-estatus`} value={filters.employeeStatus} onChange={(e) => onChange({ employeeStatus: e.target.value })}>
@@ -203,9 +229,10 @@ function FilterFields({
 export function AttendanceToolbar({ filters, range, today, lookups, onChange, onReset }: ToolbarProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const moreActive =
-    (filters.shiftId ? 1 : 0) + (filters.employeeStatus ? 1 : 0) + (filters.department ? 1 : 0) + (filters.branch ? 1 : 0);
+    (filters.shiftId ? 1 : 0) + (filters.employeeStatus ? 1 : 0) + (filters.department ? 1 : 0) + (filters.branch ? 1 : 0) + (filters.legalEntityId ? 1 : 0);
   const hasMoreFilters =
     lookups.shifts.length > 0 ||
+    lookups.entities.length > 1 ||
     lookups.employeeStatuses.length > 1 ||
     lookups.departments.length > 0 ||
     lookups.branches.length > 0;
@@ -223,7 +250,7 @@ export function AttendanceToolbar({ filters, range, today, lookups, onChange, on
 
   return (
     <section aria-label="Filters" className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div role="group" aria-label="Date range" className="inline-flex rounded-md border border-border p-0.5">
           {RANGE_PRESETS.map((preset) => (
             <button
@@ -264,11 +291,14 @@ export function AttendanceToolbar({ filters, range, today, lookups, onChange, on
             </Field>
           </div>
         ) : (
-          <p className="pb-2 text-sm text-foreground-secondary">
+          <p className="self-center text-sm text-foreground-secondary">
             {range.from === range.to ? formatShortDate(range.to) : `${formatShortDate(range.from)} – ${formatShortDate(range.to)}`}
           </p>
         )}
-        <div className="ml-auto flex items-center gap-2 pb-0.5">
+        <div className="hidden items-end gap-3 md:flex">
+          <FilterFields filters={filters} lookups={lookups} onChange={onChange} idPrefix="att-filter" group="primary" inline />
+        </div>
+        <div className="ml-auto flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" className="md:hidden" onClick={() => setDrawerOpen(true)}>
             <Filter className="mr-1.5 h-4 w-4" aria-hidden="true" />
             Filters{chips.length > 0 ? ` (${chips.length})` : ""}
@@ -292,9 +322,6 @@ export function AttendanceToolbar({ filters, range, today, lookups, onChange, on
         </div>
       </div>
 
-      <div className="hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
-        <FilterFields filters={filters} lookups={lookups} onChange={onChange} idPrefix="att-filter" group="primary" />
-      </div>
       {hasMoreFilters ? (
         <div className="hidden md:block">
           <Collapse open={moreOpen}>

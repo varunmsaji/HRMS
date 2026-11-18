@@ -17,6 +17,15 @@ interface PayrollReadinessProps {
   /** Items from Needs attention that must be cleared before payroll — critical and high only. */
   blockers: AttentionItem[];
   rangeLabel: string;
+  /** One line instead of the full card, for the Today tab. */
+  compact?: boolean;
+}
+
+/** Whether month-end needs HR's eye now: something blocks closing, validation is blocked, or the
+ * period is about to end. Anywhere else the Periods tab is the place for it. */
+export function payrollNeedsAttention(period: AttendancePeriod, today: string, blockers: AttentionItem[]): boolean {
+  if (period.status !== "OPEN") return false;
+  return blockers.length > 0 || period.last_validation_status === "BLOCKED" || periodProgress(period, today).daysLeft <= 3;
 }
 
 function countdown(daysLeft: number): { text: string; tone: "ok" | "soon" | "over" } {
@@ -26,20 +35,56 @@ function countdown(daysLeft: number): { text: string; tone: "ok" | "soon" | "ove
 }
 
 /** Month-end at a glance: where the open period stands and what is still in the way of closing it. */
-export function PayrollReadiness({ period, companyName, today, blockers, rangeLabel }: PayrollReadinessProps) {
+export function PayrollReadiness({ period, companyName, today, blockers, rangeLabel, compact = false }: PayrollReadinessProps) {
   const progress = periodProgress(period, today);
   const clock = countdown(progress.daysLeft);
   const open = period.status === "OPEN";
   const total = blockers.reduce((acc, b) => acc + b.count, 0);
   const title = period.label ?? `${formatShortDate(period.period_start)} – ${formatShortDate(period.period_end)}`;
 
+  if (compact) {
+    const blocked = open && period.last_validation_status === "BLOCKED";
+    return (
+      <section
+        aria-label="Payroll readiness"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm"
+      >
+        <span className="font-medium text-foreground">Payroll</span>
+        <span className="min-w-0 truncate text-foreground-secondary" title={`${title} · ${companyName}`}>
+          {title}
+        </span>
+        <span
+          className={cn(
+            "font-medium",
+            clock.tone === "over" && "text-danger",
+            clock.tone === "soon" && "text-warning",
+            clock.tone === "ok" && "text-foreground-secondary",
+          )}
+        >
+          {clock.text}
+        </span>
+        {blocked ? <Badge variant="danger">Validation blocked</Badge> : null}
+        <span className="text-foreground-secondary">
+          {total > 0 ? `${total} item${total === 1 ? "" : "s"} to clear before close` : "Nothing urgent to clear"}
+        </span>
+        <Button asChild size="sm" variant="outline" className="ml-auto">
+          <Link href={`/app/attendance-periods/${period.id}`}>Open period →</Link>
+        </Button>
+      </section>
+    );
+  }
+
   return (
     <section aria-label="Payroll readiness" className="flex h-full flex-col gap-4 rounded-xl border border-border bg-surface p-5 shadow-elevation-1">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">Payroll readiness</p>
-          <p className="mt-1 truncate text-md font-semibold text-foreground">{title}</p>
-          <p className="truncate text-xs text-foreground-muted">{companyName}</p>
+          <p className="mt-1 line-clamp-2 break-words text-md font-semibold text-foreground" title={title}>
+            {title}
+          </p>
+          <p className="line-clamp-2 break-words text-xs text-foreground-muted" title={companyName}>
+            {companyName}
+          </p>
         </div>
         <AttendancePeriodStatusBadge status={period.status} />
       </div>

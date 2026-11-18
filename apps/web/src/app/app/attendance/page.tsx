@@ -13,18 +13,17 @@ import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
 import { MusterHeatmap } from "@/components/attendance/dashboard/muster-heatmap";
 import { NeedsAttention } from "@/components/attendance/dashboard/needs-attention";
 import { OvertimePanel } from "@/components/attendance/dashboard/overtime-panel";
-import { PayrollReadiness } from "@/components/attendance/dashboard/payroll-readiness";
-import { MonthlySummary, PeriodStatus } from "@/components/attendance/dashboard/period-status";
+import { PayrollReadiness, payrollNeedsAttention } from "@/components/attendance/dashboard/payroll-readiness";
 import { ReportsPanel } from "@/components/attendance/dashboard/reports-panel";
 import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { SelfView } from "@/components/attendance/dashboard/self-view";
-import { StatusChart } from "@/components/attendance/dashboard/status-chart";
 import { AttendanceToolbar } from "@/components/attendance/dashboard/toolbar";
 import { TodayPulse } from "@/components/attendance/dashboard/today-pulse";
 import { TrendChart } from "@/components/attendance/dashboard/trend-chart";
 import { useDashboardData, useDirectoryDetails } from "@/components/attendance/dashboard/use-dashboard-data";
-import { WhosInPanel, type WhosInRow } from "@/components/attendance/dashboard/whos-in-panel";
+import { WhosInPanel, type RowFix, type RowMismatch, type WhosInRow } from "@/components/attendance/dashboard/whos-in-panel";
 import { WorkHoursPanel } from "@/components/attendance/dashboard/work-hours-panel";
+import { KeepLeaveDialog } from "@/components/attendance/keep-leave-dialog";
 import { MarkDayDialog, type MarkDayEmployee } from "@/components/attendance/mark-day-dialog";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 import { ErrorState } from "@/components/common/error-state";
@@ -39,6 +38,7 @@ import {
   buildAttentionItems,
   buildMuster,
   dailyHours,
+  employeeName,
   employeesWithoutRecord,
   formatShortDate,
   indexEmployees,
@@ -58,7 +58,9 @@ import {
   type DayBucket,
   type DayFlag,
 } from "@/lib/attendance/dashboard";
-import { businessToday } from "@/lib/attendance/format";
+import { businessToday, formatClockTime, isoToDatetimeLocal, nowInZoneForDatetimeLocal } from "@/lib/attendance/format";
+import { mismatchOf } from "@/lib/attendance/mismatch";
+import type { AttendanceDay } from "@/lib/attendance/types";
 import { HR_CALENDAR_PERMISSIONS } from "@/lib/attendance/hr-calendar";
 import { compareRates, groupOptions, weekdayShort } from "@/lib/attendance/insights";
 import {
@@ -73,18 +75,27 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/auth/use-permissions";
 
-type DashboardView = "today" | "trends" | "muster" | "periods";
-const VIEWS: DashboardView[] = ["today", "trends", "muster", "periods"];
+type DashboardView = "today" | "trends" | "reports";
+const VIEWS: DashboardView[] = ["today", "trends", "reports"];
 
 const VIEW_LABELS: Record<DashboardView, string> = {
   today: "Today",
   trends: "Trends",
-  muster: "Muster",
-  periods: "Periods & reports",
+  reports: "Reports",
 };
 
+/** The list on the Today view can also be read as the employee × day grid (the old Muster tab). */
+type ListLayout = "list" | "grid";
+
+/** Links from before the tabs were merged keep working: `periods` was the Reports tab, and
+ * `muster` is now the grid layout of the Today list. */
 function parseView(value: string | null): DashboardView {
+  if (value === "periods") return "reports";
   return (VIEWS as string[]).includes(value ?? "") ? (value as DashboardView) : "today";
+}
+
+function parseLayout(params: URLSearchParams | null): ListLayout {
+  return params?.get("layout") === "grid" || params?.get("view") === "muster" ? "grid" : "list";
 }
 
 /** Attendance command centre. The totals and charts come from `GET /v1/attendance/summary`, which
@@ -110,8 +121,12 @@ function AttendanceDashboard() {
   // `null` = closed. Kept as one state object so the dialog gets a stable employee list.
   const [markDay, setMarkDay] = useState<{ employees: MarkDayEmployee[]; date?: string } | null>(null);
   const canMarkDay = can("ATTENDANCE.PUNCH_ON_BEHALF");
+  // Fixing a mismatched row opens one of these in place, so HR does not have to leave the list.
+  const [punchFix, setPunchFix] = useState<{ employeeId: string; label: string; direction: "IN" | "OUT"; time: string } | null>(null);
+  const [keepLeaveDay, setKeepLeaveDay] = useState<AttendanceDay | null>(null);
   // Which part of the dashboard is on screen. "today" (the default) is omitted from the URL.
   const [view, setView] = useState<DashboardView>(() => parseView(searchParams?.get("view") ?? null));
+  const [layout, setLayout] = useState<ListLayout>(() => parseLayout(searchParams));
   const scrollToListRef = useRef(false);
 
   const updateFilters = useCallback(
@@ -126,9 +141,10 @@ function AttendanceDashboard() {
   useEffect(() => {
     const params = serializeFilters(filters);
     if (view !== "today") params.set("view", view);
+    if (view === "today" && layout === "grid") params.set("layout", "grid");
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [filters, view, pathname, router]);
+  }, [filters, view, layout, pathname, router]);
 
   // A drill-down opens the employee list, which lives on the Today view: switch to it first, then
   // scroll once it has rendered.
@@ -178,10 +194,15 @@ function AttendanceDashboard() {
   const totals = useMemo(() => {
     if (!summary) return null;
     const ratePoints = toRatePoints(summary.daily);
+    const kpi = toKpiSet(summary.focus);
+    // No row for anyone on the focus day: nothing has been calculated, so there is nothing fair
+    // to compare with last week's full day.
+    const awaitingRecords = kpi.totalEmployees > 0 && kpi.noRecord >= kpi.totalEmployees;
     return {
       daily: summary.daily,
-      kpi: toKpiSet(summary.focus),
-      kpiCompare: summary.compare
+      kpi,
+      awaitingRecords,
+      kpiCompare: summary.compare && !awaitingRecords
         ? { kpi: toKpiSet(summary.compare), label: `last ${weekdayShort(summary.compare_date)}` }
         : null,
       distribution: toDistribution(summary.distribution),
@@ -310,6 +331,74 @@ function AttendanceDashboard() {
     [attention],
   );
 
+  // After any fix the totals and the list must both reload, or the KPI tiles keep showing the
+  // problem that was just settled.
+  const retryDays = data.days.retry;
+  const retrySummary = data.summary.retry;
+  const refreshAll = useCallback(() => {
+    retryDays();
+    retrySummary();
+  }, [retryDays, retrySummary]);
+
+  // A correction request the employee already raised settles the day better than an HR punch, so
+  // it comes first when there is one.
+  const pendingRequestByDay = useMemo(
+    () => new Map((data.regularizations.data ?? []).map((r) => [`${r.employee_id}|${r.attendance_date}`, r])),
+    [data.regularizations.data],
+  );
+  const canApproveRegularization = can("ATTENDANCE.REGULARIZATION_APPROVE");
+  const canRecompute = can("ATTENDANCE.RECOMPUTE");
+  const mismatchFor = useCallback(
+    (row: WhosInRow): RowMismatch | null => {
+      const day = row.day;
+      if (!day) return null;
+      const mismatch = mismatchOf(day);
+      if (!mismatch) return null;
+      const label = employeeName(employeesById.get(row.employeeId), row.employeeId);
+      const when = formatShortDate(day.attendance_date);
+      const fixes: RowFix[] = [];
+      const request = pendingRequestByDay.get(`${day.employee_id}|${day.attendance_date}`);
+      if (request) {
+        const verb = canApproveRegularization ? "Review correction request" : "View correction request";
+        fixes.push({ key: "request", label: verb, ariaLabel: `${verb} from ${label} for ${when}`, href: `/app/regularizations/${request.id}`, primary: true });
+      } else if (mismatch.kind === "work_on_leave") {
+        if (canRecompute) {
+          fixes.push({ key: "keep-leave", label: "Keep leave", ariaLabel: `Keep leave for ${label} on ${when}`, onClick: () => setKeepLeaveDay(day), primary: true });
+        }
+        fixes.push({ key: "cancel-leave", label: "Cancel leave", ariaLabel: `Cancel ${label}'s leave on ${when} in Leave`, href: "/app/leave-applications" });
+      } else if (mismatch.kind === "no_punches" && canMarkDay) {
+        fixes.push({
+          key: "mark-present",
+          label: "Mark present",
+          ariaLabel: `Mark ${label} present on ${when}`,
+          onClick: () => setMarkDay({ employees: [{ id: day.employee_id, label }], date: day.attendance_date }),
+          primary: true,
+        });
+      } else if ((mismatch.kind === "missing_out" || mismatch.kind === "missing_in") && canMarkDay) {
+        // Only when exactly one side is missing. An "incomplete" day with both punches can be
+        // incomplete for another reason (an unresolved break), so a prefilled punch could record
+        // an unrelated extra one: that case offers Open day only.
+        const direction: "IN" | "OUT" = day.actual_first_in ? "OUT" : "IN";
+        // Start from the shift's own start or end, but never a moment that has not happened yet.
+        const scheduled = direction === "IN" ? day.scheduled_start : day.scheduled_end;
+        const now = nowInZoneForDatetimeLocal(timezone);
+        let time = scheduled ? isoToDatetimeLocal(scheduled, timezone) : `${day.attendance_date}T${direction === "IN" ? "09:00" : "18:00"}`;
+        if (time > now) time = now;
+        const verb = direction === "IN" ? "Add punch-in" : "Add punch-out";
+        fixes.push({
+          key: "punch",
+          label: verb,
+          ariaLabel: `${verb} for ${label} on ${when}`,
+          onClick: () => setPunchFix({ employeeId: day.employee_id, label, direction, time }),
+          primary: true,
+        });
+      }
+      fixes.push({ key: "open", label: "Open day", ariaLabel: `Open ${label}'s attendance for ${when}`, href: `/app/attendance/${day.id}`, primary: fixes.length === 0 });
+      return { reason: mismatch.reason, fixes };
+    },
+    [employeesById, pendingRequestByDay, canApproveRegularization, canRecompute, canMarkDay, timezone],
+  );
+
   function drill(target: { bucket?: DayBucket; flag?: DayFlag; scope?: "range"; clear?: boolean }) {
     setFilters((prev) => {
       if (target.clear) return { ...prev, bucket: "", flag: "", scope: "" };
@@ -324,6 +413,7 @@ function AttendanceDashboard() {
     });
     scrollToListRef.current = true;
     setView("today");
+    setLayout("list");
   }
 
   const actions =
@@ -458,73 +548,97 @@ function AttendanceDashboard() {
                     : "text-foreground-secondary hover:text-foreground",
                 )}
               >
-                {key === "periods" && mode !== "org" ? "Reports" : VIEW_LABELS[key]}
+                {VIEW_LABELS[key]}
               </button>
             ))}
           </div>
 
           {view === "today" ? (
             <div role="tabpanel" id="att-panel-today" aria-labelledby="att-tab-today" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
-          <TodayPulse
-            points={totals.ratePoints}
-            focusDate={range.to}
-            focusLabel={focusLabel}
-            comparison={totals.rateComparison}
-            distribution={totals.distribution}
-            filters={filters}
-            onDrill={(bucket) => drill({ bucket })}
-          />
-
-          <KpiGrid kpi={totals.kpi} filters={filters} focusLabel={focusLabel} compare={totals.kpiCompare} onDrill={drill} />
-
-          <div className="grid items-start gap-6 lg:grid-cols-3">
-            <SectionCard
-              id="att-attention"
-              title="Needs attention"
-              description={`${rangeLabel} — what HR should act on.`}
-              status="ready"
-              className={mode === "org" && readinessPeriod ? "lg:col-span-2" : "lg:col-span-3"}
-            >
-              <NeedsAttention items={attention} unavailableSources={unavailableSources} rangeLabel={rangeLabel} onDrill={drill} />
-            </SectionCard>
-            {mode === "org" && readinessPeriod ? (
-              <PayrollReadiness
-                period={readinessPeriod}
-                companyName={entityNames.get(readinessPeriod.legal_entity_id) ?? "Company"}
-                today={today}
-                blockers={payrollBlockers}
-                rangeLabel={rangeLabel}
-              />
-            ) : null}
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
+            <TodayPulse
+              points={totals.ratePoints}
+              focusDate={range.to}
+              focusLabel={focusLabel}
+              comparison={totals.rateComparison}
+              awaitingRecords={totals.awaitingRecords}
+            />
+            <KpiGrid kpi={totals.kpi} filters={filters} focusLabel={focusLabel} compare={totals.kpiCompare} onDrill={drill} />
           </div>
 
           <SectionCard
-            id="att-whos-in"
-            title={listTitle}
-            description={`${drillDescription ? `${drillDescription}. ` : ""}Snapshot from punches and the latest attendance calculation — not a live presence feed.`}
+            id="att-attention"
+            title="Needs attention"
+            description={`Attendance items cover ${rangeLabel}. Pending requests are counted whatever their date.`}
             status="ready"
+          >
+            <NeedsAttention items={attention} unavailableSources={unavailableSources} rangeLabel={rangeLabel} onDrill={drill} />
+          </SectionCard>
+
+          {mode === "org" && readinessPeriod && payrollNeedsAttention(readinessPeriod, today, payrollBlockers) ? (
+            <PayrollReadiness
+              compact
+              period={readinessPeriod}
+              companyName={entityNames.get(readinessPeriod.legal_entity_id) ?? "Company"}
+              today={today}
+              blockers={payrollBlockers}
+              rangeLabel={rangeLabel}
+            />
+          ) : null}
+
+          <SectionCard
+            id={layout === "grid" ? "att-muster" : "att-whos-in"}
+            title={layout === "grid" ? "Attendance grid" : listTitle}
+            description={
+              layout === "grid"
+                ? `Each employee's status, day by day, ${winLabel}. Follows the filters above.`
+                : `${drillDescription ? `${drillDescription}. ` : ""}Snapshot from punches and the latest attendance calculation — not a live presence feed.${
+                    data.summary.loadedAt ? ` Loaded at ${formatClockTime(new Date(data.summary.loadedAt).toISOString(), timezone)}.` : ""
+                  }`
+            }
+            status="ready"
+            empty={layout === "grid" && muster.rows.length === 0 ? { title: "No attendance days to show.", icon: CalendarClock } : null}
             actions={
-              filters.bucket || filters.flag ? (
-                <Button type="button" size="sm" variant="outline" onClick={() => drill({ clear: true })}>
-                  Clear drill-down
-                </Button>
-              ) : null
+              <>
+                {layout === "list" && (filters.bucket || filters.flag) ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => drill({ clear: true })}>
+                    Clear drill-down
+                  </Button>
+                ) : null}
+                <div role="group" aria-label="Show as" className="inline-flex rounded-md border border-border p-0.5">
+                  {(["list", "grid"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={layout === option}
+                      onClick={() => setLayout(option)}
+                      className={cn(
+                        "rounded px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                        layout === option ? "bg-primary text-on-primary" : "text-foreground-secondary hover:bg-muted",
+                      )}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </>
             }
           >
-            <WhosInPanel
-              rows={listRows}
-              employeesById={employeesById}
-              shiftNames={shiftNames}
-              timezone={timezone}
-              showDate={rangeScoped}
-              directory={directoryMap}
-              fallbackDate={range.to}
-              onMarkPresent={
-                canMarkDay
-                  ? ({ employeeId, label, date }) => setMarkDay({ employees: [{ id: employeeId, label }], date })
-                  : undefined
-              }
-            />
+            {layout === "grid" ? (
+              <MusterHeatmap muster={muster} />
+            ) : (
+              <WhosInPanel
+                rows={listRows}
+                employeesById={employeesById}
+                shiftNames={shiftNames}
+                timezone={timezone}
+                showDate={rangeScoped}
+                directory={directoryMap}
+                fallbackDate={range.to}
+                onMarkMany={canMarkDay ? ({ employees, date }) => setMarkDay({ employees, date }) : undefined}
+                mismatchFor={mismatchFor}
+              />
+            )}
           </SectionCard>
             </div>
           ) : null}
@@ -546,26 +660,14 @@ function AttendanceDashboard() {
             />
           </SectionCard>
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            <SectionCard
-              id="att-trend"
-              title="Attendance trend"
-              description="Rates are of employees expected to work."
-              status="ready"
-              className="lg:col-span-2"
-            >
-              <TrendChart days={totals.daily} range={win} />
-            </SectionCard>
-            <SectionCard
-              id="att-status"
-              title="Status distribution"
-              description={`${focusIsToday ? "Today" : formatShortDate(range.to)} — click a status to list those employees.`}
-              status="ready"
-              empty={totals.distribution.every((d) => d.count === 0) ? { title: "No attendance records for this date.", icon: CalendarClock } : null}
-            >
-              <StatusChart distribution={totals.distribution} filters={filters} onDrill={(bucket) => drill({ bucket })} />
-            </SectionCard>
-          </div>
+          <SectionCard
+            id="att-trend"
+            title="Attendance trend"
+            description="Rates are of employees expected to work."
+            status="ready"
+          >
+            <TrendChart days={totals.daily} range={win} />
+          </SectionCard>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <SectionCard
@@ -582,16 +684,29 @@ function AttendanceDashboard() {
               />
             </SectionCard>
             <SectionCard
-              id="att-weekday"
-              title="Absence by weekday"
-              description={`${winLabel} — share of expected days missed, per weekday.`}
+              id="att-absence"
+              title="Absence & leave"
+              description={`${rangeLabel} — operational view; Leave stays the system of record.`}
               status="ready"
             >
-              <WeekdayPanel stats={totals.weekdayStats} />
+              <div className="space-y-5">
+                <AbsenceInsights
+                  rangeAbsentDays={absentRangeDays}
+                  rangeLeaveDays={leaveRangeDays}
+                  repeat={repeat}
+                  employeesById={employeesById}
+                  onDrillEmployee={(id) => updateFilters({ employeeId: id })}
+                />
+                <div>
+                  <h3 className="mb-2 text-sm font-medium text-foreground">By weekday</h3>
+                  <p className="mb-2 text-xs text-foreground-muted">{winLabel} — share of expected days missed.</p>
+                  <WeekdayPanel stats={totals.weekdayStats} />
+                </div>
+              </div>
             </SectionCard>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid gap-6 lg:grid-cols-2">
             <SectionCard
               id="att-hours"
               title="Work hours"
@@ -613,54 +728,20 @@ function AttendanceDashboard() {
             >
               {overtimeSummary ? <OvertimePanel summary={overtimeSummary} /> : null}
             </SectionCard>
-            <SectionCard
-              id="att-absence"
-              title="Leave & absence"
-              description="Operational view — Leave stays the system of record."
-              status="ready"
-            >
-              <AbsenceInsights
-                kpi={totals.kpi}
-                focusLabel={focusLabel}
-                rangeAbsentDays={absentRangeDays}
-                rangeLeaveDays={leaveRangeDays}
-                repeat={repeat}
-                employeesById={employeesById}
-                onDrillEmployee={(id) => updateFilters({ employeeId: id })}
-              />
-            </SectionCard>
           </div>
             </div>
           ) : null}
 
-          {view === "muster" ? (
-            <div role="tabpanel" id="att-panel-muster" aria-labelledby="att-tab-muster" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
-          <SectionCard
-            id="att-muster"
-            title="Attendance heatmap"
-            description="Employee × day status grid (muster)."
-            status="ready"
-            empty={muster.rows.length === 0 ? { title: "No attendance days to show.", icon: CalendarClock } : null}
-          >
-            <MusterHeatmap muster={muster} />
-          </SectionCard>
-            </div>
-          ) : null}
-
-          {view === "periods" ? (
-            <div role="tabpanel" id="att-panel-periods" aria-labelledby="att-tab-periods" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
+          {view === "reports" ? (
+            <div role="tabpanel" id="att-panel-reports" aria-labelledby="att-tab-reports" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
           {mode === "org" ? (
-            <div className="grid gap-6 lg:grid-cols-2">
-              <PeriodStatus
-                periods={data.periods}
-                entityNames={entityNames}
-                today={today}
-                entities={lookups.entities}
-                legalEntityId={filters.legalEntityId}
-                onEntityChange={(legalEntityId) => updateFilters({ legalEntityId })}
-              />
-              <MonthlySummary periods={data.periods} today={today} />
-            </div>
+            <p className="text-sm text-foreground-secondary">
+              Closing the month? Periods and the monthly summary are in{" "}
+              <Link href="/app/attendance-periods" className="font-medium text-primary hover:underline">
+                Payroll → Attendance periods
+              </Link>
+              .
+            </p>
           ) : null}
 
           <ReportsPanel
@@ -677,13 +758,33 @@ function AttendanceDashboard() {
         </>
       )}
 
-      <PunchEntryDialog open={punchOpen} onOpenChange={setPunchOpen} onRecorded={() => data.days.retry()} />
+      <PunchEntryDialog open={punchOpen} onOpenChange={setPunchOpen} onRecorded={refreshAll} />
+      <PunchEntryDialog
+        open={punchFix !== null}
+        onOpenChange={(next) => (next ? null : setPunchFix(null))}
+        employeeId={punchFix?.employeeId}
+        employeeLabel={punchFix?.label}
+        initialDirection={punchFix?.direction}
+        initialTime={punchFix?.time}
+        onRecorded={refreshAll}
+      />
+      {keepLeaveDay ? (
+        <KeepLeaveDialog
+          open
+          onOpenChange={(next) => (next ? null : setKeepLeaveDay(null))}
+          day={keepLeaveDay}
+          onDone={() => {
+            setKeepLeaveDay(null);
+            refreshAll();
+          }}
+        />
+      ) : null}
       <MarkDayDialog
         open={markDay !== null}
         onOpenChange={(next) => (next ? null : setMarkDay(null))}
         initialEmployees={markDay?.employees}
         initialDate={markDay?.date}
-        onRecorded={() => data.days.retry()}
+        onRecorded={refreshAll}
       />
     </div>
   );

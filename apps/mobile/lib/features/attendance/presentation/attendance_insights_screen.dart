@@ -17,6 +17,7 @@ import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import '../domain/attendance_reports.dart' show reportLabels;
 import 'attendance_day_detail_screen.dart';
+import 'attendance_mismatches_screen.dart';
 import 'employee_attendance_profile_screen.dart';
 import 'attendance_summary.dart';
 import 'insight_charts.dart';
@@ -239,7 +240,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
                   title: Text(i.label),
                   subtitle: Text('${i.hint}${i.employees != null ? ' · ${i.employees} employee${i.employees == 1 ? '' : 's'}' : ''}', style: const TextStyle(fontSize: 12)),
                   trailing: Text('${i.count} ${i.unit}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                  onTap: i.route == null ? null : () => context.push(i.route!),
+                  onTap: i.route != null
+                      ? () => context.push(i.route!)
+                      : i.fixable
+                          ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceMismatchesScreen(from: _bounds.from, to: _bounds.to)))
+                          : null,
                 ),
             ]),
     );

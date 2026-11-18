@@ -98,6 +98,28 @@ describe("PunchEntryDialog — on-behalf punch time (D1)", () => {
     });
   });
 
+  it("opens on the direction and time it is given (fixing a missing punch-out) and posts exactly those", async () => {
+    mockUser.mockReturnValue({ employee_id: "self-emp", company_timezone: "Asia/Kolkata" });
+    const user = userEvent.setup();
+    render(
+      <PunchEntryDialog
+        open
+        onOpenChange={vi.fn()}
+        employeeId="target-emp"
+        initialDirection="OUT"
+        initialTime="2026-11-17T18:00"
+        onRecorded={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("combobox")).toHaveValue("OUT");
+    expect(screen.getByLabelText(/punch time \(ist\)/i)).toHaveValue("2026-11-17T18:00");
+    await user.type(screen.getByLabelText(/reference/i), "forgot to punch out");
+    await user.click(screen.getByRole("button", { name: /record punch/i }));
+    await waitFor(() => expect(mockedPost).toHaveBeenCalled());
+    const [, body] = mockedPost.mock.calls[0];
+    expect(body).toMatchObject({ employee_id: "target-emp", direction: "OUT", punch_time: "2026-11-17T12:30:00.000Z" });
+  });
+
   it("posts to the self-service route with no punch_time field when the target is the caller's own employee", async () => {
     mockUser.mockReturnValue({ employee_id: "self-emp", company_timezone: "Asia/Kolkata" });
 

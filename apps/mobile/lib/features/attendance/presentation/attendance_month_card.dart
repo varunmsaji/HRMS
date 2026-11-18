@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
+import '../../../core/theme/app_colors.dart';
 import '../data/attendance_repository.dart';
+import '../domain/employee_analytics.dart';
+import 'accent_stat_tile.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import '../../../core/theme/employee_theme_scope.dart';
@@ -19,13 +22,17 @@ String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toStr
 /// a month grid coloured by each day's attendance bucket, with previous/next month navigation.
 /// Tapping a day opens its detail.
 class AttendanceMonthCard extends ConsumerStatefulWidget {
-  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now, this.onLoaded});
+  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now, this.onLoaded, this.showFigures = true});
   final String employeeId;
   final String zone;
 
   /// Told the month shown (`YYYY-MM`) and its day rows after each successful load, so a screen can
   /// summarise the same month without a second picker.
   final void Function(String month, List<AttendanceDay> days)? onLoaded;
+
+  /// Late arrivals, punctuality and hours under the Present / Absent / Leave tiles. Off where the
+  /// screen already has its own full month grid (the HR employee profile).
+  final bool showFigures;
 
   /// Overrides the clock (tests, so "today" and the opening month are fixed). Null = now.
   final DateTime? now;
@@ -120,6 +127,8 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
             _Legend(statuses: [for (final d in _byDate.values) _statusOf(d)]),
             const SizedBox(height: 8),
             _SummaryTiles(present: present, absent: absent, leave: leave, total: _byDate.values.where((d) => attendanceBucketOf(d) != 'NOT_EMPLOYED').length),
+            if (widget.showFigures) const SizedBox(height: 8),
+            if (widget.showFigures) _MonthFigures(stats: monthStats(_byDate.values.toList(), businessToday(widget.zone, now: widget.now))),
           ],
         ]),
       ),
@@ -253,6 +262,43 @@ class _LiquidTile extends StatelessWidget {
           ]),
         ),
       ),
+    );
+  }
+}
+
+/// Late arrivals, punctuality and hours for the month, from the same `monthStats` the HR insights
+/// screen uses so the figures agree.
+class _MonthFigures extends StatelessWidget {
+  const _MonthFigures({required this.stats});
+  final MonthStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = stats;
+    final scheme = Theme.of(context).colorScheme;
+    final c = Theme.of(context).extension<AppStatusColors>() ?? AppStatusColors.light;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: AccentStatGrid(keyPrefix: 'month-figure-', stretchLast: true, stats: [
+        AccentStat('Late arrivals', '${s.lateDays}',
+            icon: Icons.schedule_rounded,
+            accent: c.warning,
+            accentSubtle: c.warningSubtle,
+            tone: s.lateDays > 0 ? c.warning : null,
+            hint: s.lateDays > 0 ? '${formatMinutes(s.lateMinutes)} in total' : 'None'),
+        AccentStat('Punctuality', s.punctuality == null ? '—' : '${s.punctuality}%',
+            icon: Icons.track_changes_rounded,
+            accent: scheme.primary,
+            accentSubtle: scheme.primary.withValues(alpha: 0.12),
+            hint: 'days on time',
+            progress: s.punctuality?.toDouble(),
+            showPercent: false),
+        AccentStat('Hours worked', formatMinutes(s.workedMinutes),
+            icon: Icons.timer_outlined,
+            accent: c.info,
+            accentSubtle: c.infoSubtle,
+            hint: s.avgWorkedMinutes == null ? null : '${formatMinutes(s.avgWorkedMinutes)} a day on average'),
+      ]),
     );
   }
 }
