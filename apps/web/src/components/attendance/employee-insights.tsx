@@ -5,18 +5,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
-import { DailyHoursChart, SixMonthTrend } from "@/components/attendance/employee-insights-charts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiClient } from "@/lib/api/client";
 import { BUCKET_GLYPHS, BUCKET_LABELS, BUCKET_TONES } from "@/lib/attendance/dashboard";
 import {
-  dailyHours,
   formatCountdown,
   formatDayCount,
   monthRange,
   monthStats,
-  monthlyTrend,
   monthWeeks,
   shiftMonth,
   todayStatus,
@@ -91,7 +88,6 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
 
   const [month, setMonth] = useState(today.slice(0, 7));
   const [days, setDays] = useState<AttendanceDay[] | null>(null);
-  const [history, setHistory] = useState<AttendanceDay[] | null>(null);
   const [todayDay, setTodayDay] = useState<AttendanceDay | null>(null);
   const [punches, setPunches] = useState<Punch[] | null>(null);
   const [failed, setFailed] = useState<"denied" | "error" | null>(null);
@@ -145,15 +141,6 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
     };
   }, [loadToday]);
 
-  // Six months ending this month, for the trend. Independent of the month being browsed.
-  useEffect(() => {
-    const from = monthRange(shiftMonth(today.slice(0, 7), -5)).from;
-    apiClient
-      .get<AttendanceDay[]>(`/attendance/days?employee_id=${employeeId}&date_from=${from}&date_to=${today}`)
-      .then(setHistory)
-      .catch(() => setHistory(null));
-  }, [employeeId, today]);
-
   useEffect(() => {
     void loadMonth();
     setSelected(null);
@@ -164,11 +151,6 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
     [todayDay, punches, now],
   );
   const stats = useMemo(() => (days ? monthStats(days, today) : null), [days, today]);
-  const hours = useMemo(() => dailyHours(days ?? [], today), [days, today]);
-  const trend = useMemo(
-    () => (history ? monthlyTrend(history, today.slice(0, 7), 6, today) : null),
-    [history, today],
-  );
   const weeks = useMemo(() => monthWeeks(month, days ?? [], today), [month, days, today]);
   const selectedCell = useMemo(
     () => weeks.flat().find((c): c is CalendarCell => c !== null && c.date === selected) ?? null,
@@ -337,15 +319,15 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
               />
             </dl>
 
-            <div className="mt-6">
-              <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-medium text-foreground-muted">
+            <div className="mt-5 max-w-sm">
+              <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-foreground-muted">
                 {WEEKDAYS.map((w) => (
                   <span key={w}>{w}</span>
                 ))}
               </div>
-              <div role="grid" aria-label={`Attendance for ${monthTitle(month)}`} className="mt-1.5 space-y-1.5">
+              <div role="grid" aria-label={`Attendance for ${monthTitle(month)}`} className="mt-1 space-y-1">
                 {weeks.map((week, wi) => (
-                  <div role="row" key={wi} className="grid grid-cols-7 gap-1.5">
+                  <div role="row" key={wi} className="grid grid-cols-7 gap-1">
                     {week.map((cell, ci) =>
                       cell === null ? (
                         <span key={ci} role="gridcell" aria-hidden="true" />
@@ -358,7 +340,7 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                           aria-label={`${cell.date}, ${cell.bucket ? BUCKET_LABELS[cell.bucket] : cell.isFuture ? "upcoming" : "no record"}`}
                           onClick={() => setSelected(selected === cell.date ? null : cell.date)}
                           className={cn(
-                            "flex aspect-[5/4] min-h-10 flex-col items-start justify-between rounded-lg border border-transparent p-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-2",
+                            "flex h-9 flex-col items-center justify-center rounded-md border border-transparent text-xs leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             cell.bucket && !cell.isFuture
                               ? BUCKET_TONES[cell.bucket].cell
                               : "bg-surface-secondary text-foreground-muted",
@@ -369,7 +351,7 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                         >
                           <span className="font-medium tabular-nums">{cell.dayOfMonth}</span>
                           {cell.bucket && !cell.isFuture ? (
-                            <span className="text-[10px] font-semibold">{BUCKET_GLYPHS[cell.bucket]}</span>
+                            <span className="text-[9px] font-semibold">{BUCKET_GLYPHS[cell.bucket]}</span>
                           ) : null}
                         </button>
                       ),
@@ -393,8 +375,6 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                 ))}
               </ul>
             </div>
-
-            <DailyHoursChart bars={hours.bars} scheduledMinutes={hours.scheduledMinutes} />
 
             {selectedCell ? (
               <div className="mt-4 rounded-xl border border-border bg-surface-secondary/50 p-4" data-testid="day-detail">
@@ -443,7 +423,6 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
           </>
         )}
       </section>
-      {trend ? <SixMonthTrend points={trend} /> : null}
     </div>
   );
 }

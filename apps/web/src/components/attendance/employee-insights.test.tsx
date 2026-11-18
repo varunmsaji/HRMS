@@ -97,18 +97,6 @@ describe("EmployeeInsights", () => {
     expect(screen.getByRole("button", { name: "Next month" })).toBeEnabled();
   });
 
-  it("draws the hours chart and the six-month trend", async () => {
-    route({
-      days: [
-        makeDay({ attendance_date: "2026-08-07", worked_minutes: 480 }),
-        makeDay({ attendance_date: "2026-07-07" }),
-      ],
-    });
-    render(<EmployeeInsights employeeId="emp-1" shiftName={null} />);
-    expect(await screen.findByRole("figure", { name: "Hours worked each day" })).toBeInTheDocument();
-    expect(await screen.findByRole("img", { name: "Jul: 1 of 1 days worked" })).toBeInTheDocument();
-  });
-
   it("renders nothing when the viewer may not see this employee's attendance", async () => {
     route({ reject: { status: 403 } });
     const { container } = render(<EmployeeInsights employeeId="emp-1" shiftName={null} />);
