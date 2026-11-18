@@ -172,6 +172,15 @@ void main() {
       expect(find.widgetWithText(FilledButton, 'Open day'), findsOneWidget);
     });
 
+    testWidgets('an incomplete day with both punches gets no prefilled punch, only Open day', (tester) async {
+      final both = _dayJson({'id': 'b2', 'employee_id': 'e1', 'attendance_status': 'INCOMPLETE'});
+      await _pump(tester, const TeamAttendanceScreen(), [both]);
+      expect(find.text("Punches don't add up to a full day."), findsOneWidget);
+      expect(find.text('Add punch-out'), findsNothing);
+      expect(find.text('Add punch-in'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Open day'), findsOneWidget);
+    });
+
     testWidgets('a fine day shows no banner and no fix controls', (tester) async {
       await _pump(tester, const TeamAttendanceScreen(), [fine]);
       expect(find.textContaining('need fixing'), findsNothing);

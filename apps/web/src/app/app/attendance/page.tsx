@@ -374,7 +374,10 @@ function AttendanceDashboard() {
           onClick: () => setMarkDay({ employees: [{ id: day.employee_id, label }], date: day.attendance_date }),
           primary: true,
         });
-      } else if ((mismatch.kind === "missing_out" || mismatch.kind === "missing_in" || mismatch.kind === "incomplete") && canMarkDay) {
+      } else if ((mismatch.kind === "missing_out" || mismatch.kind === "missing_in") && canMarkDay) {
+        // Only when exactly one side is missing. An "incomplete" day with both punches can be
+        // incomplete for another reason (an unresolved break), so a prefilled punch could record
+        // an unrelated extra one: that case offers Open day only.
         const direction: "IN" | "OUT" = day.actual_first_in ? "OUT" : "IN";
         // Start from the shift's own start or end, but never a moment that has not happened yet.
         const scheduled = direction === "IN" ? day.scheduled_start : day.scheduled_end;

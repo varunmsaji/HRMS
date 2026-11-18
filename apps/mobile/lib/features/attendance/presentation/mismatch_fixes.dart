@@ -165,7 +165,10 @@ class MismatchFixer {
           if (await openMarkAttendance(context, employees: [(value: day.employeeId, label: label)], date: day.attendanceDate)) onChanged();
         }, primary: true),
       );
-    } else if ((mismatch.kind == MismatchKind.missingOut || mismatch.kind == MismatchKind.missingIn || mismatch.kind == MismatchKind.incomplete) && canPunch) {
+    } else if ((mismatch.kind == MismatchKind.missingOut || mismatch.kind == MismatchKind.missingIn) && canPunch) {
+      // Only when exactly one side is missing. An incomplete day with both punches can be incomplete
+      // for another reason (an unresolved break), so a prefilled punch could record an unrelated
+      // extra one: that case offers Open day only.
       final direction = day.actualFirstIn != null ? 'OUT' : 'IN';
       fixes.add(
         RowFix(direction == 'IN' ? 'Add punch-in' : 'Add punch-out', () async {

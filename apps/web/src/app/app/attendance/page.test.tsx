@@ -764,9 +764,10 @@ describe("AttendanceDashboardPage", () => {
       render(<AttendanceDashboardPage />);
       // The blocker is listed once, in Needs attention; the payroll line under it is one row that
       // only says how many items stand in the way and links to the period.
+      // Periods load after the days, so wait for them rather than assuming they are there.
       const attention = (await screen.findByRole("heading", { name: /needs attention/i })).closest("[id='att-attention']") as HTMLElement;
-      expect(within(attention).getByText("Payroll period blocked")).toBeInTheDocument();
-      const readiness = screen.getByRole("region", { name: "Payroll readiness" });
+      expect(await within(attention).findByText("Payroll period blocked")).toBeInTheDocument();
+      const readiness = await screen.findByRole("region", { name: "Payroll readiness" });
       expect(within(readiness).queryByText("Payroll period blocked")).not.toBeInTheDocument();
       expect(within(readiness).getByText("Validation blocked")).toBeInTheDocument();
       expect(within(readiness).getByText(/1 item to clear before close/)).toBeInTheDocument();
@@ -826,8 +827,10 @@ describe("AttendanceDashboardPage", () => {
         });
         render(<AttendanceDashboardPage />);
         await findKpi(/^Present: /);
+        // The pending requests arrive after the days; wait for them.
+        const link = await within(rowFor(/Asha Rao/)).findByRole("link", { name: /^Review correction request from Asha Rao/ });
+        expect(link).toHaveAttribute("href", "/app/regularizations/reg-9");
         const row = within(rowFor(/Asha Rao/));
-        expect(row.getByRole("link", { name: /^Review correction request from Asha Rao/ })).toHaveAttribute("href", "/app/regularizations/reg-9");
         expect(row.queryByRole("button", { name: /^Add punch/ })).not.toBeInTheDocument();
         expect(row.getByRole("link", { name: /^Open Asha Rao/ })).toHaveAttribute("href", expect.stringContaining("/app/attendance/d-miss"));
       });
@@ -862,6 +865,16 @@ describe("AttendanceDashboardPage", () => {
         expect(row.queryByText("Missing punch")).not.toBeInTheDocument();
         await user.click(row.getByRole("button", { name: /^Mark Asha Rao present/ }));
         expect(await screen.findByRole("dialog", { name: "Mark attendance" })).toBeInTheDocument();
+      });
+
+      it("does not prefill a punch for an incomplete day that has both punches (it may be a break, not a punch)", async () => {
+        mockApi({ days: [makeDay({ id: "d-both", employee_id: "emp-1", attendance_date: TODAY, attendance_status: "INCOMPLETE" })] });
+        render(<AttendanceDashboardPage />);
+        await findKpi(/^Present: /);
+        const row = within(rowFor(/Asha Rao/));
+        expect(row.getByText("Punches don't add up to a full day.")).toBeInTheDocument();
+        expect(row.queryByRole("button", { name: /^Add punch/ })).not.toBeInTheDocument();
+        expect(row.getByRole("link", { name: /^Open Asha Rao/ })).toBeInTheDocument();
       });
 
       it("shows no fix controls on a fine day", async () => {
