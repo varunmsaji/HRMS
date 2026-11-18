@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/payroll/presentation/employee_salary_panel.dart';
@@ -45,7 +46,31 @@ final _preview = {
   },
 };
 
-FakeApiClient _api({String payBasis = 'MONTHLY', Map<String, dynamic> setup = const {}}) => FakeApiClient(
+final _createdDraft = {
+  'id': 'st-2', 'code': 'SENIOR_ENGINEER', 'name': 'Senior engineer', 'is_active': true,
+  'versions': [
+    {'id': 'v-9', 'status': 'DRAFT', 'version': 3, 'effective_from': null, 'effective_to': null, 'lines': _templateLines},
+  ],
+};
+final _createdPublished = {
+  'id': 'st-2', 'code': 'SENIOR_ENGINEER', 'name': 'Senior engineer', 'is_active': true,
+  'versions': [
+    {'id': 'v-9', 'status': 'PUBLISHED', 'version': 4, 'effective_from': '2000-01-01', 'effective_to': null, 'lines': _templateLines},
+  ],
+};
+
+/// Fails only the create POST: the same path is also the structures list the screen loads.
+class _CreateFails extends FakeApiClient {
+  _CreateFails({super.lists, super.objects});
+
+  @override
+  Future<T> post<T>(String path, {dynamic body, required T Function(dynamic) parse, bool authenticated = true, String? ifMatch, Map<String, String>? headers}) {
+    if (path == '/payroll/salary-structures') throw ApiError(status: 409, code: 'DUPLICATE', message: 'That code is taken.');
+    return super.post(path, body: body, parse: parse, ifMatch: ifMatch);
+  }
+}
+
+FakeApiClient _api({String payBasis = 'MONTHLY', Map<String, dynamic> setup = const {}, bool createFails = false}) => (createFails ? _CreateFails.new : FakeApiClient.new)(
       lists: {
         '/payroll/salary-structures': [_standard],
         '/payroll/salary-components': [_component('c-basic', 'BASIC', 'Basic'), _component('c-hra', 'HRA', 'HRA'), _component('c-sa', 'SPECIAL_ALLOWANCE', 'Special Allowance')],
@@ -58,6 +83,8 @@ FakeApiClient _api({String payBasis = 'MONTHLY', Map<String, dynamic> setup = co
           ...setup,
         },
         '/employees/emp-1/salary/setup/preview': _preview,
+        '/payroll/salary-structures': _createdDraft,
+        '/payroll/salary-structures/st-2/versions/v-9/publish': _createdPublished,
       },
     );
 
@@ -115,6 +142,51 @@ void main() {
     expect(body['template_structure_id'], 'st-1');
     expect(body['effective_from'], '2026-09-24');
     expect(((body['lines'] as List).firstWhere((l) => l['salary_component_id'] == 'c-basic') as Map)['percentage'], '45');
+  });
+
+  testWidgets('Save as new structure creates and publishes a structure from the lines, then selects it', (tester) async {
+    final api = _api();
+    await _pump(tester, api, const SalarySetupScreen(employeeId: 'emp-1', today: '2026-09-24'));
+    await tester.tap(find.byKey(const Key('save-as-new-structure')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Senior engineer');
+    await tester.tap(find.text('Create structure'));
+    await tester.pumpAndSettle();
+
+    final create = api.calls.firstWhere((c) => c.path == '/payroll/salary-structures');
+    final body = create.body as Map;
+    expect(body['code'], 'SENIOR_ENGINEER');
+    expect(body['name'], 'Senior engineer');
+    expect((body['lines'] as List).length, 3);
+    final publish = api.calls.singleWhere((c) => c.path == '/payroll/salary-structures/st-2/versions/v-9/publish');
+    expect((publish.body as Map)['effective_from'], '2000-01-01');
+    expect(publish.ifMatch, '3');
+    // The employee's own salary is untouched, and the new structure is the one selected.
+    expect(api.calls.where((c) => c.path == '/employees/emp-1/salary/setup'), isEmpty);
+    expect(find.text('Senior engineer'), findsWidgets);
+    expect(find.text('Save as new structure'), findsOneWidget);
+  });
+
+  testWidgets('Save as new structure needs a name and shows the server error in the dialog', (tester) async {
+    final api = _api(createFails: true);
+    await _pump(tester, api, const SalarySetupScreen(employeeId: 'emp-1', today: '2026-09-24'));
+    await tester.tap(find.byKey(const Key('save-as-new-structure')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create structure'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter a name for the structure.'), findsOneWidget);
+    expect(api.calls.where((c) => c.path == '/payroll/salary-structures'), isEmpty);
+    await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Senior engineer');
+    await tester.tap(find.text('Create structure'));
+    await tester.pumpAndSettle();
+    expect(find.text('That code is taken.'), findsOneWidget);
+    expect(find.text('Create structure'), findsOneWidget);
+  });
+
+  test('structureCodeFromName matches web', () {
+    expect(structureCodeFromName('Senior engineer'), 'SENIOR_ENGINEER');
+    expect(structureCodeFromName('  --Ops & Admin (L2)  '), 'OPS_ADMIN_L2');
+    expect(structureCodeFromName('x' * 40).length, 30);
   });
 
   testWidgets('says what is missing instead of silently refusing to save', (tester) async {
