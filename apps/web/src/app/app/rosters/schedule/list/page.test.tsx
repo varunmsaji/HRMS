@@ -12,7 +12,7 @@ vi.mock("@/lib/auth/auth-context", () => ({
 vi.mock("@/components/common/toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock("@/lib/api/client", () => ({ apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn(), delete: vi.fn() } }));
 
-import RostersPage from "@/app/app/rosters/page";
+import RostersPage from "@/app/app/rosters/schedule/list/page";
 import { apiClient } from "@/lib/api/client";
 
 const mockedGet = vi.mocked(apiClient.get);

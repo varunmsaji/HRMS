@@ -22,7 +22,7 @@ vi.mock("@/components/shift-roster/roster-entry-dialog", () => ({
 }));
 vi.mock("@/lib/api/client", () => ({ apiClient: { get: vi.fn(), getList: vi.fn() } }));
 
-import RosterGridPage from "@/app/app/rosters/grid/page";
+import RosterGridPage from "@/app/app/rosters/schedule/week/page";
 import { apiClient } from "@/lib/api/client";
 
 const mockedGet = vi.mocked(apiClient.get);
@@ -98,7 +98,7 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     render(<RosterGridPage />);
 
     await screen.findByText(/Person002/);
-    expect(await within(await screen.findByRole("table")).findByText("NGT")).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table")).findAllByText("Night")).not.toHaveLength(0);
     const rosterPages = mockedGetList.mock.calls
       .filter((c) => c[0] === "/rosters")
       .map((c) => (c[1] as { page: number }).page)
@@ -119,7 +119,7 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     await waitFor(() => expect(screen.getByText(/Person051/)).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /^next$/i }));
     expect(await screen.findByText(/Person120/)).toBeInTheDocument();
-    expect(await within(await screen.findByRole("table")).findByText("NGT")).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table")).findAllByText("Night")).not.toHaveLength(0);
   });
 
   it("warns instead of silently truncating when the range exceeds the safety bound", async () => {
@@ -137,6 +137,7 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     serve({ entriesTotal: 0, placed: {} });
     render(<RosterGridPage />);
     await screen.findByText(/Person001/);
+    await userEvent.setup().click(screen.getByRole("button", { name: /^filters$/i }));
     expect(screen.getByText(/searches the employees shown below/i)).toBeInTheDocument();
   });
 

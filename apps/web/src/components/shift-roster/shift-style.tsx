@@ -22,7 +22,7 @@ export const OFF_TONE =
   "border-border-strong bg-surface-secondary text-foreground-secondary";
 
 /** A stable colour per shift, so a pattern (all mornings, then nights) reads at a glance. Night
- * shifts are always dark, matching the Schedule coverage tab. */
+ * shifts are always dark, matching the Coverage page. */
 export function shiftTone(
   shift: { id: string; is_night_shift?: boolean } | undefined,
 ): string {
@@ -45,6 +45,15 @@ export function hhmm(t: string | null | undefined): string {
   return t ? t.slice(0, 5) : "";
 }
 
+/** "08:30:00" → "8:30 am", the compact 12-hour form the roster cards use. */
+export function clock12(t: string | null | undefined): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const suffix = h >= 12 ? "pm" : "am";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
 /** The live schedule of a shift, from its current version. */
 export interface ShiftSchedule {
   start: string | null;
@@ -52,7 +61,7 @@ export interface ShiftSchedule {
   breakMinutes: number;
 }
 
-function minutesBetween(from: string, to: string): number {
+export function minutesBetween(from: string, to: string): number {
   const [fh, fm] = from.split(":").map(Number);
   const [th, tm] = to.split(":").map(Number);
   let diff = th * 60 + tm - (fh * 60 + fm);
@@ -160,7 +169,7 @@ export function ShiftCard({
   return (
     <span
       className={cn(
-        "block w-full rounded-md border-l-4 px-2.5 py-2 text-left leading-tight",
+        "block w-full rounded-lg border-l-[3px] px-3 py-2.5 text-left leading-tight",
         tone,
         draft &&
           "border-y border-r border-dashed border-y-foreground-muted border-r-foreground-muted",
@@ -168,22 +177,22 @@ export function ShiftCard({
       )}
     >
       {time ? (
-        <span className="block text-xs font-semibold">{time}</span>
+        <span className="block whitespace-nowrap text-[13px] font-semibold tabular-nums">{time}</span>
       ) : null}
-      <span className="mt-0.5 block text-[11px] font-medium opacity-90">
+      <span className="mt-1.5 block text-xs font-medium opacity-80">
         {label}
       </span>
       {subLabel ? (
-        <span className="mt-0.5 block text-[11px] font-normal opacity-75">
+        <span className="mt-0.5 block text-[11px] font-normal opacity-70">
           {subLabel}
         </span>
       ) : null}
       {breakMins > 0 ? (
-        <span className="mt-1 flex items-center gap-1 text-[11px] font-medium">
-          <span
-            aria-hidden="true"
-            className="inline-block h-2.5 w-1 rounded-sm bg-current opacity-70"
-          />
+        <span className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium">
+          <span aria-hidden="true" className="flex gap-[2px]">
+            <span className="inline-block h-2.5 w-[3px] rounded-sm bg-current" />
+            <span className="inline-block h-2.5 w-[3px] rounded-sm bg-current" />
+          </span>
           {breakMins} m break
         </span>
       ) : null}

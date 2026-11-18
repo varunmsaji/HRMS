@@ -112,7 +112,7 @@ export const EMPLOYEE_NAV_ITEMS: NavItem[] = [
   { href: "/app/regularizations", label: "Corrections", icon: ClipboardEdit },
   { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
   // Request a swap, agree to or withdraw one: the schedule page holds the swap queue.
-  { href: "/app/rosters/schedule", label: "Shift Swaps", icon: ArrowLeftRight },
+  { href: "/app/rosters/coverage", label: "Shift Swaps", icon: ArrowLeftRight },
   { href: "/app/me/calendar", label: "My Calendar", icon: CalendarDays },
   { href: "/app/me/payslips", label: "My Payslips", icon: Banknote },
   { href: "/app/me", label: "My Profile", icon: UserCircle },

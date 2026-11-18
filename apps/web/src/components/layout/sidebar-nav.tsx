@@ -17,7 +17,7 @@ function matchesHref(pathname: string | null, href: string): boolean {
 }
 
 /** The single nav item that owns `pathname`: the longest matching href wins, so a parent route
- * (`/app/rosters`) is not also highlighted while a more specific sibling (`/app/rosters/grid`)
+ * (`/app/rosters`) is not also highlighted while a more specific sibling (`/app/rosters/schedule/week`)
  * is current. */
 export function findActiveHref(pathname: string | null, hrefs: readonly string[]): string | undefined {
   return hrefs
