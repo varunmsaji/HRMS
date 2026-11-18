@@ -598,13 +598,34 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
             tabs: [const Tab(text: 'Overview'), for (final s in sections) Tab(text: s.title), for (final x in extraTabs) Tab(text: x.$1)],
           ),
         ),
-        body: TabBarView(
-          children: [
-            RefreshIndicator(onRefresh: _reload, child: EmployeeOverview(employee: e, actions: actions)),
-            for (final s in sections) EmployeeRecordPanel(employeeId: e.id, section: s),
-            for (final x in extraTabs) x.$2,
-          ],
-        ),
+        body: Builder(builder: (tabContext) {
+          final tabTitles = ['Overview', for (final s in sections) s.title, for (final x in extraTabs) x.$1];
+          return TabBarView(
+            children: [
+              RefreshIndicator(
+                onRefresh: _reload,
+                child: EmployeeOverview(
+                  employee: e,
+                  actions: actions,
+                  overview: OverviewActions(
+                    canEditDetails: permissions.contains(employeeUpdate),
+                    canChangeWork: permissions.contains(employeeTransfer) || permissions.contains(employeePromote),
+                    canViewAttendance: permissions.contains(attendanceView),
+                    onEditDetails: _edit,
+                    onChangeWork: (changeType) => openAssignmentChange(context, ref, employeeId: e.id, changeType: changeType),
+                    onOpenSection: (title) {
+                      final i = tabTitles.indexOf(title);
+                      if (i >= 0) DefaultTabController.of(tabContext).animateTo(i);
+                    },
+                    openableSections: tabTitles,
+                  ),
+                ),
+              ),
+              for (final s in sections) EmployeeRecordPanel(employeeId: e.id, section: s),
+              for (final x in extraTabs) x.$2,
+            ],
+          );
+        }),
       ),
     );
   }

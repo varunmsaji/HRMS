@@ -202,6 +202,67 @@ String _range(Map<String, dynamic> m, String from, String to) {
   return formatPeriod(_s(m, from), end?.toString(), openEnd: 'present');
 }
 
+/// Opens the form for one record action and submits it, resending with the user's acknowledgement
+/// when the server asks for one (a reporting-manager change with pending requests). True once saved.
+Future<bool> runRecordAction(
+  BuildContext context,
+  ApiClient client, {
+  required RecordAction a,
+  required String employeeId,
+  required List<Map<String, dynamic>> items,
+  required List<String> permissions,
+  Map<String, dynamic>? defaults,
+}) {
+  return openSpecForm(
+    context,
+    title: a.label(items),
+    spec: a.specFor?.call(permissions) ?? a.spec,
+    initial: a.initial?.call(items),
+    defaults: {...a.defaults, ...?defaults},
+    intro: a.intro,
+    loadChoices: a.choiceKeys.isEmpty ? null : () => loadChoices(client, a.choiceKeys),
+    submitLabel: a.destructive ? a.label(items) : null,
+    onSubmit: (payload, changed) async {
+      var body = payload;
+      var confirmed = false;
+      while (true) {
+        try {
+          return await a.submit(client, employeeId, items, body, changed);
+        } on ApiError catch (e) {
+          if (!context.mounted || a.confirmConflict == null) rethrow;
+          final extra = await a.confirmConflict!(context, e, stale: confirmed);
+          if (extra == null) rethrow;
+          body = {...payload, ...extra};
+          confirmed = true;
+        }
+      }
+    },
+  );
+}
+
+/// Records an assignment change from wherever the employee is shown (the Overview's Change shift,
+/// Change assignment and row pencils), exactly as the Assignment tab does. It reads the current
+/// assignments first so the change is checked against the latest row. [changeType] is preselected
+/// when the viewer may record it; a first placement is always `INITIAL`. True once saved.
+Future<bool> openAssignmentChange(BuildContext context, WidgetRef ref, {required String employeeId, String? changeType}) async {
+  final client = ref.read(apiClientProvider);
+  final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+  final action = employeeRecordSections.firstWhere((s) => s.title == 'Assignment').actions.first;
+  final List<Map<String, dynamic>> items;
+  try {
+    items = (await client.getList<Map<String, dynamic>>('/employees/$employeeId/assignments', query: PageQuery(perPage: 100), parseItem: (d) => d as Map<String, dynamic>)).data;
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError && e.status == 403 ? "You do not have permission to view or change this employee's assignment." : e is ApiError ? e.message : 'Something went wrong.')));
+    }
+    return false;
+  }
+  if (!context.mounted) return false;
+  final allowed = [for (final f in (action.specFor?.call(permissions) ?? action.spec).fields) if (f.key == 'change_type') ...f.options];
+  final preselect = items.isEmpty ? 'INITIAL' : (changeType != null && allowed.contains(changeType) ? changeType : null);
+  return runRecordAction(context, client, a: action, employeeId: employeeId, items: items, permissions: permissions, defaults: preselect == null ? null : {'change_type': preselect});
+}
+
 final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Employment',
@@ -587,32 +648,7 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   Future<void> _runAction(RecordAction a, List<String> permissions) async {
-    final client = ref.read(apiClientProvider);
-    final saved = await openSpecForm(
-      context,
-      title: a.label(_items),
-      spec: a.specFor?.call(permissions) ?? a.spec,
-      initial: a.initial?.call(_items),
-      defaults: a.defaults,
-      intro: a.intro,
-      loadChoices: a.choiceKeys.isEmpty ? null : () => loadChoices(client, a.choiceKeys),
-      submitLabel: a.destructive ? a.label(_items) : null,
-      onSubmit: (payload, changed) async {
-        var body = payload;
-        var confirmed = false;
-        while (true) {
-          try {
-            return await a.submit(client, widget.employeeId, _items, body, changed);
-          } on ApiError catch (e) {
-            if (!mounted || a.confirmConflict == null) rethrow;
-            final extra = await a.confirmConflict!(context, e, stale: confirmed);
-            if (extra == null) rethrow;
-            body = {...payload, ...extra};
-            confirmed = true;
-          }
-        }
-      },
-    );
+    final saved = await runRecordAction(context, ref.read(apiClientProvider), a: a, employeeId: widget.employeeId, items: _items, permissions: permissions);
     if (saved && mounted) {
       _toast('Saved.');
       await _load();
