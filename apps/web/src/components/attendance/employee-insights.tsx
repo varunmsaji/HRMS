@@ -5,39 +5,72 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import {
+  DailyHoursChart,
+  StatusBreakdown,
+} from "@/components/attendance/employee-insights-charts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiClient } from "@/lib/api/client";
-import { BUCKET_GLYPHS, BUCKET_LABELS, BUCKET_TONES } from "@/lib/attendance/dashboard";
 import {
+  BUCKET_GLYPHS,
+  BUCKET_LABELS,
+  BUCKET_TONES,
+} from "@/lib/attendance/dashboard";
+import {
+  dailyHours,
   formatCountdown,
   formatDayCount,
   monthRange,
   monthStats,
   monthWeeks,
   shiftMonth,
+  statusBreakdown,
   todayStatus,
   type CalendarCell,
   type TodayState,
 } from "@/lib/attendance/employee-analytics";
-import { businessToday, formatClockTime, formatMinutes } from "@/lib/attendance/format";
+import {
+  businessToday,
+  formatClockTime,
+  formatMinutes,
+} from "@/lib/attendance/format";
 import type { AttendanceDay, Punch } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-const STATE_COPY: Record<TodayState, { label: string; dot: string; tone: string }> = {
+const STATE_COPY: Record<
+  TodayState,
+  { label: string; dot: string; tone: string }
+> = {
   WORKING: { label: "Working", dot: "bg-success", tone: "text-success" },
   ON_BREAK: { label: "On a break", dot: "bg-warning", tone: "text-warning" },
   CHECKED_OUT: { label: "Checked out", dot: "bg-info", tone: "text-info" },
-  NOT_STARTED: { label: "Shift not started", dot: "bg-border-strong", tone: "text-foreground-secondary" },
-  NOT_CHECKED_IN: { label: "Not checked in yet", dot: "bg-warning", tone: "text-warning" },
+  NOT_STARTED: {
+    label: "Shift not started",
+    dot: "bg-border-strong",
+    tone: "text-foreground-secondary",
+  },
+  NOT_CHECKED_IN: {
+    label: "Not checked in yet",
+    dot: "bg-warning",
+    tone: "text-warning",
+  },
   ON_LEAVE: { label: "On leave", dot: "bg-on-leave", tone: "text-on-leave" },
   HOLIDAY: { label: "Holiday", dot: "bg-holiday", tone: "text-holiday" },
   WEEKLY_OFF: { label: "Weekly off", dot: "bg-holiday", tone: "text-holiday" },
-  NO_SHIFT: { label: "Nothing scheduled today", dot: "bg-border-strong", tone: "text-foreground-secondary" },
-  NOT_EMPLOYED: { label: "Not employed on this date", dot: "bg-border", tone: "text-foreground-muted" },
+  NO_SHIFT: {
+    label: "Nothing scheduled today",
+    dot: "bg-border-strong",
+    tone: "text-foreground-secondary",
+  },
+  NOT_EMPLOYED: {
+    label: "Not employed on this date",
+    dot: "bg-border",
+    tone: "text-foreground-muted",
+  },
   ABSENT: { label: "Absent", dot: "bg-danger", tone: "text-danger" },
 };
 
@@ -63,17 +96,34 @@ function Tile({
   return (
     <div className="min-w-0 rounded-xl border border-border-subtle bg-surface-secondary/60 px-4 py-3">
       <dt className="text-xs font-medium text-foreground-muted">{label}</dt>
-      <dd className={cn("mt-1 truncate text-xl font-semibold tabular-nums text-foreground", tone)}>{value}</dd>
-      {hint ? <p className="mt-0.5 truncate text-xs text-foreground-muted">{hint}</p> : null}
+      <dd
+        className={cn(
+          "mt-1 truncate text-xl font-semibold tabular-nums text-foreground",
+          tone,
+        )}
+      >
+        {value}
+      </dd>
+      {hint ? (
+        <p className="mt-0.5 truncate text-xs text-foreground-muted">{hint}</p>
+      ) : null}
     </div>
   );
 }
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+function Fact({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-foreground-muted">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{children}</dd>
+      <dd className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">
+        {children}
+      </dd>
     </div>
   );
 }
@@ -81,7 +131,13 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 /** Today strip, month tiles and the month calendar for one employee, read from the attendance
  * days and punches the API already serves (so the figures match the attendance pages). The server
  * filters by the viewer's data scope; a caller without access sees a short message, not numbers. */
-export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string; shiftName: string | null }) {
+export function EmployeeInsights({
+  employeeId,
+  shiftName,
+}: {
+  employeeId: string;
+  shiftName: string | null;
+}) {
   const { user } = useAuth();
   const tz = user?.company_timezone ?? "Asia/Kolkata";
   const today = businessToday(tz);
@@ -150,17 +206,35 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
     () => (punches ? todayStatus(todayDay, punches, now) : null),
     [todayDay, punches, now],
   );
-  const stats = useMemo(() => (days ? monthStats(days, today) : null), [days, today]);
-  const weeks = useMemo(() => monthWeeks(month, days ?? [], today), [month, days, today]);
+  const stats = useMemo(
+    () => (days ? monthStats(days, today) : null),
+    [days, today],
+  );
+  const hours = useMemo(() => dailyHours(days ?? [], today), [days, today]);
+  const breakdown = useMemo(
+    () => statusBreakdown(days ?? [], today),
+    [days, today],
+  );
+  const weeks = useMemo(
+    () => monthWeeks(month, days ?? [], today),
+    [month, days, today],
+  );
   const selectedCell = useMemo(
-    () => weeks.flat().find((c): c is CalendarCell => c !== null && c.date === selected) ?? null,
+    () =>
+      weeks
+        .flat()
+        .find((c): c is CalendarCell => c !== null && c.date === selected) ??
+      null,
     [weeks, selected],
   );
 
   if (failed === "denied") return null;
   if (failed === "error") {
     return (
-      <p role="alert" className="rounded-xl border border-border bg-surface p-4 text-sm text-foreground-muted">
+      <p
+        role="alert"
+        className="rounded-xl border border-border bg-surface p-4 text-sm text-foreground-muted"
+      >
         Attendance figures could not be loaded right now.
       </p>
     );
@@ -171,7 +245,10 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
 
   return (
     <div className="space-y-5">
-      <section aria-label="Today" className="rounded-2xl border border-border bg-surface p-5 shadow-elevation-1">
+      <section
+        aria-label="Today"
+        className="rounded-2xl border border-border bg-surface p-5 shadow-elevation-1"
+      >
         {!status || !copy ? (
           <Skeleton className="h-16 w-full" />
         ) : (
@@ -179,22 +256,40 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
             <div className="flex items-center gap-3">
               <span className="relative flex h-3 w-3">
                 {status.state === "WORKING" ? (
-                  <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", copy.dot)} />
+                  <span
+                    className={cn(
+                      "absolute inline-flex h-full w-full animate-ping rounded-full opacity-60",
+                      copy.dot,
+                    )}
+                  />
                 ) : null}
-                <span className={cn("relative inline-flex h-3 w-3 rounded-full", copy.dot)} />
+                <span
+                  className={cn(
+                    "relative inline-flex h-3 w-3 rounded-full",
+                    copy.dot,
+                  )}
+                />
               </span>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Today</p>
-                <p className={cn("text-lg font-semibold", copy.tone)} data-testid="today-state">
+                <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                  Today
+                </p>
+                <p
+                  className={cn("text-lg font-semibold", copy.tone)}
+                  data-testid="today-state"
+                >
                   {copy.label}
-                  {status.state === "HOLIDAY" && status.holidayName ? ` · ${status.holidayName}` : ""}
+                  {status.state === "HOLIDAY" && status.holidayName
+                    ? ` · ${status.holidayName}`
+                    : ""}
                 </p>
                 <p className="text-sm text-foreground-secondary">
                   {status.state === "WORKING" || status.state === "ON_BREAK"
                     ? `In since ${formatClockTime(status.firstIn, tz)}`
                     : status.state === "CHECKED_OUT"
                       ? `Left at ${formatClockTime(status.lastOut, tz)}`
-                      : status.state === "NOT_STARTED" && status.minutesToShiftStart !== null
+                      : status.state === "NOT_STARTED" &&
+                          status.minutesToShiftStart !== null
                         ? `Starts in ${formatCountdown(status.minutesToShiftStart)}`
                         : status.state === "NOT_CHECKED_IN"
                           ? `Shift began at ${formatClockTime(status.scheduledStart, tz)}`
@@ -209,17 +304,22 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                 {shiftName ?? "Not set"}
                 {status.scheduledStart && status.scheduledEnd ? (
                   <span className="block text-xs font-normal text-foreground-muted">
-                    {formatClockTime(status.scheduledStart, tz)}–{formatClockTime(status.scheduledEnd, tz)}
+                    {formatClockTime(status.scheduledStart, tz)}–
+                    {formatClockTime(status.scheduledEnd, tz)}
                   </span>
                 ) : null}
               </Fact>
               <Fact label="First in / last out">
                 {status.firstIn ? formatClockTime(status.firstIn, tz) : "—"}
                 {" / "}
-                {status.state === "CHECKED_OUT" && status.lastOut ? formatClockTime(status.lastOut, tz) : "—"}
+                {status.state === "CHECKED_OUT" && status.lastOut
+                  ? formatClockTime(status.lastOut, tz)
+                  : "—"}
               </Fact>
               <Fact label="Worked today">
-                {status.workedMinutes !== null ? formatMinutes(status.workedMinutes) : "—"}
+                {status.workedMinutes !== null
+                  ? formatMinutes(status.workedMinutes)
+                  : "—"}
               </Fact>
               <Fact label="Shift ends">
                 {status.minutesToShiftEnd === null
@@ -233,9 +333,14 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
         )}
       </section>
 
-      <section aria-label="Month attendance" className="rounded-2xl border border-border bg-surface p-5 shadow-elevation-1">
+      <section
+        aria-label="Month attendance"
+        className="rounded-2xl border border-border bg-surface p-5 shadow-elevation-1"
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-foreground">{monthTitle(month)}</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            {monthTitle(month)}
+          </h2>
           <div className="flex items-center gap-1">
             <Button
               type="button"
@@ -282,26 +387,42 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                 label="Absent"
                 value={String(stats.absent)}
                 tone={stats.absent > 0 ? "text-danger" : undefined}
-                hint={stats.leave > 0 ? `${stats.leave} on leave` : "No leave taken"}
+                hint={
+                  stats.leave > 0 ? `${stats.leave} on leave` : "No leave taken"
+                }
               />
               <Tile
                 label="Late arrivals"
                 value={String(stats.lateDays)}
-                hint={stats.lateDays > 0 ? `${formatMinutes(stats.lateMinutes)} in total` : "None"}
+                hint={
+                  stats.lateDays > 0
+                    ? `${formatMinutes(stats.lateMinutes)} in total`
+                    : "None"
+                }
               />
               <Tile
                 label="Punctuality"
-                value={stats.punctuality === null ? "—" : `${stats.punctuality}%`}
+                value={
+                  stats.punctuality === null ? "—" : `${stats.punctuality}%`
+                }
                 hint="days on time"
               />
               <Tile
                 label="Hours worked"
                 value={formatMinutes(stats.workedMinutes)}
-                hint={stats.missingPunch > 0 ? `${stats.missingPunch} missing a punch` : undefined}
+                hint={
+                  stats.missingPunch > 0
+                    ? `${stats.missingPunch} missing a punch`
+                    : undefined
+                }
               />
               <Tile
                 label="Average a day"
-                value={stats.avgWorkedMinutes === null ? "—" : formatMinutes(stats.avgWorkedMinutes)}
+                value={
+                  stats.avgWorkedMinutes === null
+                    ? "—"
+                    : formatMinutes(stats.avgWorkedMinutes)
+                }
               />
               <Tile
                 label="Overtime"
@@ -315,72 +436,115 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
               <Tile
                 label="Early exits"
                 value={String(stats.earlyOutDays)}
-                hint={stats.earlyOutDays > 0 ? `${formatMinutes(stats.earlyOutMinutes)} in total` : "None"}
+                hint={
+                  stats.earlyOutDays > 0
+                    ? `${formatMinutes(stats.earlyOutMinutes)} in total`
+                    : "None"
+                }
               />
             </dl>
 
-            <div className="mt-5 max-w-sm">
-              <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-foreground-muted">
-                {WEEKDAYS.map((w) => (
-                  <span key={w}>{w}</span>
-                ))}
-              </div>
-              <div role="grid" aria-label={`Attendance for ${monthTitle(month)}`} className="mt-1 space-y-1">
-                {weeks.map((week, wi) => (
-                  <div role="row" key={wi} className="grid grid-cols-7 gap-1">
-                    {week.map((cell, ci) =>
-                      cell === null ? (
-                        <span key={ci} role="gridcell" aria-hidden="true" />
-                      ) : (
-                        <button
-                          key={cell.date}
-                          type="button"
-                          role="gridcell"
-                          aria-selected={selected === cell.date}
-                          aria-label={`${cell.date}, ${cell.bucket ? BUCKET_LABELS[cell.bucket] : cell.isFuture ? "upcoming" : "no record"}`}
-                          onClick={() => setSelected(selected === cell.date ? null : cell.date)}
-                          className={cn(
-                            "flex h-9 flex-col items-center justify-center rounded-md border border-transparent text-xs leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                            cell.bucket && !cell.isFuture
-                              ? BUCKET_TONES[cell.bucket].cell
-                              : "bg-surface-secondary text-foreground-muted",
-                            cell.isFuture && "opacity-50",
-                            cell.isToday && "ring-2 ring-primary",
-                            selected === cell.date && "border-foreground",
-                          )}
-                        >
-                          <span className="font-medium tabular-nums">{cell.dayOfMonth}</span>
-                          {cell.bucket && !cell.isFuture ? (
-                            <span className="text-[9px] font-semibold">{BUCKET_GLYPHS[cell.bucket]}</span>
-                          ) : null}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                ))}
-              </div>
-              <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-secondary" aria-label="Legend">
-                {(["PRESENT", "REMOTE", "HALF_DAY", "ABSENT", "LEAVE", "HOLIDAY", "WEEKLY_OFF"] as const).map((b) => (
-                  <li key={b} className="inline-flex items-center gap-1.5">
-                    <span
-                      className={cn(
-                        "inline-flex h-4 min-w-4 items-center justify-center rounded px-0.5 text-[9px] font-semibold",
-                        BUCKET_TONES[b].cell,
+            <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+              <div>
+                <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-foreground-muted">
+                  {WEEKDAYS.map((w) => (
+                    <span key={w}>{w}</span>
+                  ))}
+                </div>
+                <div
+                  role="grid"
+                  aria-label={`Attendance for ${monthTitle(month)}`}
+                  className="mt-1 space-y-1"
+                >
+                  {weeks.map((week, wi) => (
+                    <div role="row" key={wi} className="grid grid-cols-7 gap-1">
+                      {week.map((cell, ci) =>
+                        cell === null ? (
+                          <span key={ci} role="gridcell" aria-hidden="true" />
+                        ) : (
+                          <button
+                            key={cell.date}
+                            type="button"
+                            role="gridcell"
+                            aria-selected={selected === cell.date}
+                            aria-label={`${cell.date}, ${cell.bucket ? BUCKET_LABELS[cell.bucket] : cell.isFuture ? "upcoming" : "no record"}`}
+                            onClick={() =>
+                              setSelected(
+                                selected === cell.date ? null : cell.date,
+                              )
+                            }
+                            className={cn(
+                              "flex h-9 flex-col items-center justify-center rounded-md border border-transparent text-xs leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              cell.bucket && !cell.isFuture
+                                ? BUCKET_TONES[cell.bucket].cell
+                                : "bg-surface-secondary text-foreground-muted",
+                              cell.isFuture && "opacity-50",
+                              cell.isToday && "ring-2 ring-primary",
+                              selected === cell.date && "border-foreground",
+                            )}
+                          >
+                            <span className="font-medium tabular-nums">
+                              {cell.dayOfMonth}
+                            </span>
+                            {cell.bucket && !cell.isFuture ? (
+                              <span className="text-[9px] font-semibold">
+                                {BUCKET_GLYPHS[cell.bucket]}
+                              </span>
+                            ) : null}
+                          </button>
+                        ),
                       )}
-                    >
-                      {BUCKET_GLYPHS[b]}
-                    </span>
-                    {BUCKET_LABELS[b]}
-                  </li>
-                ))}
-              </ul>
+                    </div>
+                  ))}
+                </div>
+                <ul
+                  className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-secondary"
+                  aria-label="Legend"
+                >
+                  {(
+                    [
+                      "PRESENT",
+                      "REMOTE",
+                      "HALF_DAY",
+                      "ABSENT",
+                      "LEAVE",
+                      "HOLIDAY",
+                      "WEEKLY_OFF",
+                    ] as const
+                  ).map((b) => (
+                    <li key={b} className="inline-flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "inline-flex h-4 min-w-4 items-center justify-center rounded px-0.5 text-[9px] font-semibold",
+                          BUCKET_TONES[b].cell,
+                        )}
+                      >
+                        {BUCKET_GLYPHS[b]}
+                      </span>
+                      {BUCKET_LABELS[b]}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="space-y-6">
+                <StatusBreakdown items={breakdown} />
+                <DailyHoursChart
+                  bars={hours.bars}
+                  scheduledMinutes={hours.scheduledMinutes}
+                />
+              </div>
             </div>
 
             {selectedCell ? (
-              <div className="mt-4 rounded-xl border border-border bg-surface-secondary/50 p-4" data-testid="day-detail">
+              <div
+                className="mt-4 rounded-xl border border-border bg-surface-secondary/50 p-4"
+                data-testid="day-detail"
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-foreground">
-                    {new Date(`${selectedCell.date}T00:00:00Z`).toLocaleDateString("en-US", {
+                    {new Date(
+                      `${selectedCell.date}T00:00:00Z`,
+                    ).toLocaleDateString("en-US", {
                       weekday: "long",
                       day: "numeric",
                       month: "long",
@@ -388,23 +552,39 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                     })}
                   </p>
                   {selectedCell.day ? (
-                    <AttendanceStatusBadge status={selectedCell.day.attendance_status} />
+                    <AttendanceStatusBadge
+                      status={selectedCell.day.attendance_status}
+                    />
                   ) : null}
                 </div>
                 {selectedCell.day ? (
                   <>
                     <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      <Fact label="First in">{formatClockTime(selectedCell.day.actual_first_in, tz)}</Fact>
-                      <Fact label="Last out">{formatClockTime(selectedCell.day.actual_last_out, tz)}</Fact>
-                      <Fact label="Worked">{formatMinutes(selectedCell.day.worked_minutes)}</Fact>
+                      <Fact label="First in">
+                        {formatClockTime(selectedCell.day.actual_first_in, tz)}
+                      </Fact>
+                      <Fact label="Last out">
+                        {formatClockTime(selectedCell.day.actual_last_out, tz)}
+                      </Fact>
+                      <Fact label="Worked">
+                        {formatMinutes(selectedCell.day.worked_minutes)}
+                      </Fact>
                       <Fact label="Late / early out">
-                        {selectedCell.day.is_late ? formatMinutes(selectedCell.day.late_minutes) : "—"}
+                        {selectedCell.day.is_late
+                          ? formatMinutes(selectedCell.day.late_minutes)
+                          : "—"}
                         {" / "}
-                        {selectedCell.day.is_early_out ? formatMinutes(selectedCell.day.early_departure_minutes) : "—"}
+                        {selectedCell.day.is_early_out
+                          ? formatMinutes(
+                              selectedCell.day.early_departure_minutes,
+                            )
+                          : "—"}
                       </Fact>
                     </dl>
                     {selectedCell.day.holiday_name ? (
-                      <p className="mt-2 text-sm text-foreground-secondary">{selectedCell.day.holiday_name}</p>
+                      <p className="mt-2 text-sm text-foreground-secondary">
+                        {selectedCell.day.holiday_name}
+                      </p>
                     ) : null}
                     <Link
                       href={`/app/attendance/${selectedCell.day.id}`}
@@ -415,7 +595,9 @@ export function EmployeeInsights({ employeeId, shiftName }: { employeeId: string
                   </>
                 ) : (
                   <p className="mt-2 text-sm text-foreground-muted">
-                    {selectedCell.isFuture ? "This day has not happened yet." : "No attendance record for this day."}
+                    {selectedCell.isFuture
+                      ? "This day has not happened yet."
+                      : "No attendance record for this day."}
                   </p>
                 )}
               </div>

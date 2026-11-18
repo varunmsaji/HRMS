@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { makeDay } from "@/lib/attendance/__fixtures__/day";
 import {
   formatCountdown,
+  dailyHours,
   formatDayCount,
   monthRange,
   monthStats,
+  statusBreakdown,
   monthWeeks,
   todayStatus,
 } from "@/lib/attendance/employee-analytics";
@@ -171,5 +173,42 @@ describe("formatCountdown", () => {
     expect(formatCountdown(45)).toBe("45m");
     expect(formatCountdown(120)).toBe("2h");
     expect(formatCountdown(-5)).toBe("0m");
+  });
+});
+describe("dailyHours", () => {
+  it("returns a bar for each worked day up to today and the usual shift length", () => {
+    const { bars, scheduledMinutes } = dailyHours(
+      [
+        d("2026-08-04", { worked_minutes: 480 }),
+        d("2026-08-03", { worked_minutes: 540, is_late: true }),
+        d("2026-08-05", { attendance_status: "ABSENT", actual_first_in: null, worked_minutes: 0 }),
+        d("2026-08-20", { worked_minutes: 540 }),
+      ],
+      "2026-08-10",
+    );
+    expect(bars.map((b) => [b.dayOfMonth, b.minutes, b.isLate])).toEqual([
+      [3, 540, true],
+      [4, 480, false],
+    ]);
+    expect(scheduledMinutes).toBe(540);
+  });
+});
+
+describe("statusBreakdown", () => {
+  it("counts days by status up to today and skips days outside employment", () => {
+    const b = statusBreakdown(
+      [
+        d("2026-08-03"),
+        d("2026-08-04"),
+        d("2026-08-05", { attendance_status: "ABSENT", actual_first_in: null }),
+        d("2026-08-06", { attendance_status: "NOT_JOINED", actual_first_in: null }),
+        d("2026-08-20"),
+      ],
+      "2026-08-10",
+    );
+    expect(b).toEqual([
+      { bucket: "PRESENT", count: 2 },
+      { bucket: "ABSENT", count: 1 },
+    ]);
   });
 });

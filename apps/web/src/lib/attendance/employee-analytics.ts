@@ -2,7 +2,7 @@
  * month tiles and the month calendar. Everything is derived from the persisted attendance days and
  * punches the API already serves, so the numbers match the attendance pages. */
 
-import { bucketOf, type DayBucket } from "@/lib/attendance/dashboard";
+import { DAY_BUCKETS, bucketOf, type DayBucket } from "@/lib/attendance/dashboard";
 import { monthDates } from "@/lib/attendance/hr-calendar";
 import type { AttendanceDay, Punch } from "@/lib/attendance/types";
 
@@ -243,4 +243,61 @@ export function formatCountdown(minutes: number): string {
   const rest = m % 60;
   if (h === 0) return `${rest}m`;
   return rest === 0 ? `${h}h` : `${h}h ${rest}m`;
+}
+export interface DailyHoursBar {
+  date: string;
+  dayOfMonth: number;
+  minutes: number;
+  bucket: DayBucket;
+  isLate: boolean;
+}
+
+/** One bar per day that has worked time, up to today, plus the shift length to draw as a
+ * reference line (the most common scheduled length that month; null when none is scheduled). */
+export function dailyHours(
+  days: AttendanceDay[],
+  today: string,
+): { bars: DailyHoursBar[]; scheduledMinutes: number | null } {
+  const bars: DailyHoursBar[] = [];
+  const lengths = new Map<number, number>();
+  for (const day of days.slice().sort((a, b) => a.attendance_date.localeCompare(b.attendance_date))) {
+    if (day.attendance_date > today) continue;
+    if (day.scheduled_minutes) lengths.set(day.scheduled_minutes, (lengths.get(day.scheduled_minutes) ?? 0) + 1);
+    if (!day.actual_first_in || day.worked_minutes <= 0) continue;
+    bars.push({
+      date: day.attendance_date,
+      dayOfMonth: Number(day.attendance_date.slice(8, 10)),
+      minutes: day.worked_minutes,
+      bucket: bucketOf(day),
+      isLate: day.is_late,
+    });
+  }
+  let scheduledMinutes: number | null = null;
+  let best = 0;
+  for (const [len, n] of lengths) {
+    if (n > best) {
+      best = n;
+      scheduledMinutes = len;
+    }
+  }
+  return { bars, scheduledMinutes };
+}
+
+
+export interface BreakdownItem {
+  bucket: DayBucket;
+  count: number;
+}
+
+/** How the month's days split by status, up to today, in the order the legend uses. Days before
+ * joining or after leaving are left out. */
+export function statusBreakdown(days: AttendanceDay[], today: string): BreakdownItem[] {
+  const counts = new Map<DayBucket, number>();
+  for (const day of days) {
+    if (day.attendance_date > today) continue;
+    const bucket = bucketOf(day);
+    if (bucket === "NOT_EMPLOYED") continue;
+    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+  }
+  return DAY_BUCKETS.filter((b) => counts.has(b)).map((bucket) => ({ bucket, count: counts.get(bucket)! }));
 }
