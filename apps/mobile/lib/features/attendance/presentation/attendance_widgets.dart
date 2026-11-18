@@ -4,6 +4,7 @@ import '../../../core/time.dart';
 import '../../../core/widgets/ui.dart';
 import '../data/attendance_repository.dart';
 import '../domain/mark_day.dart' show canMarkPresent;
+import 'mismatch_fixes.dart';
 
 /// Defensive enum-mapping (the backend's `attendance_status` set isn't frozen client-side) —
 /// mirrors the web app's `AttendanceStatusBadge`.
@@ -26,7 +27,7 @@ class AttendanceStatusBadge extends StatelessWidget {
 
 /// One attendance day in a list: date, status, and the times in the day's own zone.
 class AttendanceDayTile extends StatelessWidget {
-  const AttendanceDayTile({super.key, required this.day, required this.onTap, this.employeeLabel, this.onMarkPresent});
+  const AttendanceDayTile({super.key, required this.day, required this.onTap, this.employeeLabel, this.onMarkPresent, this.mismatch});
   final AttendanceDay day;
   final VoidCallback onTap;
   final String? employeeLabel;
@@ -34,6 +35,10 @@ class AttendanceDayTile extends StatelessWidget {
   /// When set, an absent day with no punches offers "Mark present" (web's Who's in row action).
   /// The caller gates it on `ATTENDANCE.PUNCH_ON_BEHALF`.
   final VoidCallback? onMarkPresent;
+
+  /// What is wrong with the day and how to fix it here. When set it replaces the generic
+  /// "Mark present" button, which would only be one of the possible fixes.
+  final RowMismatch? mismatch;
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +77,8 @@ class AttendanceDayTile extends StatelessWidget {
           ),
           AttendanceStatusBadge(status: day.attendanceStatus),
         ]),
-        if (onMarkPresent != null && canMarkPresent(status: day.attendanceStatus, firstIn: day.actualFirstIn, lastOut: day.actualLastOut, hasRecord: true))
+        if (mismatch != null) MismatchFixBlock(mismatch: mismatch!),
+        if (mismatch == null && onMarkPresent != null && canMarkPresent(status: day.attendanceStatus, firstIn: day.actualFirstIn, lastOut: day.actualLastOut, hasRecord: true))
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: OutlinedButton(

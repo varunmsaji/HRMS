@@ -234,7 +234,7 @@ OvertimeSummary summarizeOvertime(List<Map<String, dynamic>> records, String fro
 enum Severity { critical, high, medium, low }
 
 class AttentionItem {
-  AttentionItem(this.label, this.hint, this.count, this.unit, this.severity, {this.route, this.employees});
+  AttentionItem(this.label, this.hint, this.count, this.unit, this.severity, {this.route, this.employees, this.fixable = false});
   final String label;
   final String hint;
   final int count;
@@ -244,6 +244,10 @@ class AttentionItem {
   /// Where the workflow lives (null = this screen already shows the rows).
   final String? route;
   final int? employees;
+
+  /// The days behind it can be fixed from the Days-that-need-fixing list (late and early-out
+  /// days are only noted, so they are not).
+  final bool fixable;
 }
 
 int _distinct(Iterable<AttendanceDay> rows) => rows.map((d) => d.employeeId).toSet().length;
@@ -255,16 +259,16 @@ List<AttentionItem> buildAttentionItems({
   required int blockedPeriods,
 }) {
   final items = <AttentionItem>[];
-  void add(String label, String hint, Severity sev, Iterable<AttendanceDay> matches) {
+  void add(String label, String hint, Severity sev, Iterable<AttendanceDay> matches, {bool fixable = false}) {
     final list = matches.toList();
-    if (list.isNotEmpty) items.add(AttentionItem(label, hint, list.length, 'days', sev, employees: _distinct(list)));
+    if (list.isNotEmpty) items.add(AttentionItem(label, hint, list.length, 'days', sev, employees: _distinct(list), fixable: fixable));
   }
 
-  add('Configuration errors', 'Days that could not be calculated — shift or policy is missing.', Severity.critical, rows.where((d) => attendanceBucketOf(d) == 'CONFIG_ERROR'));
-  add('Missing punches', 'A day with an IN or OUT punch missing.', Severity.high, rows.where((d) => _flag(d, 'missing_punch')));
-  add('Incomplete attendance', 'Needs manual resolution before the period can close.', Severity.high, rows.where((d) => attendanceBucketOf(d) == 'INCOMPLETE'));
-  add('Work on approved leave', 'Punches on a full-day leave awaiting an HR decision.', Severity.high, rows.where(workOnLeaveUnresolved));
-  add('Days pending approval', 'Attendance days waiting on an approval.', Severity.medium, rows.where((d) => _flag(d, 'is_pending_approval')));
+  add('Configuration errors', 'Days that could not be calculated — shift or policy is missing.', Severity.critical, rows.where((d) => attendanceBucketOf(d) == 'CONFIG_ERROR'), fixable: true);
+  add('Missing punches', 'A day with an IN or OUT punch missing.', Severity.high, rows.where((d) => _flag(d, 'missing_punch')), fixable: true);
+  add('Incomplete attendance', 'Needs manual resolution before the period can close.', Severity.high, rows.where((d) => attendanceBucketOf(d) == 'INCOMPLETE'), fixable: true);
+  add('Work on approved leave', 'Punches on a full-day leave awaiting an HR decision.', Severity.high, rows.where(workOnLeaveUnresolved), fixable: true);
+  add('Days pending approval', 'Attendance days waiting on an approval.', Severity.medium, rows.where((d) => _flag(d, 'is_pending_approval')), fixable: true);
   add('Late arrivals', 'Checked in after the grace window.', Severity.medium, rows.where(isLate));
   add('Early departures', 'Checked out before shift end.', Severity.low, rows.where((d) => _flag(d, 'is_early_out')));
   if (pendingRegularizations > 0) {

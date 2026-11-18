@@ -13,11 +13,13 @@ import '../../../core/time.dart';
 import '../../../core/widgets/list_filter.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../domain/attendance_mismatch.dart';
 import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import 'attendance_widgets.dart';
 import 'mark_attendance_screen.dart';
+import 'mismatch_fixes.dart';
 import '../../../core/widgets/ui.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
@@ -39,15 +41,17 @@ const attendanceStatusLabels = {
 
 const _exceptionLabels = [('missing_punch', 'Missing punch'), ('config_error', 'Needs attention'), ('pending_approval', 'Awaiting approval')];
 
-/// Opens the on-behalf punch form. Pass [employeeId] to lock the employee.
-Future<bool> openPunchOnBehalf(BuildContext context, WidgetRef ref, {String? employeeId}) {
+/// Opens the on-behalf punch form. Pass [employeeId] to lock the employee, and [direction] /
+/// [punchTime] (wall clock in the company zone, `YYYY-MM-DDTHH:mm`) to open on a known gap such as
+/// a missing punch-out.
+Future<bool> openPunchOnBehalf(BuildContext context, WidgetRef ref, {String? employeeId, String? direction, String? punchTime}) {
   final zone = ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
   final repo = ref.read(attendanceRepositoryProvider);
   return openSpecForm(
     context,
     title: 'Record punch',
     spec: punchOnBehalfSpec(employeeLocked: employeeId != null, zoneLabel: zoneLabel(zone)),
-    defaults: {'punch_time': nowInZoneForInput(zone)},
+    defaults: {'punch_time': punchTime ?? nowInZoneForInput(zone), if (direction != null) 'direction': direction},
     loadChoices: employeeId == null ? () => loadChoices(ref.read(apiClientProvider), const ['employees']) : null,
     onSubmit: (payload, _) async {
       await repo.createPunchOnBehalf(
@@ -81,6 +85,8 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   ApiError? _error;
   List<AttendanceDay> _days = const [];
   List<Choice> _employees = const [];
+  Map<String, String> _pending = const {};
+  bool _onlyMismatches = false;
 
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
 
@@ -89,7 +95,13 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     super.initState();
     _date = businessToday(_zone);
     _loadEmployees();
+    _loadPending();
     _load();
+  }
+
+  Future<void> _loadPending() async {
+    final pending = await loadPendingCorrections(ref);
+    if (mounted) setState(() => _pending = pending);
   }
 
   Future<void> _loadEmployees() async {
@@ -168,9 +180,29 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
-    final visible = _days
+    final matching = _days
         .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || attendanceBucketOf(d) == _bucket) && _exceptions.every((k) => _matches(d, k)))
         .toList();
+    final fixer = MismatchFixer(
+      context: context,
+      ref: ref,
+      nameOf: _name,
+      pending: _pending,
+      openPunch: ({required employeeId, required direction, required time}) => openPunchOnBehalf(context, ref, employeeId: employeeId, direction: direction, punchTime: time),
+      openDay: (d) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: d.id, initial: d))),
+      onChanged: () {
+        _load();
+        _loadPending();
+      },
+    );
+    final mismatchCount = matching.where((d) => mismatchOf(d) != null).length;
+    final narrow = _onlyMismatches && mismatchCount > 0;
+    // What HR has to fix or chase first; the server's order otherwise (List.sort is not stable).
+    final ranked = [for (var i = 0; i < matching.length; i++) (i, matching[i])]..sort((a, b) {
+        final c = attentionRank(a.$2).compareTo(attentionRank(b.$2));
+        return c != 0 ? c : a.$1.compareTo(b.$1);
+      });
+    final visible = [for (final (_, d) in ranked) if (!narrow || mismatchOf(d) != null) d];
     final summary = AttendanceSummary.compute(_days);
     return Scaffold(
       appBar: AppBar(
@@ -224,6 +256,8 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                         padding: const EdgeInsets.all(16),
                         children: [
                           if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() => _bucket = b)),
+                          if (mismatchCount > 0)
+                            MismatchBanner(count: mismatchCount, narrowed: narrow, onToggle: () => setState(() => _onlyMismatches = !narrow)),
                           const SizedBox(height: 8),
                           if (visible.isEmpty)
                             SizedBox(
@@ -238,6 +272,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                             AttendanceDayTile(
                               day: d,
                               employeeLabel: _name(d.employeeId),
+                              mismatch: fixer.forDay(d),
                               onMarkPresent: canPunch && d.employeeId != ref.read(authControllerProvider).user?.employeeId
                                   ? () async {
                                       if (await openMarkAttendance(context, employees: [(value: d.employeeId, label: _name(d.employeeId))], date: d.attendanceDate) && mounted) _load();
