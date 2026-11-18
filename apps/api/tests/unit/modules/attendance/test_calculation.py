@@ -697,15 +697,11 @@ def test_evaluate_day_roster_holiday_working_override_present() -> None:
     assert result.calendar_day_type == "HOLIDAY"
 
 
-def test_evaluate_day_roster_holiday_working_override_no_punches_still_not_expected() -> None:
-    """`roster_holiday_working_override` is wired through exactly like the existing
-    `shift.operates_on_holiday` flag it's OR'd alongside (`shift_operates`) — including that
-    flag's existing zero-punch behaviour: `_resolve_primary_status`'s worked_minutes==0 branch
-    keys off `not_expected` alone (day_type-derived), not `shift_operates`, so an "operates on
-    holiday" shift with nobody actually punching in is still NOT_EXPECTED today, override or
-    not. This is pre-existing W4 engine behaviour (same for a non-roster
-    `operates_on_holiday=True` shift), not something W5 changes — this test pins it so a
-    future change to that precedence doesn't silently regress unnoticed."""
+def test_evaluate_day_roster_holiday_working_override_no_punches_is_a_missing_day() -> None:
+    """SH-03 (owner decision P-02, engine 13): a roster "working this holiday" row, like a shift
+    that operates on holidays, makes the holiday an ordinary working day. A no-show follows the
+    missing-punch rule (INCOMPLETE by default) instead of being paid as a day off, which before
+    engine 13 sat beside loss of pay for a short day — the contradiction this test once pinned."""
     result = evaluate_day(
         _base_input(
             calendar_day_type="HOLIDAY",
@@ -714,7 +710,8 @@ def test_evaluate_day_roster_holiday_working_override_no_punches_still_not_expec
             punches=[],
         )
     )
-    assert result.attendance_status == "NOT_EXPECTED"
+    assert result.attendance_status == "INCOMPLETE"
+    assert result.paid_day_fraction == "0.00"
 
 
 # ---------------------------------------------------------------------------

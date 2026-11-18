@@ -1,0 +1,22 @@
+{
+ "debit_days": "1.50",
+ "digest": "x",
+ "items": [
+  {
+   "balance_effect": "1.50",
+   "calendar_date": "2026-01-15",
+   "employee_id": "00000000-0000-0000-0000-000000001234",
+   "expected_fraction": "1.50",
+   "kind": "x",
+   "leave_application_id": "00000000-0000-0000-0000-000000001234",
+   "leave_type_id": "00000000-0000-0000-0000-000000001234",
+   "outcome": "x",
+   "reason": "x",
+   "stored_fraction": "1.50"
+  }
+ ],
+ "nothing_to_do": true,
+ "protected_count": 1,
+ "refund_days": "1.50",
+ "shortfall_days": "1.50"
+}

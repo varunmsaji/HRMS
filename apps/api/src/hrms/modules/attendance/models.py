@@ -90,8 +90,18 @@ class AttendancePolicyVersion(Base, TimestampMixin):
     # Grace (§11.6, §6)
     grace_in_minutes: Mapped[int] = mapped_column(Integer, default=0)
     grace_out_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # R-2 (owner decision D-01b): the most beyond-grace minutes, late and early COMBINED, that a
+    # late or early mark may credit to the hour-band lookup on one day. 0 = none. Plain grace is
+    # separate. The database also enforces 0..120 (migration `20261116120000`).
+    mark_credit_ceiling_minutes: Mapped[int] = mapped_column(
+        Integer, default=59, server_default="59"
+    )
     # Minutes before shift start a self-service punch-in is accepted; NULL = no early limit.
     early_in_allowance_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Punch ownership (SH-01/02, P-13): how far before a shift's start and after its end a punch
+    # may still belong to that shift, before the neighbouring day's shift bounds it anyway.
+    max_early_punch_minutes: Mapped[int] = mapped_column(Integer, default=240)
+    max_late_punch_minutes: Mapped[int] = mapped_column(Integer, default=720)
 
     # Rounding (§11.6)
     punch_rounding: Mapped[str] = mapped_column(String(10), default="NONE")
@@ -516,6 +526,56 @@ class Punch(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class PunchDismissal(Base):
+    """HR's decision that an orphan punch (owned by no attendance day) is not attendance. The
+    punch itself is never changed (WD-11); this only stops it blocking period close."""
+
+    __tablename__ = "punch_dismissal"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    punch_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("punch.id"))
+    reason: Mapped[str] = mapped_column(Text)
+    dismissed_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    dismissed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AttendanceRecalcRequest(Base, TimestampMixin):
+    """Invariant C — a change that can alter calculated attendance records which employee-dates it
+    affects; `attendance/recalc.py` recalculates the open ones. `employee_id` NULL = every
+    employee; `shift_id` set = only days calculated against that shift."""
+
+    __tablename__ = "attendance_recalc_request"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+    shift_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift.id"), nullable=True
+    )
+    date_from: Mapped[date] = mapped_column(Date)
+    date_to: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str] = mapped_column(String(40))
+    source_entity_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_entity_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    requested_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------

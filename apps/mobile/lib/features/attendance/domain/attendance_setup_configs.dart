@@ -21,6 +21,12 @@ Map<String, dynamic> _band(int min, int? max, String status) => {'min_minutes': 
 /// Under half the full-day hours is absent, up to the full day is a half-day, then present.
 List<Map<String, dynamic>> _hourBands(int fullDay) => [_band(0, fullDay ~/ 2 - 1, 'ABSENT'), _band(fullDay ~/ 2, fullDay - 1, 'HALF_DAY'), _band(fullDay, null, 'PRESENT')];
 
+/// AR-02 (owner decision D-01): late or early by under an hour, beyond the grace, is a mark and
+/// does not also cost half a day. Mirrors `apps/web/src/lib/attendance-policy/templates.ts`.
+Map<String, dynamic> _mark(int min, int? max, String classification) => {'min_minutes': min, 'max_minutes': max, 'classification': classification};
+List<Map<String, dynamic>> _lateMark() => [_mark(1, 59, 'LATE')];
+List<Map<String, dynamic>> _earlyMark() => [_mark(1, 59, 'EARLY_DEPARTURE')];
+
 final attendancePolicySetup = PolicySetupConfig(
   title: 'New attendance policy',
   path: '/attendance-policies',
@@ -30,6 +36,9 @@ final attendancePolicySetup = PolicySetupConfig(
   base: const {
     'grace_in_minutes': 0,
     'grace_out_minutes': 0,
+    'mark_credit_ceiling_minutes': 59,
+    'max_early_punch_minutes': 240,
+    'max_late_punch_minutes': 720,
     'geofence_mode': 'DISABLED',
     'geofence_max_accuracy_m': 100,
     'geofence_max_age_seconds': 60,
@@ -57,14 +66,14 @@ final attendancePolicySetup = PolicySetupConfig(
     'early_departure_bands': <Map<String, dynamic>>[],
   },
   templates: [
-    SetupTemplate(key: 'standard', label: 'Standard office', description: '10 minutes grace, 8 hours for a full day, 4 for a half-day.', defaultName: 'Standard office', values: {'grace_in_minutes': 10, 'grace_out_minutes': 10, 'hour_bands': _hourBands(480)}),
-    SetupTemplate(key: 'flexible', label: 'Flexible hours', description: '30 minutes grace, 6 hours for a full day, 3 for a half-day.', defaultName: 'Flexible hours', values: {'grace_in_minutes': 30, 'grace_out_minutes': 30, 'hour_bands': _hourBands(360)}),
+    SetupTemplate(key: 'standard', label: 'Standard office', description: '10 minutes grace, 8 hours for a full day, 4 for a half-day. Late or early by under an hour is marked, not deducted.', defaultName: 'Standard office', values: {'grace_in_minutes': 10, 'grace_out_minutes': 10, 'hour_bands': _hourBands(480), 'late_bands': _lateMark(), 'early_departure_bands': _earlyMark()}),
+    SetupTemplate(key: 'flexible', label: 'Flexible hours', description: '30 minutes grace, 6 hours for a full day, 3 for a half-day. Late or early by under an hour is marked, not deducted.', defaultName: 'Flexible hours', values: {'grace_in_minutes': 30, 'grace_out_minutes': 30, 'hour_bands': _hourBands(360), 'late_bands': _lateMark(), 'early_departure_bands': _earlyMark()}),
     SetupTemplate(
       key: 'strict',
       label: 'Strict attendance',
       description: 'No grace, 8 hours for a full day. Every third late day in a month is a half-day, and leaving early needs approval.',
       defaultName: 'Strict attendance',
-      values: {'lates_to_half_day_count': 3, 'early_departure_requires_approval': true, 'hour_bands': _hourBands(480)},
+      values: {'lates_to_half_day_count': 3, 'early_departure_requires_approval': true, 'hour_bands': _hourBands(480), 'late_bands': _lateMark(), 'early_departure_bands': [_mark(1, 59, 'EARLY_DEPARTURE'), _mark(60, null, 'HALF_DAY')]},
     ),
     const SetupTemplate(key: 'blank', label: 'Start from scratch', description: 'Set every rule yourself.', defaultName: ''),
   ],
@@ -156,10 +165,6 @@ FormSpec _shiftRules() {
     f('timezone'),
     f('operates_on_holiday'),
     f('operates_on_weekly_off'),
-    f('weekly_off_pattern_id'),
-    f('scheduled_minutes'),
-    f('min_scheduled_minutes'),
-    f('max_scheduled_minutes'),
   ]);
 }
 

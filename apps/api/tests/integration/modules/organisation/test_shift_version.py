@@ -868,25 +868,123 @@ async def test_shift_version_timezone_null_falls_through_wd06(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
+@pytest.mark.parametrize("via", ["create", "update"])
 @pytest.mark.asyncio
-async def test_shift_version_timezone_utc_accepted(
+async def test_shift_version_timezone_outside_the_allow_list_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None, via: str
+) -> None:
+    """SH-06: a valid IANA zone outside `settings.allowed_company_timezones` is refused, as it is
+    for the company. Before, a shift saved in another zone placed every day of that shift 5½
+    hours or more off. (The test env also allows `UTC`, see `tests/conftest.py`.)"""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        if via == "create":
+            response = await client.post(
+                f"/v1/shifts/{shift['id']}/versions",
+                headers=headers,
+                json={"timezone": "America/New_York"},
+            )
+        else:
+            response = await client.patch(
+                f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}",
+                headers={**headers, "If-Match": "1"},
+                json={"timezone": "America/New_York"},
+            )
+        assert response.status_code == 422, response.text
+        accepted = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}",
+            headers={**headers, "If-Match": "1"},
+            json={"timezone": "Asia/Kolkata"},
+        )
+        assert accepted.status_code == 200, accepted.text
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_publish_rechecks_a_zone_outside_the_allow_list(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """Regression guard: 22 live dev rows and 15 existing test literals carry `UTC` — must
-    remain accepted, unaffected by the India-only registration gate (`CD-2`), which does not
-    apply to `ShiftVersion` (execution gate §4.1, Option 1's rejection)."""
+    """SH-06: a draft saved in another zone before the restriction cannot be published."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         shift = await _create_shift(client, headers)
         draft_id = shift["draft_version_id"]
-        response = await client.patch(
+        await client.patch(
             f"/v1/shifts/{shift['id']}/versions/{draft_id}",
             headers={**headers, "If-Match": "1"},
-            json={"timezone": "UTC"},
+            json={
+                "shift_type": "FIXED",
+                "effective_from": "2026-01-01",
+                "start_time": "09:00",
+                "end_time": "18:00",
+            },
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["data"]["timezone"] == "UTC"
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text("UPDATE shift_version SET timezone = 'America/New_York' WHERE id = :vid"),
+                {"vid": draft_id},
+            )
+            await session.commit()
+
+        published = await client.post(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+            headers={**headers, "If-Match": "2"},
+            json={},
+        )
+        assert published.status_code == 422, published.text
+        assert published.json()["error"]["code"] == "INVALID_SHIFT_VERSION_TIMEZONE"
     finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_branch_timezone_outside_the_allow_list_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SH-06: a branch zone outranks the company's for every shift without its own, so it is held
+    to the same allow-list."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        legal_entity = (
+            await client.post("/v1/legal-entities", headers=headers, json={"name": "LE"})
+        ).json()["data"]
+        refused = await client.post(
+            "/v1/branches",
+            headers=headers,
+            json={
+                "legal_entity_id": legal_entity["id"],
+                "name": "NY",
+                "timezone": "America/New_York",
+            },
+        )
+        assert refused.status_code == 422, refused.text
+        created = await client.post(
+            "/v1/branches",
+            headers=headers,
+            json={"legal_entity_id": legal_entity["id"], "name": "HQ", "timezone": "Asia/Kolkata"},
+        )
+        assert created.status_code == 201, created.text
+        branch = created.json()["data"]
+        patched = await client.patch(
+            f"/v1/branches/{branch['id']}",
+            headers={**headers, "If-Match": str(branch["version"])},
+            json={"timezone": "Europe/London"},
+        )
+        assert patched.status_code == 422, patched.text
+    finally:
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text("DELETE FROM branch WHERE company_id = :cid"), {"cid": str(company_id)}
+            )
+            await session.commit()
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
@@ -908,6 +1006,58 @@ async def test_shift_version_timezone_asia_calcutta_canonicalised(
         )
         assert response.status_code == 200, response.text
         assert response.json()["data"]["timezone"] == "Asia/Kolkata"
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.parametrize(
+    ("lunch", "status"),
+    [
+        (("13:00", "14:00"), 200),  # inside 07:00 to 11:00 + 8h = 19:00
+        (("19:30", "20:00"), 422),  # after the latest possible end
+    ],
+)
+@pytest.mark.asyncio
+async def test_flexible_shift_fixed_lunch_is_checked_against_the_working_day(
+    client: AsyncClient, seeded_plan_catalogue: None, lunch: tuple[str, str], status: int
+) -> None:
+    """SH-11: a FLEXIBLE shift's window is when the day may start; a fixed lunch was checked
+    against it (07:00-11:00) and refused at publish. Now the bound is window start to window end
+    plus required minutes."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        patched = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={
+                "shift_type": "FLEXIBLE",
+                "effective_from": "2026-01-01",
+                "window_start": "07:00",
+                "window_end": "11:00",
+                "required_minutes": 480,
+                "breaks": [
+                    {
+                        "name": "Lunch",
+                        "break_kind": "FIXED_WINDOW",
+                        "start_time": lunch[0],
+                        "end_time": lunch[1],
+                        "is_paid": False,
+                    }
+                ],
+            },
+        )
+        assert patched.status_code == 200, patched.text
+        published = await client.post(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+            headers={**headers, "If-Match": "2"},
+            json={},
+        )
+        assert published.status_code == status, published.text
+        if status == 422:
+            assert published.json()["error"]["code"] == "INVALID_SHIFT_BREAK"
     finally:
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -1,7 +1,7 @@
 """Pydantic request/response shapes for the attendance module (W3)."""
 
 import calendar
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
@@ -135,6 +135,7 @@ _OVERTIME_ACTIONS = (
     "STAGE_APPROVED",
     "APPROVED",
     "REJECTED",
+    "SUPERSEDED_BY_RECALCULATION",
 )
 
 
@@ -159,6 +160,24 @@ def _parse_time(value: str) -> time:
 def _check_choice(field: str, value: str | None, choices: tuple[str, ...]) -> None:
     if value is not None and value not in choices:
         raise ValueError(f"{field} must be one of {choices}")
+
+
+def _reject_dormant_policy_settings(model: Any) -> None:
+    """SH-14 (plan section 5) - settings the engine does not apply are refused instead of stored,
+    so a policy never claims a rule it does not keep. Stored values on existing rows stay as they
+    are and still have no effect. `None` (a PATCH that leaves the field alone) and the default
+    are always accepted."""
+    dormant = {
+        "punch_rounding": model.punch_rounding not in (None, "NONE"),
+        "rounding_minutes": model.rounding_minutes is not None,
+        "missing_punch_behaviour": model.missing_punch_behaviour == "AUTO_CLOSE",
+        "half_day_split": model.half_day_split not in (None, "BY_HOURS"),
+        "half_day_boundary_minutes": model.half_day_boundary_minutes is not None,
+        "early_out_uses_core_end": bool(model.early_out_uses_core_end),
+    }
+    for field, used in dormant.items():
+        if used:
+            raise ValueError(f"{field}: this setting is not applied yet; leave it at its default")
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +369,19 @@ def early_departure_band_to_read(
 # Attendance Policy — version
 # ---------------------------------------------------------------------------
 
+# R-2 (owner decision D-01b): the per-version, combined late + early mark-credit ceiling (minutes).
+# The same bounds are a database CHECK; a unit test keeps the default equal to the engine's.
+MARK_CREDIT_CEILING_DEFAULT = 59
+MARK_CREDIT_CEILING_MIN = 0
+MARK_CREDIT_CEILING_MAX = 120
+
 _ATTENDANCE_VERSION_FIELDS = (
     "grace_in_minutes",
     "grace_out_minutes",
+    "mark_credit_ceiling_minutes",
     "early_in_allowance_minutes",
+    "max_early_punch_minutes",
+    "max_late_punch_minutes",
     "punch_rounding",
     "rounding_minutes",
     "missing_punch_behaviour",
@@ -391,7 +419,13 @@ class AttendancePolicyVersionCreate(BaseModel):
 
     grace_in_minutes: int = Field(default=0, ge=0)
     grace_out_minutes: int = Field(default=0, ge=0)
+    # R-2: combined late + early beyond-grace credit ceiling, per version (0 = no mark credit).
+    mark_credit_ceiling_minutes: int = Field(
+        default=MARK_CREDIT_CEILING_DEFAULT, ge=MARK_CREDIT_CEILING_MIN, le=MARK_CREDIT_CEILING_MAX
+    )
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
+    max_early_punch_minutes: int = Field(default=240, ge=0, le=1440)
+    max_late_punch_minutes: int = Field(default=720, ge=0, le=1440)
     punch_rounding: str = "NONE"
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str = "INCOMPLETE"
@@ -434,6 +468,7 @@ class AttendancePolicyVersionCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_choices(self) -> "AttendancePolicyVersionCreate":
+        _reject_dormant_policy_settings(self)
         _check_choice("punch_rounding", self.punch_rounding, _PUNCH_ROUNDING)
         _check_choice(
             "missing_punch_behaviour", self.missing_punch_behaviour, _MISSING_PUNCH_BEHAVIOURS
@@ -477,7 +512,12 @@ class AttendancePolicyVersionUpdate(BaseModel):
     effective_from: date | None = None
     grace_in_minutes: int | None = Field(default=None, ge=0)
     grace_out_minutes: int | None = Field(default=None, ge=0)
+    mark_credit_ceiling_minutes: int | None = Field(
+        default=None, ge=MARK_CREDIT_CEILING_MIN, le=MARK_CREDIT_CEILING_MAX
+    )
     early_in_allowance_minutes: int | None = Field(default=None, ge=0)
+    max_early_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
+    max_late_punch_minutes: int | None = Field(default=None, ge=0, le=1440)
     punch_rounding: str | None = None
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str | None = None
@@ -518,6 +558,7 @@ class AttendancePolicyVersionUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_choices(self) -> "AttendancePolicyVersionUpdate":
+        _reject_dormant_policy_settings(self)
         _check_choice("punch_rounding", self.punch_rounding, _PUNCH_ROUNDING)
         _check_choice(
             "missing_punch_behaviour", self.missing_punch_behaviour, _MISSING_PUNCH_BEHAVIOURS
@@ -601,7 +642,10 @@ class AttendancePolicyVersionRead(BaseModel):
 
     grace_in_minutes: int
     grace_out_minutes: int
+    mark_credit_ceiling_minutes: int = MARK_CREDIT_CEILING_DEFAULT
     early_in_allowance_minutes: int | None
+    max_early_punch_minutes: int = 240
+    max_late_punch_minutes: int = 720
     punch_rounding: str
     rounding_minutes: int | None
     missing_punch_behaviour: str
@@ -664,7 +708,10 @@ def attendance_policy_version_to_read(
         effective_to=row.effective_to,
         grace_in_minutes=row.grace_in_minutes,
         grace_out_minutes=row.grace_out_minutes,
+        mark_credit_ceiling_minutes=row.mark_credit_ceiling_minutes,
         early_in_allowance_minutes=row.early_in_allowance_minutes,
+        max_early_punch_minutes=row.max_early_punch_minutes,
+        max_late_punch_minutes=row.max_late_punch_minutes,
         punch_rounding=row.punch_rounding,
         rounding_minutes=row.rounding_minutes,
         missing_punch_behaviour=row.missing_punch_behaviour,
@@ -1488,6 +1535,93 @@ class PunchCreateOnBehalf(BaseModel):
         return value
 
 
+#: Upper bound on employees in one manual-day request. Each employee costs two punch writes and a
+#: recalculation inside one transaction, so the cap keeps the request short and the blast radius of
+#: a mistaken submission small.
+MANUAL_DAY_MAX_EMPLOYEES = 50
+#: The longest IN→OUT span one manual day may record. A real shift, overnight ones included, fits
+#: comfortably; anything longer is almost always a wrong date.
+MANUAL_DAY_MAX_SPAN = timedelta(hours=20)
+
+
+class ManualDayEntryRequest(BaseModel):
+    """Body for `POST /attendance/punches/day-entries[/preview]` — HR marking a whole day (an IN
+    and an OUT) for one or more employees in one step (`ATTENDANCE.PUNCH_ON_BEHALF`).
+
+    Every punch it writes goes through `PunchService.record_punch_outcome` with `source="ADMIN"`,
+    so it is held to every bound the single on-behalf punch is held to (scope, future time,
+    employment start, last working day, closed period) and is audited the same way. On top of
+    those, a manual day is refused for an employee who already has any punch on that day: a
+    partial day is corrected with a single punch, never by stacking a second IN/OUT pair on it.
+
+    `idempotency_key` covers the whole submission. Each punch is stored under a key derived from
+    it, the employee and the direction, so a retried request records nothing twice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_ids: list[UUID] = Field(min_length=1, max_length=MANUAL_DAY_MAX_EMPLOYEES)
+    punch_in_at: AwareIsoDatetime
+    punch_out_at: AwareIsoDatetime
+    reason: str = Field(min_length=3, max_length=200)
+    #: Short enough that `<key>:<employee uuid>:OUT` fits the 100-character punch key column.
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=50)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 3:
+            raise ValueError("reason must be at least 3 characters")
+        return stripped
+
+    @field_validator("employee_ids")
+    @classmethod
+    def validate_unique_employees(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("employee_ids must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_span(self) -> "ManualDayEntryRequest":
+        if self.punch_out_at <= self.punch_in_at:
+            raise ValueError("punch_out_at must be after punch_in_at")
+        if self.punch_out_at - self.punch_in_at > MANUAL_DAY_MAX_SPAN:
+            hours = int(MANUAL_DAY_MAX_SPAN.total_seconds() // 3600)
+            raise ValueError(f"a manual day can span at most {hours} hours")
+        return self
+
+
+ManualDayOutcome = Literal["READY", "RECORDED", "BLOCKED"]
+
+
+class ManualDayEntryResult(BaseModel):
+    """One employee's line in a manual-day preview or submission.
+
+    `READY` (preview only) — would be recorded. `RECORDED` (submit only) — both punches stored;
+    `replayed` is true when they were stored by an earlier attempt with the same idempotency key.
+    `BLOCKED` — nothing stored for this employee; `code`/`message` say why, using the same error
+    codes the single on-behalf punch returns, plus `EXISTING_PUNCHES`."""
+
+    employee_id: UUID
+    outcome: ManualDayOutcome
+    code: str | None = None
+    message: str | None = None
+    replayed: bool = False
+    #: Punches already on the employee's day(s), so HR can see what a block is about.
+    existing_punches: list["PunchRead"] = Field(default_factory=list)
+    #: The two punches written, on `RECORDED`.
+    punches: list["PunchRead"] = Field(default_factory=list)
+
+
+class ManualDayEntryResponse(BaseModel):
+    punch_in_at: str
+    punch_out_at: str
+    ready_count: int
+    recorded_count: int
+    blocked_count: int
+    results: list[ManualDayEntryResult]
+
+
 class PunchRead(BaseModel):
     id: UUID
     company_id: UUID
@@ -2151,6 +2285,14 @@ class AttendancePeriodCreate(BaseModel):
 RANGE_CALCULATE_MAX_DAYS = 62
 
 
+class OrphanPunchDismissInput(BaseModel):
+    """Invariant B — HR's reviewed decision that an orphan punch is not attendance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class AttendanceRangeCalculateInput(BaseModel):
     """PAY-001 — backfill every employed day in `[date_from, date_to]` (company-local business
     dates), optionally only for `employee_ids`."""
@@ -2620,3 +2762,8 @@ class FaceLivenessSessionRead(BaseModel):
     direction: str
     expires_at: datetime
     frames_required: int
+
+
+# `ManualDayEntryResult` names `PunchRead`, which is declared after it.
+ManualDayEntryResult.model_rebuild()
+ManualDayEntryResponse.model_rebuild()

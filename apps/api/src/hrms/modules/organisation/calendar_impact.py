@@ -9,8 +9,11 @@ affected employee's dates are classified twice - current rules vs proposed rules
 administrator saw, takes a per-company advisory lock, recomputes the impact against the database
 as it is *now*, and refuses (409 `CALENDAR_PREVIEW_STALE`) if the digest differs. Only then does
 it call the existing `OrganisationService` method for the change, in the request's transaction,
-and records one extra audit event. Calendar changes never rewrite leave days, attendance or
-payroll; they are reported, and protected periods require an explicit acknowledgement.
+and records one extra audit event. Calendar changes never rewrite payroll. Approved leave is
+adjusted by a *dated* change (holiday, calendar exception) as it is applied, and only by HR's
+explicit reconciliation after any other kind; either way it is reported here, and protected periods
+require an explicit acknowledgement. Unlocked attendance days
+the change can touch are queued for recalculation by the service method itself (AC-02).
 
 Population handling: employees are grouped by identical placement history (branch, department,
 designation, grade, shift over time) so the resolver runs once per group, not once per employee.
@@ -199,6 +202,11 @@ ProposedChange = Annotated[
 ]
 
 HOLIDAY_CHANGE_TYPES = frozenset({"HOLIDAY_CREATE", "HOLIDAY_UPDATE", "HOLIDAY_CALENDAR_UPDATE"})
+#: Changes tied to specific dates. Applying one reconciles approved leave on those dates in the
+#: same transaction (P-E). Pattern, work-calendar, holiday-calendar and assignment changes do not.
+AUTO_LEAVE_RECONCILE_CHANGE_TYPES = frozenset(
+    {"HOLIDAY_CREATE", "HOLIDAY_UPDATE", "EXCEPTION_CREATE", "EXCEPTION_UPDATE"}
+)
 
 
 class ImpactPreviewRequest(BaseModel):
@@ -974,6 +982,7 @@ class CalendarImpactService:
             leave,
             protected,
             has_overlay_effect=bool(rows),
+            change_type=change.change_type,
         )
 
         requires_ack = (
@@ -1216,6 +1225,7 @@ class CalendarImpactService:
         protected: list[ProtectedPeriod],
         *,
         has_overlay_effect: bool,
+        change_type: str,
     ) -> None:
         if not has_overlay_effect and not any(w.code == "NO_RESOLUTION_EFFECT" for w in warnings):
             warnings.append(
@@ -1267,19 +1277,39 @@ class CalendarImpactService:
                 )
             )
         if leave.approved_day_records or leave.pending_day_records:
-            warnings.append(
-                ImpactWarning(
-                    code="LEAVE_NOT_RECALCULATED",
-                    message="Existing leave day records are not changed. Review the listed "
-                    "leave; any adjustment is a separate leave action.",
+            if change_type in AUTO_LEAVE_RECONCILE_CHANGE_TYPES:
+                # P-E - a dated change (a holiday or calendar exception) rewrites approved leave
+                # when it is applied (`leave.reconciliation.reconcile_after_calendar_change`).
+                warnings.append(
+                    ImpactWarning(
+                        code="LEAVE_ADJUSTED_AUTOMATICALLY",
+                        message="Approved leave on the changed dates is adjusted automatically "
+                        "when this change is applied: a day that stops being a leave day is "
+                        "refunded to the balance, and a day that starts being one is debited if "
+                        "the balance covers it. If it does not (and the leave type allows no "
+                        "negative balance) a shortfall exception is opened for HR and attendance "
+                        "period close stays blocked; it is never turned into loss of pay. Dates "
+                        "in a closed attendance period are not changed. Leave still awaiting "
+                        "approval is listed but not changed.",
+                    )
                 )
-            )
+            else:
+                warnings.append(
+                    ImpactWarning(
+                        code="LEAVE_NOT_RECALCULATED",
+                        message="Existing leave day records are not changed automatically by "
+                        "this kind of change. Attendance period close refuses to lock while "
+                        "approved leave disagrees with the calendar. HR resolves it with Leave "
+                        "reconciliation: preview the adjustment, then apply it (refund, debit, "
+                        "or a shortfall exception - never loss of pay).",
+                    )
+                )
         if protected:
             warnings.append(
                 ImpactWarning(
                     code="PROTECTED_PERIODS",
                     message="Locked attendance periods and payroll runs are listed. They are not "
-                    "recalculated; only future calculations use the new configuration.",
+                    "recalculated. Unlocked attendance days are queued for recalculation.",
                 )
             )
 

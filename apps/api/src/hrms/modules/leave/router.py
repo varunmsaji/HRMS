@@ -14,6 +14,7 @@ mirroring `cancel_regularization_request`'s exact two-resolve_data_scope-calls-u
 accepting either of two permission grants."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -43,6 +44,7 @@ from hrms.modules.leave.dependencies import (
     get_leave_ledger_service,
     get_leave_policy_service,
     get_leave_policy_setup_service,
+    get_leave_reconciliation_service,
     get_leave_type_service,
     get_leave_year_setting_service,
     get_statutory_leave_minimum_service,
@@ -63,6 +65,13 @@ from hrms.modules.leave.permissions import (
     LEAVE_YEAR_SETTING_MANAGE,
 )
 from hrms.modules.leave.policy_setup import LeavePolicySetupService
+from hrms.modules.leave.reconciliation import (
+    OUTCOME_PROTECTED,
+    OUTCOME_REFUND,
+    OUTCOME_SHORTFALL,
+    LeaveCalendarReconciliationService,
+    ReconciliationPreview,
+)
 from hrms.modules.leave.schemas import (
     LeaveApplicationCancelInput,
     LeaveApplicationCreate,
@@ -84,6 +93,11 @@ from hrms.modules.leave.schemas import (
     LeavePolicyVersionPublishRequest,
     LeavePolicyVersionRead,
     LeavePolicyVersionUpdate,
+    LeaveReconciliationApply,
+    LeaveReconciliationItemRead,
+    LeaveReconciliationPreviewRead,
+    LeaveReconciliationRunRead,
+    LeaveReconciliationScope,
     LeaveTypeCreate,
     LeaveTypeRead,
     LeaveTypeUpdate,
@@ -951,3 +965,138 @@ async def delete_statutory_leave_minimum(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
+
+
+# ---------------------------------------------------------------------------
+# R-3 - HR-initiated reconciliation of approved leave after a calendar / schedule change
+# ---------------------------------------------------------------------------
+
+
+def _preview_items(preview: ReconciliationPreview) -> list[LeaveReconciliationItemRead]:
+    return [
+        LeaveReconciliationItemRead(
+            employee_id=i.employee_id,
+            leave_application_id=i.application_id,
+            leave_type_id=i.leave_type_id,
+            calendar_date=i.calendar_date,
+            kind=i.kind,
+            stored_fraction=i.stored_fraction,
+            expected_fraction=i.expected_fraction,
+            outcome=i.outcome,
+            balance_effect=i.balance_effect,
+            reason=i.reason,
+        )
+        for i in sorted(preview.items, key=lambda x: (str(x.employee_id), x.calendar_date))
+    ]
+
+
+def _require_company_scope(scope: DataScope) -> None:
+    """Reconciliation spans employees and moves balances: HR (company scope) only."""
+    if DataScopeLevel.COMPANY not in scope.levels:
+        raise PermissionDeniedError(
+            "Company-wide scope is required to reconcile leave", code="PERMISSION_DENIED"
+        )
+
+
+@router.post("/leave-reconciliation/preview", status_code=status.HTTP_200_OK)
+async def preview_leave_reconciliation(
+    body: LeaveReconciliationScope,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+    service: Annotated[
+        LeaveCalendarReconciliationService, Depends(get_leave_reconciliation_service)
+    ],
+) -> DataEnvelope[LeaveReconciliationPreviewRead]:
+    """Read-only: the approved leave whose stored days disagree with today's calendar, roster,
+    shift and weekly-off pattern, and exactly what `apply` would write for each date (refund,
+    debit, or a shortfall that stays an exception - never loss of pay). Pass the returned
+    `digest` to `apply`."""
+    _require_company_scope(scope)
+    preview = await service.preview(
+        tenant.company_id,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        employee_ids=frozenset(body.employee_ids) if body.employee_ids else None,
+    )
+    return DataEnvelope(
+        data=LeaveReconciliationPreviewRead(
+            digest=preview.digest,
+            items=_preview_items(preview),
+            refund_days=preview.total(OUTCOME_REFUND),
+            debit_days=sum(
+                (abs(i.balance_effect) for i in preview.items if i.balance_effect < 0),
+                Decimal("0.00"),
+            ),
+            shortfall_days=sum(
+                (
+                    i.expected_fraction - i.stored_fraction
+                    for i in preview.items
+                    if i.outcome == OUTCOME_SHORTFALL
+                ),
+                Decimal("0.00"),
+            ),
+            protected_count=sum(1 for i in preview.items if i.outcome == OUTCOME_PROTECTED),
+            nothing_to_do=not preview.actionable,
+        ),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
+
+
+@router.post("/leave-reconciliation/apply", status_code=status.HTTP_200_OK)
+async def apply_leave_reconciliation(
+    body: LeaveReconciliationApply,
+    request: Request,
+    response: Response,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+    service: Annotated[
+        LeaveCalendarReconciliationService, Depends(get_leave_reconciliation_service)
+    ],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+) -> DataEnvelope[LeaveReconciliationRunRead]:
+    """Applies what a preview showed - and only that: a 409 (`LEAVE_RECONCILIATION_PREVIEW_STALE`)
+    means the data moved since the preview and nothing was written. One transaction; repeating
+    it once the leave is reconciled changes nothing (`noop`). Dates in a closed attendance period
+    are never changed. Requires an `Idempotency-Key`."""
+    _require_company_scope(scope)
+
+    async def execute() -> LeaveReconciliationRunRead:
+        run = await service.apply_reviewed(
+            tenant.company_id,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            employee_ids=frozenset(body.employee_ids) if body.employee_ids else None,
+            preview_digest=body.preview_digest,
+            reason=body.reason.strip(),
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        )
+        result = run.result
+        return LeaveReconciliationRunRead(
+            run_id=run.run_id,
+            noop=run.noop,
+            applications_changed=result.applications_changed,
+            refunded_days=result.refunded_days,
+            debited_days=result.debited_days,
+            days_released=result.days_released,
+            days_added=result.days_added,
+            shortfalls_opened=result.shortfalls_opened,
+            shortfalls_resolved=result.shortfalls_resolved,
+            protected_count=sum(1 for i in run.preview.items if i.outcome == OUTCOME_PROTECTED),
+            items=_preview_items(run.preview),
+        )
+
+    outcome = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="leave.reconciliation.apply",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=LeaveReconciliationRunRead,
+        status_code=status.HTTP_200_OK,
+        execute=execute,
+    )
+    mark_replay(response, outcome.replayed, outcome.status_code)
+    return DataEnvelope(data=outcome.data, meta=build_meta(current_request_id() or "unknown"))

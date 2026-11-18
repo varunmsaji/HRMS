@@ -40,6 +40,15 @@ Rec? _currentVersion(Rec structure) {
 
 List<Rec> _templateLines(Rec? structure) => structure == null ? const [] : (((_currentVersion(structure)?['lines'] as List?) ?? const []).cast<Rec>());
 
+/// A company template applies to every date, like the ones every company starts with.
+const _newTemplateEffectiveFrom = '2000-01-01';
+
+/// `Senior engineer` → `SENIOR_ENGINEER` (mirrors web `codeFromName`).
+String structureCodeFromName(String name) {
+  final code = name.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '');
+  return code.length > 30 ? code.substring(0, 30) : code;
+}
+
 String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
 /// An employee's CTC and salary structure edited together — mirrors
@@ -225,6 +234,31 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
     return _formError;
   }
 
+  /// Web's "Save as new structure": creates a company structure from the lines on screen, publishes
+  /// its draft for every date, and selects it. The employee's own salary is not touched.
+  Future<void> _createStructure(String name, String code) async {
+    final client = ref.read(apiClientProvider);
+    final created = await client.post<Rec>('/payroll/salary-structures', body: {'code': code, 'name': name, 'lines': _inputs}, parse: (d) => d as Rec);
+    final draft = ((created['versions'] as List?) ?? const []).cast<Rec>().where((v) => v['status'] == 'DRAFT').firstOrNull;
+    if (draft == null) throw StateError('The new structure has no draft to publish.');
+    final published = await client.post<Rec>(
+      '/payroll/salary-structures/${created['id']}/versions/${draft['id']}/publish',
+      body: {'effective_from': _newTemplateEffectiveFrom},
+      ifMatch: draft['version'].toString(),
+      parse: (d) => d as Rec,
+    );
+    if (!mounted) return;
+    setState(() {
+      _templates = [..._templates, published];
+      _templateId = published['id'] as String;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Structure created. ${published['name']} is now available for every employee.')));
+  }
+
+  Future<void> _saveAsNewStructure() async {
+    await showDialog<void>(context: context, builder: (_) => _NewStructureDialog(onCreate: _createStructure));
+  }
+
   Future<void> _save() async {
     final annual = _annualMinor;
     if (_missing.isNotEmpty || annual == null) {
@@ -337,7 +371,16 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    key: const Key('save-as-new-structure'),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: _complete && !_saving ? _saveAsNewStructure : null,
+                    child: const Text('Save as new structure'),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     _stat(context, 'CTC a month', annual == null ? '—' : formatInr((annual / 12).round())),
@@ -421,5 +464,82 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       );
     }
     return Scaffold(appBar: AppBar(title: const Text('Salary setup')), body: body);
+  }
+}
+
+/// The "Save as new structure" dialog: a name and a code (filled in from the name when empty).
+class _NewStructureDialog extends StatefulWidget {
+  const _NewStructureDialog({required this.onCreate});
+  final Future<void> Function(String name, String code) onCreate;
+
+  @override
+  State<_NewStructureDialog> createState() => _NewStructureDialogState();
+}
+
+class _NewStructureDialogState extends State<_NewStructureDialog> {
+  final _name = TextEditingController();
+  final _code = TextEditingController();
+  String? _error;
+  bool _creating = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final name = _name.text.trim();
+    final code = (_code.text.trim().isEmpty ? structureCodeFromName(name) : _code.text.trim()).toUpperCase();
+    if (name.isEmpty || code.isEmpty) {
+      return setState(() => _error = 'Enter a name for the structure.');
+    }
+    setState(() {
+      _creating = true;
+      _error = null;
+    });
+    try {
+      await widget.onCreate(name, code);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e is ApiError ? e.message : 'Something went wrong.';
+          _creating = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Save as new structure'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Creates a company salary structure from the lines above, for any employee to use. It does not change this employee\'s salary. Press Save salary for that.'),
+            const SizedBox(height: 14),
+            TextField(controller: _name, maxLength: 150, enabled: !_creating, decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Senior engineer', counterText: ''), onChanged: (_) => setState(() {})),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _code,
+              maxLength: 30,
+              enabled: !_creating,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(labelText: 'Code', helperText: 'Capital letters, digits and underscores. Filled in from the name if left empty.', helperMaxLines: 2, hintText: structureCodeFromName(_name.text), counterText: ''),
+            ),
+            if (_error != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _creating ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: _creating ? null : _create, child: Text(_creating ? 'Creating…' : 'Create structure')),
+      ],
+    );
   }
 }

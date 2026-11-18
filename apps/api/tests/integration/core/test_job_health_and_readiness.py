@@ -97,6 +97,10 @@ def test_main_is_read_only_against_the_isolated_broker(capsys: pytest.CaptureFix
     assert settings.celery_broker != settings.redis_url  # tests/conftest.py isolation
     broker = redis.Redis.from_url(settings.celery_broker)
     queue = "default"
+    # Other tests enqueue real tasks here that no worker consumes (for example the recalculation
+    # kick after a shift or roster change); start from an empty queue so the probe is the only
+    # message. Safe: the assertion above proves this is the isolated test broker.
+    broker.delete(queue)
     marker = json.dumps({"body": "", "headers": {"id": f"probe-{uuid.uuid4()}"}})
     broker.lpush(queue, marker)
     try:

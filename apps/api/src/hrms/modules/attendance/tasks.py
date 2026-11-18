@@ -266,6 +266,27 @@ def calculate_range(
 
 
 # ---------------------------------------------------------------------------
+# Invariant C - queued recalculation of already-calculated days (`recalc.py`)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="attendance.process_recalc_requests_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def process_recalc_requests_company(company_id: str) -> dict[str, int]:
+    from hrms.modules.attendance.recalc import process_company_requests
+
+    return run_task(process_company_requests(UUID(company_id)))
+
+
+@celery_app.task(name="attendance.run_recalc_requests", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def run_recalc_requests() -> int:
+    """Beat safety net (every 5 minutes) for a request whose post-commit kick was lost. The
+    request table is under forced RLS, so this fans out per company; a company with nothing
+    pending costs one indexed query."""
+    company_ids = run_task(_list_active_company_ids())
+    return dispatch_per_company(process_recalc_requests_company, company_ids)
+
+
+# ---------------------------------------------------------------------------
 # PAY-006 — pre-cutoff reminders for unresolved INCOMPLETE days (`reminders.py`)
 # ---------------------------------------------------------------------------
 

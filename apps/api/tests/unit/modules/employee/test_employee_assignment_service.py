@@ -119,6 +119,9 @@ def service() -> EmployeeAssignmentService:
     svc._employee_repo = AsyncMock()
     svc._employment_repo = AsyncMock()
     svc._audit = AsyncMock()
+    # SH-13: a change dated on or before a future-dated current row looks for a covering row to
+    # split; none by default, so the old "must be after the current row" refusal still applies.
+    svc._repo.get_assignment_as_of.return_value = None
     return svc
 
 
@@ -133,6 +136,21 @@ def reporting_lock():  # type: ignore[no-untyped-def]
         yield lock
 
 
+@pytest.fixture(autouse=True)
+def shift_remediation_db_checks():  # type: ignore[no-untyped-def]
+    """SH-13 / Invariant C - the closed-period check and the recalculation queue need a real
+    database; these mock-session tests replace them. Their behaviour is covered by
+    `test_employee_assignment.py` (integration) and `test_recalc_queue.py`."""
+    with (
+        patch(
+            "hrms.modules.attendance.service.AttendanceService.assert_date_open",
+            new_callable=AsyncMock,
+        ),
+        patch("hrms.modules.attendance.recalc.request_recalc", new_callable=AsyncMock),
+    ):
+        yield
+
+
 def _mock_organisation_ok() -> AsyncMock:
     org_service = AsyncMock()
     org_service.get_branch = AsyncMock(return_value=MagicMock())
@@ -140,6 +158,7 @@ def _mock_organisation_ok() -> AsyncMock:
     org_service.get_designation = AsyncMock(return_value=MagicMock())
     org_service.get_grade = AsyncMock(return_value=MagicMock())
     org_service.get_shift = AsyncMock(return_value=MagicMock())
+    org_service.get_company_profile = AsyncMock(return_value=MagicMock(timezone="Asia/Kolkata"))
     return org_service
 
 
@@ -358,7 +377,7 @@ async def test_create_assignment_effective_from_not_after_current_rejected(
     service._employment_repo.get_employment_as_of.return_value = _employment()
     service._repo.get_current_assignment.return_value = current
 
-    with pytest.raises(InvalidEffectiveFromError):
+    with _patch_organisation(_mock_organisation_ok()), pytest.raises(InvalidEffectiveFromError):
         await service.create_assignment(
             uuid4(),
             uuid4(),

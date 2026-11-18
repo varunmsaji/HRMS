@@ -17,6 +17,15 @@ from hrms.core.errors.base import (
 )
 
 
+class RosterShiftNotUsableError(ValidationError):
+    """SH-18 - a roster row names a shift that is inactive or has no published version on the
+    roster date, so the day could only calculate as a configuration error."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message, details=[{"field": "shift_id", "code": code, "message": message}])
+
+
 class PolicyCodeAlreadyExistsError(ConflictError):
     """A partial unique index on `(company_id, code)` for active rows backs this, mirroring
     `HolidayCalendarCodeAlreadyExistsError`."""
@@ -726,6 +735,7 @@ class EmployeeTerminatedError(ValidationError):
         last_working_day: date,
         message: str | None = None,
     ) -> None:
+        self.last_working_day = last_working_day
         message = message or (
             "Attendance cannot be recorded after the employee's last working day "
             f"({last_working_day.isoformat()})"
@@ -1405,3 +1415,15 @@ class WorkplaceAuthorizationExistsError(ConflictError):
 
     def __init__(self) -> None:
         super().__init__("This employee is already authorised for that workplace")
+
+
+class PunchNotOrphanedError(ConflictError):
+    """Only a punch that no attendance day owns can be dismissed: dismissing an owned punch
+    would silently change a day's result."""
+
+    code = "PUNCH_NOT_ORPHANED"
+
+    def __init__(
+        self, message: str = "This punch belongs to an attendance day and cannot be dismissed"
+    ) -> None:
+        super().__init__(message)

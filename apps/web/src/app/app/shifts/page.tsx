@@ -35,7 +35,6 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
-import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
 import {
   EMPTY_SHIFT_VERSION_FORM_VALUES,
   buildShiftVersionPatch,
@@ -69,9 +68,6 @@ export default function ShiftsPage() {
   const [versionErrors, setVersionErrors] = useState<ShiftVersionFormErrors>(
     {},
   );
-  const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<
-    WeeklyOffPattern[]
-  >([]);
   const [templateKey, setTemplateKey] = useState(SHIFT_TEMPLATES[0].key);
   const [saving, setSaving] = useState(false);
 
@@ -125,10 +121,6 @@ export default function ShiftsPage() {
     setVersionValues({ ...first.values, effectiveFrom: today });
     setVersionErrors({});
     setCreateOpen(true);
-    apiClient
-      .get<WeeklyOffPattern[]>("/weekly-off-patterns")
-      .then(setWeeklyOffPatterns)
-      .catch(() => setWeeklyOffPatterns([]));
   }
 
   async function handleCreate() {
@@ -330,7 +322,6 @@ export default function ShiftsPage() {
                 values={versionValues}
                 errors={versionErrors}
                 onChange={setVersionValues}
-                weeklyOffPatterns={weeklyOffPatterns}
               />
             </div>
           </div>

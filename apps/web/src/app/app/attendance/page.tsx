@@ -25,6 +25,7 @@ import { TrendChart } from "@/components/attendance/dashboard/trend-chart";
 import { useDashboardData, useDirectoryDetails } from "@/components/attendance/dashboard/use-dashboard-data";
 import { WhosInPanel, type WhosInRow } from "@/components/attendance/dashboard/whos-in-panel";
 import { WorkHoursPanel } from "@/components/attendance/dashboard/work-hours-panel";
+import { MarkDayDialog, type MarkDayEmployee } from "@/components/attendance/mark-day-dialog";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 import { ErrorState } from "@/components/common/error-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -106,6 +107,9 @@ function AttendanceDashboard() {
 
   const [filters, setFilters] = useState<DashboardFilters>(() => parseFilters(searchParams ?? new URLSearchParams()));
   const [punchOpen, setPunchOpen] = useState(false);
+  // `null` = closed. Kept as one state object so the dialog gets a stable employee list.
+  const [markDay, setMarkDay] = useState<{ employees: MarkDayEmployee[]; date?: string } | null>(null);
+  const canMarkDay = can("ATTENDANCE.PUNCH_ON_BEHALF");
   // Which part of the dashboard is on screen. "today" (the default) is omitted from the URL.
   const [view, setView] = useState<DashboardView>(() => parseView(searchParams?.get("view") ?? null));
   const scrollToListRef = useRef(false);
@@ -330,9 +334,14 @@ function AttendanceDashboard() {
             <Link href="/app/attendance/calendar">Calendar view</Link>
           </Button>
         ) : null}
-        {can("ATTENDANCE.PUNCH") || can("ATTENDANCE.PUNCH_ON_BEHALF") ? (
-          <Button type="button" onClick={() => setPunchOpen(true)}>
+        {can("ATTENDANCE.PUNCH") || canMarkDay ? (
+          <Button type="button" variant={canMarkDay ? "outline" : "default"} onClick={() => setPunchOpen(true)}>
             Record punch
+          </Button>
+        ) : null}
+        {canMarkDay ? (
+          <Button type="button" onClick={() => setMarkDay({ employees: [] })}>
+            Mark attendance
           </Button>
         ) : null}
       </div>
@@ -509,6 +518,12 @@ function AttendanceDashboard() {
               timezone={timezone}
               showDate={rangeScoped}
               directory={directoryMap}
+              fallbackDate={range.to}
+              onMarkPresent={
+                canMarkDay
+                  ? ({ employeeId, label, date }) => setMarkDay({ employees: [{ id: employeeId, label }], date })
+                  : undefined
+              }
             />
           </SectionCard>
             </div>
@@ -663,6 +678,13 @@ function AttendanceDashboard() {
       )}
 
       <PunchEntryDialog open={punchOpen} onOpenChange={setPunchOpen} onRecorded={() => data.days.retry()} />
+      <MarkDayDialog
+        open={markDay !== null}
+        onOpenChange={(next) => (next ? null : setMarkDay(null))}
+        initialEmployees={markDay?.employees}
+        initialDate={markDay?.date}
+        onRecorded={() => data.days.retry()}
+      />
     </div>
   );
 }

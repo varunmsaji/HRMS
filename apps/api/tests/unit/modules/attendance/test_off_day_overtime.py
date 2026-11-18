@@ -69,9 +69,11 @@ def test_rostered_holiday_work_counts_only_beyond_the_shift() -> None:
     assert result.ot_minutes_detected == 120
 
 
-def test_half_day_weekly_off_counts_only_beyond_the_shift() -> None:
+def test_half_day_weekly_off_counts_only_beyond_the_working_half() -> None:
+    """P-A (owner-recommended option a): the day is paid as a half working day, so overtime
+    starts after the working half — 270 of the 540 minutes here — not after the whole shift."""
     result = _day(20, calendar_day_type="WEEKLY_OFF", weekly_off_fraction="0.50")
-    assert result.ot_minutes_detected == 120
+    assert result.ot_minutes_detected == 660 - 270
 
 
 def test_a_working_day_is_unchanged() -> None:
@@ -219,10 +221,14 @@ def test_split_shift_work_on_a_day_off_ignores_missed_blocks() -> None:
 def test_night_overtime_on_a_day_off_looks_at_the_hours_actually_worked(
     overrides: dict[str, Any], punches: list[tuple[int, str]], day_class: str
 ) -> None:
-    """All of it is overtime, so night work before the shift's end still counts as night."""
+    """All of it is overtime, so night work before the shift's end still counts as night.
+    AC-06: a roster week-off is a weekly off for overtime, and weekly off outranks night, the
+    same as a calendar weekly off does."""
     result = _off_day(
         punches, ot_policy=_ot_policy("WINDOW", start=time(22), end=time(6)), **overrides
     )
+    if overrides.get("roster_week_off_override"):
+        day_class = "WEEKLY_OFF"
     assert result.ot_day_class == day_class
 
 

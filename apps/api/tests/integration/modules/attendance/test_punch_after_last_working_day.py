@@ -171,17 +171,24 @@ async def test_self_punch_on_last_working_day_passes_and_after_it_is_rejected(
         )
         assert on_day.status_code == 201, on_day.text
 
-        # Move the last working day back a day directly (login revocation is the termination
-        # flow's job; this isolates the punch rule on the self-service service path, which is
-        # defence in depth behind that revocation).
-        yesterday = today - timedelta(days=1)
+        # Move the last working day back directly (login revocation is the termination flow's
+        # job; this isolates the punch rule on the self-service service path, which is defence in
+        # depth behind that revocation).
+        #
+        # Two days back, not one: SH-09 deliberately accepts a punch that falls inside the last
+        # working day's own punch-ownership window (a shift's checkout after midnight belongs to
+        # the day it started), and that window runs up to `max_late_punch_minutes` after the shift
+        # ends. With one day back the test passed at midday and failed overnight, when "now" is
+        # still inside yesterday's window. Two days back, no window of the last working day can
+        # reach the current time of day.
+        last_working_day = today - timedelta(days=2)
         async with get_session_factory()() as session:
             await session.execute(
                 text(
                     "UPDATE employment SET last_working_day = :d "
                     "WHERE employee_id = CAST(:e AS uuid)"
                 ),
-                {"d": yesterday, "e": eid},
+                {"d": last_working_day, "e": eid},
             )
             await session.commit()
         async with session_scope(company_id=str(company_id)) as session:

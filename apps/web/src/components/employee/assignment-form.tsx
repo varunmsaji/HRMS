@@ -10,6 +10,7 @@ import type { EmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { ASSIGNMENT_CHANGE_TYPE_VALUES, WORK_LOCATION_TYPE_VALUES } from "@/lib/employee/types";
 import {
   CHANGE_TYPE_LABELS,
+  NO_SHIFT,
   WORK_LOCATION_LABELS,
   type AssignmentFormErrors,
   type AssignmentFormValues,
@@ -197,6 +198,7 @@ export function AssignmentForm({
           <FormField id={id("shiftId")} label="Shift" error={errors.shiftId}>
             <NativeSelect value={values.shiftId} onChange={(e) => update("shiftId", e.target.value)}>
               <option value="">No change</option>
+              <option value={NO_SHIFT}>No shift</option>
               {shifts.map((shift) => (
                 <option key={shift.id} value={shift.id}>
                   {shift.name}

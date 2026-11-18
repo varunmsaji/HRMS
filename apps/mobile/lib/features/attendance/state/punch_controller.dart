@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
+import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../data/location_provider.dart';
 import '../domain/face_liveness_capture.dart';
@@ -92,6 +93,16 @@ class PunchController extends StateNotifier<PunchState> {
 
   final Ref _ref;
 
+  /// SH-17: times in punch refusals are shown in the company's zone, not the device's. Falls back
+  /// to IST where the auth state is not available (a test without the API client).
+  String get _zone {
+    try {
+      return _ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+    } on Object {
+      return 'Asia/Kolkata';
+    }
+  }
+
   /// Key of a plain punch whose outcome is unknown (no HTTP response). A retry of the *same*
   /// direction reuses it so a punch that did reach the server is not recorded twice.
   ({String direction, String key})? _plainPending;
@@ -157,12 +168,12 @@ class PunchController extends StateNotifier<PunchState> {
         // A refused location is a real answer: nothing was recorded, so retrying is safe.
         return ui.showGeofenceRejected(error.code, error.message);
       }
-      final warning = PunchWarning.fromError(error);
+      final warning = PunchWarning.fromError(error, zone: _zone);
       if (warning != null) {
         if (ui.active) await ui.showPunchWarning(warning);
         return false;
       }
-      final shiftWindow = OutsideShiftWindow.fromError(error);
+      final shiftWindow = OutsideShiftWindow.fromError(error, zone: _zone);
       if (shiftWindow != null) {
         if (ui.active) await ui.showOutsideShiftWindow(shiftWindow);
         return false;
@@ -269,11 +280,11 @@ class PunchController extends StateNotifier<PunchState> {
           // the whole punch starts again once this attempt has been cleaned up.
           _facePending = null;
           if (ui.active) retryAfter = await ui.showGeofenceRejected(error.code, error.message);
-        } else if (PunchWarning.fromError(error) case final warning?) {
+        } else if (PunchWarning.fromError(error, zone: _zone) case final warning?) {
           // Refused as a repeat of the previous punch: nothing was recorded, and retrying cannot help.
           _facePending = null;
           if (ui.active) await ui.showPunchWarning(warning);
-        } else if (OutsideShiftWindow.fromError(error) case final shiftWindow?) {
+        } else if (OutsideShiftWindow.fromError(error, zone: _zone) case final shiftWindow?) {
           // Refused as too early for the shift: nothing was recorded, and retrying cannot help.
           _facePending = null;
           if (ui.active) await ui.showOutsideShiftWindow(shiftWindow);

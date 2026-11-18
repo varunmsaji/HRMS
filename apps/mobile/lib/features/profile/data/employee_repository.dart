@@ -188,4 +188,95 @@ class EmployeeRepository {
         body: body,
         parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
       );
+
+  /// `GET /employees/{id}/documents` — the files on the employee's record.
+  Future<List<EmployeeDocumentRow>> listDocuments(String employeeId) => _client.get(
+        '/employees/$employeeId/documents',
+        parse: (data) => [for (final d in data as List) EmployeeDocumentRow.fromJson(d as Map<String, dynamic>)],
+      );
+
+  Future<List<Map<String, dynamic>>> _rows(String path) => _client.get(
+        path,
+        parse: (data) => [for (final d in data as List) d as Map<String, dynamic>],
+      );
+
+  /// The employee's current employment and assignment with every id resolved to a name; mirrors
+  /// web's `useEmployeeWorkSummary`. The two employee calls must succeed (they carry the
+  /// permission check); the lookup lists fall back to empty, as on web.
+  Future<EmployeeWorkSummary> workSummary(String employeeId) async {
+    Future<List<Map<String, dynamic>>> lookup(String path) => _rows(path).catchError((Object _) => <Map<String, dynamic>>[]);
+    final results = await Future.wait([
+      _rows('/employees/$employeeId/employments'),
+      _rows('/employees/$employeeId/assignments'),
+      lookup('/branches'),
+      lookup('/departments'),
+      lookup('/designations'),
+      lookup('/shifts'),
+      lookup('/legal-entities'),
+    ]);
+    final employment = results[0].where((e) => e['status'] == 'ACTIVE').firstOrNull;
+    final assignment = results[1].where((a) => a['effective_to'] == null).firstOrNull;
+
+    String? nameOf(List<Map<String, dynamic>> list, Object? id, [String key = 'name']) {
+      if (id == null) return null;
+      final hit = list.where((e) => e['id'] == id).firstOrNull;
+      if (hit == null) return 'Unknown';
+      return (hit[key] ?? hit['name'] ?? hit['title'] ?? 'Unknown') as String;
+    }
+
+    ({String id, String name})? manager;
+    final managerId = assignment?['reporting_manager_id'];
+    if (managerId is String) {
+      try {
+        final record = await getEmployee(managerId);
+        manager = (id: record.id, name: record.fullName.isEmpty ? record.employeeCode : record.fullName);
+      } catch (_) {
+        manager = null;
+      }
+    }
+    return EmployeeWorkSummary(
+      employment: employment,
+      assignment: assignment,
+      company: employment == null ? null : nameOf(results[6], employment['legal_entity_id']),
+      department: nameOf(results[3], assignment?['department_id']),
+      designation: assignment == null ? null : (results[4].where((e) => e['id'] == assignment['designation_id']).firstOrNull?['title'] as String?),
+      branch: nameOf(results[2], assignment?['branch_id']),
+      shift: nameOf(results[5], assignment?['shift_id']),
+      manager: manager,
+    );
+  }
+}
+
+/// Web's `EmployeeWorkSummary`: current employment and assignment with names resolved.
+class EmployeeWorkSummary {
+  const EmployeeWorkSummary({this.employment, this.assignment, this.company, this.department, this.designation, this.branch, this.shift, this.manager});
+  final Map<String, dynamic>? employment;
+  final Map<String, dynamic>? assignment;
+  final String? company;
+  final String? department;
+  final String? designation;
+  final String? branch;
+  final String? shift;
+  final ({String id, String name})? manager;
+
+  String? get workLocationType => assignment?['work_location_type'] as String?;
+  String? get joiningDate => employment?['joining_date'] as String?;
+  String? get probationEndDate => employment?['probation_end_date'] as String?;
+  String? get payBasis => employment?['pay_basis'] as String?;
+}
+
+/// `EmployeeDocumentRead` — only what the Overview's documents card shows.
+class EmployeeDocumentRow {
+  const EmployeeDocumentRow({required this.id, required this.documentType, required this.originalFilename, required this.status});
+  final String id;
+  final String documentType;
+  final String originalFilename;
+  final String status;
+
+  factory EmployeeDocumentRow.fromJson(Map<String, dynamic> json) => EmployeeDocumentRow(
+        id: json['id'] as String,
+        documentType: (json['document_type'] as String?) ?? '',
+        originalFilename: (json['original_filename'] as String?) ?? '',
+        status: (json['status'] as String?) ?? 'PENDING',
+      );
 }

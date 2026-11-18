@@ -1,5 +1,3 @@
-import { useMemo } from "react";
-
 import { ShiftBreaksEditor } from "@/components/shift/shift-breaks-editor";
 import { ShiftDutyBlocksEditor } from "@/components/shift/shift-duty-blocks-editor";
 import { FormField } from "@/components/common/form-field";
@@ -10,14 +8,12 @@ import type {
   ShiftVersionFormErrors,
   ShiftVersionFormValues,
 } from "@/lib/shift/validate-shift-version";
-import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
-import { DEFAULT_TIMEZONE, listTimezones } from "@/lib/timezones";
+import { DEFAULT_TIMEZONE, useAllowedTimezones } from "@/lib/timezones";
 
 interface ShiftVersionFormProps {
   values: ShiftVersionFormValues;
   errors: ShiftVersionFormErrors;
   onChange: (values: ShiftVersionFormValues) => void;
-  weeklyOffPatterns: WeeklyOffPattern[];
 }
 
 const SHIFT_TYPE_LABELS: Record<string, string> = {
@@ -36,7 +32,6 @@ export function ShiftVersionForm({
   values,
   errors,
   onChange,
-  weeklyOffPatterns,
 }: ShiftVersionFormProps) {
   function update<K extends keyof ShiftVersionFormValues>(
     key: K,
@@ -48,7 +43,7 @@ export function ShiftVersionForm({
   // all (confirmed reachable by an ordinary HR admin typing "IST" -> unhandled 500 at every
   // subsequent calculation). The schema now rejects an invalid value; this select is the
   // corresponding usability fix, sourced from the runtime IANA list rather than free text.
-  const timezones = useMemo(() => listTimezones(), []);
+  const timezones = useAllowedTimezones(values.timezone);
 
   // An existing SPLIT version stays visible but read-only: it is never offered as a choice, and
   // never silently converted to another type.
@@ -316,71 +311,8 @@ export function ShiftVersionForm({
               Operates on weekly-off days
             </label>
           </div>
-          <section>
-            <h3 className="text-sm font-medium text-foreground">Weekly off</h3>
-            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField
-                id="weekly-off-pattern"
-                label="Shift-specific weekly-off pattern"
-              >
-                <NativeSelect
-                  value={values.weeklyOffPatternId}
-                  onChange={(e) => update("weeklyOffPatternId", e.target.value)}
-                >
-                  <option value="">Use the employee's assigned calendar</option>
-                  {weeklyOffPatterns.map((pattern) => (
-                    <option key={pattern.id} value={pattern.id}>
-                      {pattern.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </FormField>
-            </div>
-          </section>
-
-          {values.shiftType ? (
-            <section>
-              <h3 className="text-sm font-medium text-foreground">
-                Scheduled duration
-              </h3>
-              <p className="mt-1 text-xs text-foreground-muted">
-                Informational only — not enforced.
-              </p>
-              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <FormField id="scheduled-minutes" label="Scheduled minutes">
-                  <Input
-                    type="number"
-                    value={values.scheduledMinutes}
-                    onChange={(e) => update("scheduledMinutes", e.target.value)}
-                  />
-                </FormField>
-                <FormField
-                  id="min-scheduled-minutes"
-                  label="Min scheduled minutes"
-                >
-                  <Input
-                    type="number"
-                    value={values.minScheduledMinutes}
-                    onChange={(e) =>
-                      update("minScheduledMinutes", e.target.value)
-                    }
-                  />
-                </FormField>
-                <FormField
-                  id="max-scheduled-minutes"
-                  label="Max scheduled minutes"
-                >
-                  <Input
-                    type="number"
-                    value={values.maxScheduledMinutes}
-                    onChange={(e) =>
-                      update("maxScheduledMinutes", e.target.value)
-                    }
-                  />
-                </FormField>
-              </div>
-            </section>
-          ) : null}
+          {/* SH-14: the weekly-off pattern and scheduled minutes are not read by the engine
+              (weekly offs come from the work calendar), so the form no longer offers them. */}
         </div>
       </details>
     </fieldset>

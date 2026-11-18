@@ -33,24 +33,21 @@ export function sourceLabel(source: string | null | undefined): string | null {
   return SOURCE_LABELS[source] ?? source.charAt(0) + source.slice(1).toLowerCase();
 }
 
-const SIX_HOURS = 6 * 3_600_000;
+/** The ids of the punches the backend assigned to this day (`computation_snapshot.inputs.punch_ids`),
+ * or `null` when the row carries none (never calculated). */
+export function ownedPunchIds(day: AttendanceDay): Set<string> | null {
+  const inputs = (day.computation_snapshot as { inputs?: { punch_ids?: unknown } } | null)?.inputs;
+  const ids = inputs?.punch_ids;
+  return Array.isArray(ids) ? new Set(ids.filter((id): id is string => typeof id === "string")) : null;
+}
 
-/** Punches that belong to this day. The list endpoint filters by calendar date, so for an overnight
- * shift it can include neighbouring punches; keep those within six hours of the day's own window. */
+/** Punches that belong to this day. The backend decides ownership (shift window, overnight shifts,
+ * the company's business date) and records it on the row, so the screen shows exactly that set
+ * instead of re-deriving it. A day that has never been calculated has no owned set; the fetched
+ * list is shown as is. */
 export function punchesForDay(punches: Punch[], day: AttendanceDay): Punch[] {
-  const start = day.scheduled_start ?? day.actual_first_in;
-  const end = day.scheduled_end ?? day.actual_last_out;
-  // No window (an off day nobody punched on): the fetch spans the next day too, for overnight
-  // shifts, so keep only this day's punches by the endpoint's own UTC-date rule.
-  if (!start && !end) {
-    return punches.filter((p) => new Date(p.punch_time).toISOString().startsWith(day.attendance_date));
-  }
-  const lo = start ? new Date(start).getTime() - SIX_HOURS : Number.NEGATIVE_INFINITY;
-  const hi = end ? new Date(end).getTime() + SIX_HOURS : Number.POSITIVE_INFINITY;
-  return punches.filter((p) => {
-    const t = new Date(p.punch_time).getTime();
-    return t >= lo && t <= hi;
-  });
+  const owned = ownedPunchIds(day);
+  return owned === null ? punches : punches.filter((p) => owned.has(p.id));
 }
 
 /** One chronological list of the day's punches and break events; a day flagged with a missing

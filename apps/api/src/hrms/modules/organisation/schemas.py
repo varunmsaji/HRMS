@@ -5,16 +5,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
 from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import Company
 from hrms.shared.limits import MAX_INT32, MAX_MONEY_MINOR
-from hrms.shared.timezone import validate_allowed_company_timezone, validate_iana_timezone
+from hrms.shared.timezone import validate_allowed_company_timezone
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -690,6 +698,14 @@ def _validate_pincode(value: str | None) -> str | None:
     return normalized
 
 
+def validate_schedule_timezone(value: str) -> str:
+    """SH-06 - a branch or shift timezone decides where every punch of the day falls, so it is
+    held to the same allow-list as the company's (`DEC-TZ-02`)."""
+    return validate_allowed_company_timezone(
+        value, allowed=get_settings().allowed_company_timezones
+    )
+
+
 class BranchCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -718,12 +734,12 @@ class BranchCreate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str | None) -> str | None:
-        # Branch stays a fully general IANA surface, not India-gated — WD-06 (Shift > Branch >
-        # Company) means a correctly-gated company timezone already makes every unset branch
-        # resolve to Asia/Kolkata; gating this too would only cost future non-India tenants.
+        # SH-06 - a branch zone outranks the company's (WD-06: Shift > Branch > Company), so an
+        # ungated branch put every shift without its own zone 5½ hours or more off. Same allow-list
+        # as the company (`settings.allowed_company_timezones`).
         if value is None:
             return None
-        return validate_iana_timezone(value)
+        return validate_schedule_timezone(value)
 
 
 class BranchUpdate(BaseModel):
@@ -755,12 +771,12 @@ class BranchUpdate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str | None) -> str | None:
-        # Branch stays a fully general IANA surface, not India-gated — WD-06 (Shift > Branch >
-        # Company) means a correctly-gated company timezone already makes every unset branch
-        # resolve to Asia/Kolkata; gating this too would only cost future non-India tenants.
+        # SH-06 - a branch zone outranks the company's (WD-06: Shift > Branch > Company), so an
+        # ungated branch put every shift without its own zone 5½ hours or more off. Same allow-list
+        # as the company (`settings.allowed_company_timezones`).
         if value is None:
             return None
-        return validate_iana_timezone(value)
+        return validate_schedule_timezone(value)
 
 
 class BranchRead(BaseModel):
@@ -1016,6 +1032,11 @@ def build_grade_update_values(patch: GradeUpdate) -> dict[str, Any]:
 
 _TIME_PATTERN = r"^\d{2}:\d{2}$"
 
+# SC-02 - a shift or break name is trimmed before its length is checked, so `"  Morning "` is stored
+# as `"Morning"` and a blank name is refused. The uniqueness checks already compare trimmed values;
+# before this, only the web form trimmed, so an API or mobile caller could store the padded text.
+ShiftName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
 
 class ShiftCreate(BaseModel):
     """W2 — trimmed to identity-only (name/code). The nine schedule/evaluation fields the
@@ -1024,7 +1045,7 @@ class ShiftCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
 
 
 class ShiftUpdate(BaseModel):
@@ -1032,7 +1053,7 @@ class ShiftUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = Field(default=None, min_length=1, max_length=100)
+    name: ShiftName | None = None
     is_active: bool | None = None
 
 
@@ -1202,7 +1223,7 @@ class ShiftBreakCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
     break_kind: str
     start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
     end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
@@ -1236,6 +1257,8 @@ class ShiftBreakCreate(BaseModel):
     def validate_mode(cls, value: str | None) -> str | None:
         if value is not None and value not in SHIFT_BREAK_MODES:
             raise ValueError(f"mode must be one of {SHIFT_BREAK_MODES}")
+        if value is not None and not get_settings().shift_break_modes_enabled:
+            raise ValueError("Break modes are not available yet; leave mode empty")
         return value
 
     @field_validator("break_type")
@@ -1339,6 +1362,20 @@ def shift_duty_block_to_read(row: "ShiftDutyBlock") -> ShiftDutyBlockRead:
     )
 
 
+def _reject_dormant_shift_version_fields(model: Any) -> None:
+    """SH-14 (plan section 5) - fields the engine never reads are refused instead of stored:
+    weekly offs come from the work calendar and WEEKLY_OFF policy assignments, and scheduled
+    minutes from the shift's own times. Existing stored values are left as they are."""
+    for field in (
+        "weekly_off_pattern_id",
+        "scheduled_minutes",
+        "min_scheduled_minutes",
+        "max_scheduled_minutes",
+    ):
+        if getattr(model, field) is not None:
+            raise ValueError(f"{field}: this setting is not applied; leave it empty")
+
+
 class ShiftVersionCreate(BaseModel):
     """Creates a new open DRAFT `ShiftVersion` for a shift (409
     `SHIFT_VERSION_DRAFT_ALREADY_EXISTS` if one is already open). All fields are optional —
@@ -1360,7 +1397,8 @@ class ShiftVersionCreate(BaseModel):
     window_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
     core_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
     core_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
-    required_minutes: int | None = Field(default=None, ge=0)
+    # SH-21: a working day of 1 minute to 24 hours.
+    required_minutes: int | None = Field(default=None, ge=1, le=1440)
     scheduled_minutes: int | None = Field(default=None, ge=0)
     min_scheduled_minutes: int | None = Field(default=None, ge=0)
     max_scheduled_minutes: int | None = Field(default=None, ge=0)
@@ -1388,9 +1426,16 @@ class ShiftVersionCreate(BaseModel):
         # unhandled `ZoneInfoNotFoundError` -> HTTP 500. `NULL` remains valid: it is WD-06's
         # "inherit from branch/company" signal, not an invalid value, so it is excluded here
         # before the IANA check ever runs.
+        # SH-06 - and only a zone on the company allow-list: a shift saved as `UTC` placed every
+        # day of that shift 5½ hours off on an India-only product.
         if value is None:
             return None
-        return validate_iana_timezone(value)
+        return validate_schedule_timezone(value)
+
+    @model_validator(mode="after")
+    def _dormant_fields(self) -> "ShiftVersionCreate":
+        _reject_dormant_shift_version_fields(self)
+        return self
 
 
 class ShiftVersionUpdate(BaseModel):
@@ -1410,7 +1455,8 @@ class ShiftVersionUpdate(BaseModel):
     window_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
     core_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
     core_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
-    required_minutes: int | None = Field(default=None, ge=0)
+    # SH-21: a working day of 1 minute to 24 hours.
+    required_minutes: int | None = Field(default=None, ge=1, le=1440)
     scheduled_minutes: int | None = Field(default=None, ge=0)
     min_scheduled_minutes: int | None = Field(default=None, ge=0)
     max_scheduled_minutes: int | None = Field(default=None, ge=0)
@@ -1434,7 +1480,12 @@ class ShiftVersionUpdate(BaseModel):
     def validate_timezone(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return validate_iana_timezone(value)
+        return validate_schedule_timezone(value)
+
+    @model_validator(mode="after")
+    def _dormant_fields(self) -> "ShiftVersionUpdate":
+        _reject_dormant_shift_version_fields(self)
+        return self
 
 
 class ShiftSetup(BaseModel):
@@ -1442,7 +1493,7 @@ class ShiftSetup(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=100)
+    name: ShiftName
     rules: ShiftVersionCreate
     publish: bool = True
     publish_reason: str | None = None

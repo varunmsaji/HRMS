@@ -11,6 +11,7 @@ import '../domain/employee_attendance_summary.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
 import 'face_enrollment_admin_card.dart';
+import 'mark_attendance_screen.dart';
 import 'team_attendance_screen.dart' show openPunchOnBehalf;
 
 /// The Attendance tab of an employee record — mirrors
@@ -120,6 +121,13 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
                   if (await openPunchOnBehalf(context, ref, employeeId: widget.employeeId) && mounted) _load();
                 },
                 child: const Text('Record punch'),
+              ),
+            if (permissions.contains(attendancePunchOnBehalf) && widget.employeeId != ref.watch(authControllerProvider).user?.employeeId)
+              FilledButton(
+                onPressed: () async {
+                  if (await openMarkAttendance(context, employees: [(value: widget.employeeId, label: widget.employeeLabel)], lockEmployees: true) && mounted) _load();
+                },
+                child: const Text('Mark attendance'),
               ),
           ]),
           const SizedBox(height: 12),

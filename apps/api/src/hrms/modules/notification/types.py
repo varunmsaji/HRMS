@@ -77,6 +77,10 @@ PAYSLIP_AVAILABLE: Final = NotificationType("PAYSLIP_AVAILABLE", "PAYROLL")
 
 ONBOARDING_SUBMITTED: Final = NotificationType("ONBOARDING_SUBMITTED", "ONBOARDING", "HIGH")
 
+# AC-03 / P-E: a calendar change adjusted (or could not adjust) the balance of approved leave.
+LEAVE_BALANCE_RECONCILED: Final = NotificationType("LEAVE_BALANCE_RECONCILED", "LEAVE")
+LEAVE_BALANCE_SHORTFALL: Final = NotificationType("LEAVE_BALANCE_SHORTFALL", "LEAVE", "HIGH")
+
 #: Registered types. A new type is one constant above plus one entry here.
 REGISTRY: Final[dict[str, NotificationType]] = {
     t.code: t
@@ -85,6 +89,8 @@ REGISTRY: Final[dict[str, NotificationType]] = {
         FACE_PROFILE_DECIDED,
         LEAVE_APPROVAL_REQUESTED,
         LEAVE_DECIDED,
+        LEAVE_BALANCE_RECONCILED,
+        LEAVE_BALANCE_SHORTFALL,
         REGULARIZATION_APPROVAL_REQUESTED,
         REGULARIZATION_DECIDED,
         OVERTIME_APPROVAL_REQUESTED,

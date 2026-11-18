@@ -1,19 +1,13 @@
-"""Phase 8 — the orphan-punch report (`TZ-08`/`DEC-TZ-16`, execution gate §16.4,
-`AttendanceDayService.list_orphaned_punches`).
+"""The orphan-punch report (`TZ-08`/`DEC-TZ-16`) on top of punch ownership (Invariant B,
+`ownership_service.py`, engine 13).
 
-Three things this proves that no other test file covers:
-
-1. A punch outside its shift's ±2h padded load window is reported; one inside is not — the
-   report actually reflects `calculation.py`'s own window math, not an independent guess at it.
-2. `SR-14` — a no-shift employee's window is the **full local calendar day, no pad**, not the
-   ±2h shape every shift-bearing employee gets. The same late-night punch time (23:45 local) is
-   reported for a shift-bearing employee (outside their `07:00-20:00` padded window) but NOT
-   reported for a no-shift employee (inside their `00:00-24:00` calendar-day window) — proving
-   the report applies the right shape to each, not one shape to everyone.
-3. A punch on a date no `AttendanceDay` was ever computed for is reported — inserted directly at
-   the DB layer (bypassing `PunchService`) specifically so Phase 8's own best-effort immediate
-   calculate (`service.py::PunchService._try_immediate_calculate`) does not create the very row
-   this case needs to be *absent*.
+1. A checkout long after the shift (SH-01) is owned by the shift, not reported; a lone check-in
+   that no shift can take (outside every window) is reported.
+2. `SR-14` — a no-shift employee's late-night punch belongs to their calendar day.
+3. Ownership does not depend on whether the day was calculated: a punch on a never-calculated
+   date that a shift owns is not reported (the missing calculation is
+   `EMPLOYEES_WITHOUT_ATTENDANCE`'s job at period close).
+4. Dismissal: only an orphan can be dismissed, with a reason; it then leaves the report.
 """
 
 from datetime import UTC, date, datetime
@@ -120,54 +114,56 @@ async def _calculate(
     return dict(response.json()["data"])
 
 
-async def test_shift_employee_late_night_punch_is_orphaned(client: AsyncClient) -> None:
+async def _report(company_id: UUID, day: date) -> list[Any]:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        return await AttendanceDayService(session).list_orphaned_punches(
+            company_id, date_from=day, date_to=day
+        )
+
+
+async def test_long_overtime_checkout_is_owned_and_stray_check_in_is_orphaned(
+    client: AsyncClient,
+) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = wired["employee"]["id"]
+        # 09:00-18:00 UTC shift. 23:45 is 5h45 after the end: owned (12h limit), not orphaned.
         await _punch(client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN")
-        await _punch(client, headers, employee_id=employee_id, hour=18, minute=0, direction="OUT")
-        await _calculate(client, headers, employee_id=employee_id, day="2026-08-10")
-
-        # 09:00-18:00 FIXED shift -> padded load window is 07:00-20:00. 23:45 is well outside it.
+        await _punch(client, headers, employee_id=employee_id, hour=23, minute=45, direction="OUT")
+        # A lone check-in at 02:00 on the 12th: more than 4h before the 12th's shift, and after
+        # the 11th's shift ended, so no day can take it.
         await _punch(
             client,
             headers,
             employee_id=employee_id,
-            hour=23,
-            minute=45,
+            hour=2,
+            minute=0,
             direction="IN",
-            reference="late arrival, outside the pad",
+            day="2026-08-12",
         )
+        day = await _calculate(client, headers, employee_id=employee_id, day="2026-08-10")
+        assert day["attendance_status"] == "PRESENT"
+        assert day["worked_minutes"] == 885
 
-        factory = get_session_factory()
-        async with factory() as session:
-            await set_rls_company_id(session, str(company_id))
-            report = await AttendanceDayService(session).list_orphaned_punches(
-                company_id, date_from=date(2026, 8, 10), date_to=date(2026, 8, 10)
-            )
-        orphaned_hours = {
-            datetime.fromisoformat(p.punch_time).hour
-            for p in report
-            if str(p.employee_id) == employee_id
-        }
-        assert 23 in orphaned_hours, "a punch outside the ±2h padded window must be reported"
-        assert 9 not in orphaned_hours, "the punch that anchored the shift must not be reported"
+        report = await _report(company_id, date(2026, 8, 10))
+        assert [p for p in report if str(p.employee_id) == employee_id] == []
+        report = await _report(company_id, date(2026, 8, 12))
+        hours = {datetime.fromisoformat(p.punch_time).hour for p in report}
+        assert hours == {2}
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
 async def test_no_shift_employee_late_night_punch_is_not_orphaned(client: AsyncClient) -> None:
-    """`SR-14` — the exact same local punch time (23:45) that is orphaned for a shift-bearing
-    employee above must NOT be orphaned for a no-shift employee: their window is the full local
-    calendar day, not a ±2h pad centered on a shift that doesn't exist."""
+    """`SR-14` — a no-shift employee's punch belongs to their local calendar day."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_employee_no_shift(client, headers)
         employee_id = wired["employee"]["id"]
-        await _calculate(client, headers, employee_id=employee_id, day="2026-08-10")
-
         await _punch(
             client,
             headers,
@@ -177,35 +173,19 @@ async def test_no_shift_employee_late_night_punch_is_not_orphaned(client: AsyncC
             direction="IN",
             reference="late arrival, no shift resolved",
         )
-
-        factory = get_session_factory()
-        async with factory() as session:
-            await set_rls_company_id(session, str(company_id))
-            report = await AttendanceDayService(session).list_orphaned_punches(
-                company_id, date_from=date(2026, 8, 10), date_to=date(2026, 8, 10)
-            )
-        orphaned_for_employee = [p for p in report if str(p.employee_id) == employee_id]
-        assert orphaned_for_employee == [], (
-            "SR-14: a no-shift employee's window is the unpadded local calendar day — this "
-            "punch falls inside it and must not be misreported as orphaned"
-        )
+        report = await _report(company_id, date(2026, 8, 10))
+        assert [p for p in report if str(p.employee_id) == employee_id] == []
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_punch_with_no_attendance_day_at_all_is_orphaned(client: AsyncClient) -> None:
-    """A date `calculate()` never ran for has no window to cover anything — every punch on it is
-    orphaned by definition (the `F-14` gap this report exists to surface, before a row exists).
-
-    Inserted directly via the ORM, bypassing `PunchService` entirely — going through the normal
-    on-behalf punch endpoint would trigger Phase 8's own best-effort immediate calculate hook,
-    which would create exactly the `AttendanceDay` row this case needs to stay absent."""
+async def test_owned_punch_on_a_never_calculated_date_is_not_orphaned(client: AsyncClient) -> None:
+    """Inserted directly so no calculation runs: ownership alone decides the report."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = UUID(wired["employee"]["id"])
-
         factory = get_session_factory()
         async with factory() as session:
             await set_rls_company_id(session, str(company_id))
@@ -221,12 +201,59 @@ async def test_punch_with_no_attendance_day_at_all_is_orphaned(client: AsyncClie
                 )
             )
             await session.commit()
+        assert await _report(company_id, date(2026, 8, 20)) == []
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
 
-            report = await AttendanceDayService(session).list_orphaned_punches(
-                company_id, date_from=date(2026, 8, 20), date_to=date(2026, 8, 20)
-            )
-        assert len(report) == 1
-        assert report[0].employee_id == employee_id
+
+async def test_only_an_orphan_can_be_dismissed_and_then_leaves_the_report(
+    client: AsyncClient,
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        owned = await _punch(
+            client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN"
+        )
+        stray = await _punch(
+            client,
+            headers,
+            employee_id=employee_id,
+            hour=2,
+            minute=0,
+            direction="IN",
+            day="2026-08-12",
+        )
+        listed = await client.get(
+            "/v1/attendance/orphaned-punches",
+            headers=headers,
+            params={"date_from": "2026-08-10", "date_to": "2026-08-12"},
+        )
+        assert listed.status_code == 200, listed.text
+        assert [p["id"] for p in listed.json()["data"]] == [stray["id"]]
+
+        refused = await client.post(
+            f"/v1/attendance/orphaned-punches/{owned['id']}/dismiss",
+            headers=headers,
+            json={"reason": "not needed"},
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"]["code"] == "PUNCH_NOT_ORPHANED"
+
+        dismissed = await client.post(
+            f"/v1/attendance/orphaned-punches/{stray['id']}/dismiss",
+            headers=headers,
+            json={"reason": "tapped by mistake on the way home"},
+        )
+        assert dismissed.status_code == 200, dismissed.text
+        after = await client.get(
+            "/v1/attendance/orphaned-punches",
+            headers=headers,
+            params={"date_from": "2026-08-10", "date_to": "2026-08-12"},
+        )
+        assert after.json()["data"] == []
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

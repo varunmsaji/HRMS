@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/ui.dart';
 import '../data/attendance_repository.dart';
+import '../domain/mark_day.dart' show canMarkPresent;
 
 /// Defensive enum-mapping (the backend's `attendance_status` set isn't frozen client-side) —
 /// mirrors the web app's `AttendanceStatusBadge`.
@@ -25,10 +26,14 @@ class AttendanceStatusBadge extends StatelessWidget {
 
 /// One attendance day in a list: date, status, and the times in the day's own zone.
 class AttendanceDayTile extends StatelessWidget {
-  const AttendanceDayTile({super.key, required this.day, required this.onTap, this.employeeLabel});
+  const AttendanceDayTile({super.key, required this.day, required this.onTap, this.employeeLabel, this.onMarkPresent});
   final AttendanceDay day;
   final VoidCallback onTap;
   final String? employeeLabel;
+
+  /// When set, an absent day with no punches offers "Mark present" (web's Who's in row action).
+  /// The caller gates it on `ATTENDANCE.PUNCH_ON_BEHALF`.
+  final VoidCallback? onMarkPresent;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +49,8 @@ class AttendanceDayTile extends StatelessWidget {
       child: AppCard(
         onTap: onTap,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
           Container(
             width: 46,
             padding: const EdgeInsets.symmetric(vertical: 6),
@@ -65,6 +71,16 @@ class AttendanceDayTile extends StatelessWidget {
             ]),
           ),
           AttendanceStatusBadge(status: day.attendanceStatus),
+        ]),
+        if (onMarkPresent != null && canMarkPresent(status: day.attendanceStatus, firstIn: day.actualFirstIn, lastOut: day.actualLastOut, hasRecord: true))
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+              onPressed: onMarkPresent,
+              child: const Text('Mark present'),
+            ),
+          ),
         ]),
       ),
     );

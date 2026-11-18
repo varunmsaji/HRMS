@@ -27,11 +27,11 @@ function activeLabels(): string[] {
 
 describe("findActiveHref", () => {
   it("prefers the most specific route over its parent", () => {
-    expect(findActiveHref("/app/rosters/grid", ["/app/rosters", "/app/rosters/grid"])).toBe(
-      "/app/rosters/grid",
+    expect(findActiveHref("/app/rosters/schedule/week", ["/app/rosters", "/app/rosters/schedule/week"])).toBe(
+      "/app/rosters/schedule/week",
     );
-    expect(findActiveHref("/app/rosters", ["/app/rosters", "/app/rosters/grid"])).toBe("/app/rosters");
-    expect(findActiveHref("/app/rosters/123", ["/app/rosters", "/app/rosters/grid"])).toBe("/app/rosters");
+    expect(findActiveHref("/app/rosters", ["/app/rosters", "/app/rosters/schedule/week"])).toBe("/app/rosters");
+    expect(findActiveHref("/app/rosters/123", ["/app/rosters", "/app/rosters/schedule/week"])).toBe("/app/rosters");
   });
 
   it("matches nothing for an unrelated path", () => {
@@ -48,14 +48,19 @@ describe("SidebarNav active state", () => {
 
   it.each([
     ["/app/rosters", "Shift Rosters"],
-    ["/app/rosters/grid", "Shift Rosters"],
-    ["/app/rosters/calendar", "Shift Rosters"],
+    ["/app/rosters/schedule/week", "Shift Rosters"],
+    ["/app/rosters/coverage", "Shift Rosters"],
     ["/app/me/calendar", "My Calendar"],
     ["/app/payroll/pay-runs/abc", "Payroll"],
   ])("highlights exactly one item on %s", (path, label) => {
     mockPathname = path;
     render(<SidebarNav />);
     expect(activeLabels()).toEqual([label]);
+  });
+
+  it("sends Shift Rosters to its entry address, which opens Coverage", () => {
+    render(<SidebarNav />);
+    expect(screen.getByRole("link", { name: /shift rosters/i })).toHaveAttribute("href", "/app/rosters");
   });
 
   it("highlights only Settings on a settings screen, even under a primary route's prefix", () => {
@@ -70,16 +75,16 @@ describe("SidebarNav for an employee", () => {
     mockEmployeeMode = true;
   });
 
-  it("offers Shift Swaps after Overtime, as mobile does, opening the schedule that holds the swaps", () => {
+  it("offers Shift Swaps after Overtime, as mobile does, opening the coverage page that holds the swaps", () => {
     mockPathname = "/app/dashboard";
     render(<SidebarNav />);
     const labels = screen.getAllByRole("link").map((link) => link.textContent);
     expect(labels.indexOf("Shift Swaps")).toBe(labels.indexOf("Overtime") + 1);
-    expect(screen.getByRole("link", { name: "Shift Swaps" })).toHaveAttribute("href", "/app/rosters/schedule");
+    expect(screen.getByRole("link", { name: "Shift Swaps" })).toHaveAttribute("href", "/app/rosters/coverage");
   });
 
-  it("highlights Shift Swaps on the schedule", () => {
-    mockPathname = "/app/rosters/schedule";
+  it("highlights Shift Swaps on the coverage page", () => {
+    mockPathname = "/app/rosters/coverage";
     render(<SidebarNav />);
     expect(activeLabels()).toEqual(["Shift Swaps"]);
   });

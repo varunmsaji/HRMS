@@ -4,6 +4,9 @@ import {
   GEOFENCE_ACCURACY_MIN_M,
   GEOFENCE_AGE_MAX_S,
   GEOFENCE_AGE_MIN_S,
+  MARK_CREDIT_CEILING_DEFAULT,
+  MARK_CREDIT_CEILING_MAX,
+  MARK_CREDIT_CEILING_MIN,
 } from "@/lib/attendance-policy/types";
 import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
 
@@ -77,7 +80,10 @@ export interface AttendancePolicyVersionFormValues {
   effectiveFrom: string;
   graceInMinutes: string;
   graceOutMinutes: string;
+  markCreditCeilingMinutes: string;
   earlyInAllowanceMinutes: string;
+  maxEarlyPunchMinutes: string;
+  maxLatePunchMinutes: string;
   punchRounding: string;
   roundingMinutes: string;
   missingPunchBehaviour: string;
@@ -114,7 +120,10 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   effectiveFrom: "",
   graceInMinutes: "0",
   graceOutMinutes: "0",
+  markCreditCeilingMinutes: String(MARK_CREDIT_CEILING_DEFAULT),
   earlyInAllowanceMinutes: "",
+  maxEarlyPunchMinutes: "240",
+  maxLatePunchMinutes: "720",
   punchRounding: "NONE",
   roundingMinutes: "",
   missingPunchBehaviour: "INCOMPLETE",
@@ -150,6 +159,9 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
 export interface AttendancePolicyVersionFormErrors {
   effectiveFrom?: string;
   earlyInAllowanceMinutes?: string;
+  markCreditCeilingMinutes?: string;
+  maxEarlyPunchMinutes?: string;
+  maxLatePunchMinutes?: string;
   geofenceMaxAccuracyM?: string;
   geofenceMaxAgeSeconds?: string;
   hourBands?: string;
@@ -182,8 +194,13 @@ export function attendancePolicyVersionToFormValues(
     effectiveFrom: version.effective_from ?? "",
     graceInMinutes: String(version.grace_in_minutes),
     graceOutMinutes: String(version.grace_out_minutes),
+    markCreditCeilingMinutes: String(
+      version.mark_credit_ceiling_minutes ?? MARK_CREDIT_CEILING_DEFAULT,
+    ),
     earlyInAllowanceMinutes:
       version.early_in_allowance_minutes == null ? "" : String(version.early_in_allowance_minutes),
+    maxEarlyPunchMinutes: String(version.max_early_punch_minutes ?? 240),
+    maxLatePunchMinutes: String(version.max_late_punch_minutes ?? 720),
     punchRounding: version.punch_rounding,
     roundingMinutes: version.rounding_minutes === null ? "" : String(version.rounding_minutes),
     missingPunchBehaviour: version.missing_punch_behaviour,
@@ -259,19 +276,21 @@ export function buildAttendancePolicyVersionPayload(
     effective_from: values.effectiveFrom || null,
     grace_in_minutes: intOrNull(values.graceInMinutes) ?? 0,
     grace_out_minutes: intOrNull(values.graceOutMinutes) ?? 0,
+    mark_credit_ceiling_minutes:
+      intOrNull(values.markCreditCeilingMinutes) ?? MARK_CREDIT_CEILING_DEFAULT,
     early_in_allowance_minutes: intOrNull(values.earlyInAllowanceMinutes),
-    punch_rounding: values.punchRounding,
-    rounding_minutes: intOrNull(values.roundingMinutes),
+    max_early_punch_minutes: intOrNull(values.maxEarlyPunchMinutes) ?? 240,
+    max_late_punch_minutes: intOrNull(values.maxLatePunchMinutes) ?? 720,
+    // SH-14: punch rounding, the half-day split and `early_out_uses_core_end` are not applied by
+    // the engine and the API refuses non-default values, so they are never sent (an existing
+    // version keeps whatever it stored).
     missing_punch_behaviour: values.missingPunchBehaviour,
     auto_close_after_minutes: intOrNull(values.autoCloseAfterMinutes),
     auto_close_uses_shift_end: values.autoCloseUsesShiftEnd,
     missing_shift_behaviour: values.missingShiftBehaviour,
-    half_day_split: values.halfDaySplit,
-    half_day_boundary_minutes: intOrNull(values.halfDayBoundaryMinutes),
     multi_punch_mode: values.multiPunchMode,
     duplicate_punch_window_seconds: intOrNull(values.duplicatePunchWindowSeconds) ?? 60,
     core_hours_breach_behaviour: values.coreHoursBreachBehaviour,
-    early_out_uses_core_end: values.earlyOutUsesCoreEnd,
     split_shift_block_mandatory: values.splitShiftBlockMandatory,
     split_shift_missed_block_behaviour: values.splitShiftMissedBlockBehaviour,
     split_shift_allow_hours_compensation: values.splitShiftAllowHoursCompensation,
@@ -310,9 +329,20 @@ export function validateAttendancePolicyVersionForm(
     });
   }
 
+  const ceiling = intOrNull(values.markCreditCeilingMinutes);
+  if (ceiling === null || ceiling < MARK_CREDIT_CEILING_MIN || ceiling > MARK_CREDIT_CEILING_MAX) {
+    errors.markCreditCeilingMinutes = `Enter ${MARK_CREDIT_CEILING_MIN}-${MARK_CREDIT_CEILING_MAX} minutes.`;
+  }
   const earlyIn = intOrNull(values.earlyInAllowanceMinutes);
   if (earlyIn !== null && earlyIn < 0) {
     errors.earlyInAllowanceMinutes = "Enter 0 or more minutes, or leave blank for no limit.";
+  }
+  // P-13 — how far before a shift's start and after its end a punch still belongs to that day.
+  for (const key of ["maxEarlyPunchMinutes", "maxLatePunchMinutes"] as const) {
+    const minutes = intOrNull(values[key]);
+    if (minutes === null || minutes < 0 || minutes > 1440) {
+      errors[key] = "Enter 0-1440 minutes.";
+    }
   }
 
   const accuracy = intOrNull(values.geofenceMaxAccuracyM);
@@ -348,7 +378,10 @@ export function mapAttendancePolicyVersionApiErrors(
   for (const detail of details) {
     if (detail.field === "hour_bands") errors.hourBands = detail.message;
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+    if (detail.field === "mark_credit_ceiling_minutes") errors.markCreditCeilingMinutes = detail.message;
     if (detail.field === "early_in_allowance_minutes") errors.earlyInAllowanceMinutes = detail.message;
+    if (detail.field === "max_early_punch_minutes") errors.maxEarlyPunchMinutes = detail.message;
+    if (detail.field === "max_late_punch_minutes") errors.maxLatePunchMinutes = detail.message;
     if (detail.field === "geofence_max_accuracy_m") errors.geofenceMaxAccuracyM = detail.message;
     if (detail.field === "geofence_max_age_seconds") errors.geofenceMaxAgeSeconds = detail.message;
   }

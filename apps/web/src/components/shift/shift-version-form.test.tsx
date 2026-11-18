@@ -11,7 +11,6 @@ function renderForm(shiftType: "" | "FIXED" | "FLEXIBLE" | "SPLIT") {
       values={{ ...EMPTY_SHIFT_VERSION_FORM_VALUES, shiftType }}
       errors={{}}
       onChange={onChange}
-      weeklyOffPatterns={[]}
     />,
   );
   return onChange;

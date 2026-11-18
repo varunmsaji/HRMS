@@ -43,6 +43,14 @@ os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
 # for the same employee. `test_punch_sequence_and_gap.py` switches them on explicitly.
 os.environ["ATTENDANCE_PUNCH_MIN_GAP_SECONDS"] = "0"
 os.environ["ATTENDANCE_PUNCH_ORDER_CHECK_ENABLED"] = "false"
+# SH-06: branch and shift timezones are held to the company allow-list (production default
+# `Asia/Kolkata` only, pinned in `test_settings.py`). Most attendance tests reason in UTC, and
+# `test_shift_window.py` keeps the engine's multi-zone date logic covered with Los Angeles, so the
+# test env also allows those two. The restriction itself is tested with New York and London.
+os.environ["ALLOWED_COMPANY_TIMEZONES"] = '["Asia/Kolkata", "UTC", "America/Los_Angeles"]'
+# SH-15: break modes are hidden in production (default off); the break-management tests exercise
+# the engine and API behind the setting, so the test env turns it on.
+os.environ.setdefault("SHIFT_BREAK_MODES_ENABLED", "true")
 os.environ["CELERY_BROKER_URL"] = urlunsplit(
     urlsplit(os.environ["REDIS_URL"])._replace(
         path="/" + os.environ.get("HRMS_TEST_CELERY_DB", "15")
@@ -174,8 +182,10 @@ def app_as_runtime_role(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-unt
 # private ports; see docs/testing/qa_harness/stack.sh). A plain run cannot satisfy that, so they
 # are skipped there instead of failing with an isolation error.
 _QA_SANDBOX_ONLY = (
+    "test_attendance_r2_migrations.py",
     "test_b13_migrations.py",
     "test_shift_tenant_fk_migrations.py",
+    "test_shift_name_unique_migration.py",
     "test_b13_confirm_terminate_concurrency.py",
     "test_b13_email_outbox.py",
     "test_b13_seat_limit_concurrency.py",

@@ -20,6 +20,43 @@ export interface Punch {
   created_at: string;
 }
 
+/** `POST /attendance/punches/day-entries[/preview]` — HR marks an IN and an OUT for up to
+ * `MANUAL_DAY_MAX_EMPLOYEES` employees in one step. */
+export const MANUAL_DAY_MAX_EMPLOYEES = 50;
+/** The server refuses a longer IN→OUT span. */
+export const MANUAL_DAY_MAX_SPAN_HOURS = 20;
+
+export interface ManualDayEntryInput {
+  employee_ids: string[];
+  punch_in_at: string;
+  punch_out_at: string;
+  reason: string;
+  idempotency_key?: string;
+}
+
+/** `READY` — preview only, would be recorded. `RECORDED` — both punches stored. `BLOCKED` —
+ * nothing stored for this employee; `code`/`message` say why. */
+export type ManualDayOutcome = "READY" | "RECORDED" | "BLOCKED";
+
+export interface ManualDayEntryResult {
+  employee_id: string;
+  outcome: ManualDayOutcome;
+  code: string | null;
+  message: string | null;
+  replayed: boolean;
+  existing_punches: Punch[];
+  punches: Punch[];
+}
+
+export interface ManualDayEntryResponse {
+  punch_in_at: string;
+  punch_out_at: string;
+  ready_count: number;
+  recorded_count: number;
+  blocked_count: number;
+  results: ManualDayEntryResult[];
+}
+
 export interface PunchCreateInput {
   employee_id?: string;
   punch_time?: string;

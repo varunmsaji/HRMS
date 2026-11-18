@@ -58,6 +58,7 @@ from hrms.modules.attendance.models import (
     ShiftRoster,
 )
 from hrms.shared.pagination import PageParams, fetch_page
+from hrms.shared.timezone import resolve_zoneinfo
 
 
 class AttendancePolicyRepository:
@@ -1084,6 +1085,10 @@ def _punch_not_superseded() -> ColumnElement[bool]:
 
 
 class PunchRepository:
+    async def get(self, session: AsyncSession, *, company_id: UUID, punch_id: UUID) -> Punch | None:
+        stmt = select(Punch).where(Punch.company_id == company_id, Punch.id == punch_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> Punch:
         row = Punch(**data)
         session.add(row)
@@ -1171,12 +1176,13 @@ class PunchRepository:
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
+        tz_name: str = "UTC",
     ) -> Select[Any] | None:
         """`visible_employee_ids=None` means COMPANY scope (no filter), mirroring
         `EmployeeRepository.list_employees`'s `visible_employee_ids` convention exactly.
-        `date_from`/`date_to` are UTC calendar-day bounds on `punch_time` — a coarse listing
-        filter, distinct from the timezone-aware `attendance_date` the calculation engine
-        computes."""
+        `date_from`/`date_to` are calendar-day bounds on `punch_time` in `tz_name` (SH-17: the
+        company's zone; before, UTC days, so an IST evening punch after 18:30 listed under the
+        next day) — a listing filter, distinct from the `attendance_date` the engine computes."""
         conditions = [Punch.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
@@ -1184,11 +1190,12 @@ class PunchRepository:
             conditions.append(Punch.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(Punch.employee_id == employee_id)
+        zone = resolve_zoneinfo(tz_name)
         if date_from is not None:
-            start = datetime.combine(date_from, datetime.min.time(), tzinfo=UTC)
+            start = datetime.combine(date_from, datetime.min.time(), tzinfo=zone)
             conditions.append(Punch.punch_time >= start)
         if date_to is not None:
-            end = datetime.combine(date_to, datetime.min.time(), tzinfo=UTC) + timedelta(days=1)
+            end = datetime.combine(date_to + timedelta(days=1), datetime.min.time(), tzinfo=zone)
             conditions.append(Punch.punch_time < end)
         stmt = select(Punch).where(*conditions).order_by(Punch.punch_time.desc(), Punch.id)
         return stmt
@@ -1963,7 +1970,65 @@ class OvertimeRecordRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def replace_pending_for_day(
+    async def replace_for_day(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        values: dict[str, Any],
+        now: datetime,
+        statuses: tuple[str, ...] = ("PENDING",),
+    ) -> OvertimeRecord | None:
+        """Full replace of a record's decision fields on recompute (WD-29 decision 2, AC-01).
+
+        `statuses` says which decisions this recompute may supersede. A `PENDING` record is
+        always replaceable; `AUTO_APPROVED` is too (never a human judgement); a human
+        `APPROVED`/`REJECTED` only when the caller has decided to reopen it (P-C). The
+        `WHERE status IN (...)` guard makes this a no-op against any other row even if a caller
+        forgets to check. Review fields are cleared and `version` is bumped, so an approver
+        holding the old version gets a stale-record error instead of approving new minutes they
+        never saw. Returns `None` when no row matched, in which case the caller `insert`s."""
+        stmt = (
+            update(OvertimeRecord)
+            .where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.attendance_day_id == attendance_day_id,
+                OvertimeRecord.status.in_(statuses),
+            )
+            .values(
+                **values,
+                reviewed_by_user_id=None,
+                reviewed_at=None,
+                reviewer_comment=None,
+                rejection_reason=None,
+                version=OvertimeRecord.version + 1,
+                updated_at=now,
+            )
+            .returning(OvertimeRecord)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_for_day(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        statuses: tuple[str, ...] = ("PENDING",),
+    ) -> None:
+        """A recompute that now detects zero eligible OT removes a record whose decision was
+        never a human one (`PENDING`, `AUTO_APPROVED`) outright — there is nothing left to
+        decide or pay. Never touches a human decision."""
+        await session.execute(
+            delete(OvertimeRecord).where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.attendance_day_id == attendance_day_id,
+                OvertimeRecord.status.in_(statuses),
+            )
+        )
+
+    async def cap_decided(
         self,
         session: AsyncSession,
         *,
@@ -1972,36 +2037,19 @@ class OvertimeRecordRepository:
         values: dict[str, Any],
         now: datetime,
     ) -> OvertimeRecord | None:
-        """Full replace of a `PENDING` record's fields on recompute (WD-29 decision 2) — the
-        `WHERE status='PENDING'` guard means this is a no-op against a terminal row even if a
-        caller forgets to check first (defence in depth; the real gate is in `service.py`).
-        Returns `None` if no `PENDING` row exists for this day, in which case the caller
-        `insert`s a fresh one instead."""
+        """P-C — a human decision whose supporting minutes shrank keeps its status and its
+        reviewer, but its figures follow the new detection. Bumps `version`."""
         stmt = (
             update(OvertimeRecord)
             .where(
                 OvertimeRecord.company_id == company_id,
                 OvertimeRecord.attendance_day_id == attendance_day_id,
-                OvertimeRecord.status == "PENDING",
+                OvertimeRecord.status.in_(("APPROVED", "REJECTED", "AUTO_APPROVED")),
             )
-            .values(**values, updated_at=now)
+            .values(**values, version=OvertimeRecord.version + 1, updated_at=now)
             .returning(OvertimeRecord)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
-
-    async def delete_if_pending(
-        self, session: AsyncSession, *, company_id: UUID, attendance_day_id: UUID
-    ) -> None:
-        """A recompute that now detects zero eligible OT removes a prior `PENDING` record
-        outright — there is nothing left to decide (WD-29 decision 2). Never touches a terminal
-        row."""
-        await session.execute(
-            delete(OvertimeRecord).where(
-                OvertimeRecord.company_id == company_id,
-                OvertimeRecord.attendance_day_id == attendance_day_id,
-                OvertimeRecord.status == "PENDING",
-            )
-        )
 
     async def update(
         self,

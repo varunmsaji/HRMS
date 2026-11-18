@@ -14,6 +14,9 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.config.settings import get_settings
+from hrms.shared.business_time import business_today
+
 RegularizationTab = Literal["pending", "approved", "declined"]
 
 _TAB_STATUSES: dict[str, tuple[str, ...]] = {
@@ -131,7 +134,7 @@ async def build_regularization_decision_center(
             ),
             params,
         )
-    ).scalar_one_or_none() or date.today()
+    ).scalar_one_or_none() or business_today(get_settings().app_timezone_default)
     p = {**params, "today": today}
 
     cnt = (

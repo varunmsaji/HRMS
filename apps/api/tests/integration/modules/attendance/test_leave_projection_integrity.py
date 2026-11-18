@@ -219,7 +219,10 @@ async def test_valid_projection_mirrors_the_leave_day(
         assert (data["fraction"], data["half"], data["is_paid"]) == ("0.50", "SECOND", True)
         assert data["leave_type_code"] is not None and data["leave_type_id"] is not None
         day = await _get_day(client, headers, employee_id=employee_id)
-        assert (day["paid_day_fraction"], day["lop_fraction"]) == ("0.50", "0.50")
+        # H-07: the worked half (no punch yet) is pending until the lock, not LOP at once; the
+        # projection itself mirrors the leave day exactly as before (asserted above)
+        assert (day["paid_day_fraction"], day["lop_fraction"]) == ("0.50", "0.00")
+        assert day["leave_fraction"] == "0.50"
     finally:
         await _teardown(company_id, user_id)
 

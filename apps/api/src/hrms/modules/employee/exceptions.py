@@ -393,6 +393,23 @@ class ShiftIdRequiredError(ValidationError):
         )
 
 
+class AssignmentShiftNotScheduledError(ValidationError):
+    """SH-13 - the chosen shift has no published version covering the assignment's start date,
+    so every day from then on would calculate as a configuration error."""
+
+    code = "SHIFT_NOT_SCHEDULED_ON_DATE"
+
+    def __init__(
+        self, message: str = "The shift has no published version covering effective_from"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "shift_id", "code": "SHIFT_NOT_SCHEDULED_ON_DATE", "message": message}
+            ],
+        )
+
+
 class CompensationDatesOverlapError(ConflictError):
     """Raised when inserting a compensation row would overlap an existing one for the same
     employee — the `employee_compensation_no_overlap` GiST exclusion constraint's

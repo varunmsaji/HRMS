@@ -364,6 +364,11 @@ class Settings(BaseSettings):
     attendance_punch_order_lookback_hours: int = Field(default=18, ge=1, le=48)
     # False skips the in/out order check (a repeat of the latest punch's direction).
     attendance_punch_order_check_enabled: bool = True
+    # SH-15 (owner decision, 15 Nov 2026) - break modes (MANDATORY_PUNCH / AUTO_DEDUCT /
+    # OPTIONAL_PUNCH) and break start/end punching are hidden until a client exposes them: while
+    # false the API refuses a break `mode` and the break start/end endpoints. The engine still
+    # evaluates any mode already stored.
+    shift_break_modes_enabled: bool = False
     # Wall-clock ceiling for ALL provider calls of one self-enrollment (about 18 sequential
     # requests). Past it the submission is abandoned and any provider person created is removed.
     face_enrollment_provider_budget_seconds: float = Field(default=120.0, gt=0.0)

@@ -1,12 +1,10 @@
-import { useMemo } from "react";
-
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import { INDIA_STATE_CODES } from "@/lib/branch/validate-branch";
 import type { BranchFormErrors, BranchFormValues } from "@/lib/branch/validate-branch";
-import { listTimezones } from "@/lib/timezones";
+import { useAllowedTimezones } from "@/lib/timezones";
 
 interface BranchFormProps {
   values: BranchFormValues;
@@ -37,7 +35,7 @@ export function BranchForm({
   // NEW-01/SR-09 (execution gate §4.5) — a select sourced from the runtime IANA list, not a
   // free-text input. The backend already validated free text server-side; this replaces the
   // usability gap, not a correctness gap (branch was never the confirmed vulnerable surface).
-  const timezones = useMemo(() => listTimezones(), []);
+  const timezones = useAllowedTimezones(values.timezone);
 
   return (
     <div className="space-y-6">

@@ -276,10 +276,15 @@ async def test_a_stale_if_match_is_a_409_even_when_the_date_is_also_invalid(
         # A *current* token still gets the date rule: precedence changed, validation did not.
         current = str(winner.json()["data"]["version"])
         bad_date = await _post(client, headers, eid, resource, make(_d(20), 3), current)
-        assert bad_date.status_code == 422, bad_date.text
-        assert bad_date.json()["error"]["code"] == "INVALID_EFFECTIVE_FROM"
-
-        assert len(await _history(client, headers, eid, resource)) == 2
+        if resource == "assignments":
+            # SH-13: the winner's row is future-dated, so an assignment change dated before it
+            # is allowed and splits the covering row (the other resources keep the date rule).
+            assert bad_date.status_code == 201, bad_date.text
+            assert len(await _history(client, headers, eid, resource)) == 3
+        else:
+            assert bad_date.status_code == 422, bad_date.text
+            assert bad_date.json()["error"]["code"] == "INVALID_EFFECTIVE_FROM"
+            assert len(await _history(client, headers, eid, resource)) == 2
         _assert_contiguous(await _history(client, headers, eid, resource))
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)

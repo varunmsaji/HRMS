@@ -400,8 +400,10 @@ export default function WorkCalendarSetupPage() {
             <DialogTitle>Activate this work calendar?</DialogTitle>
             <DialogDescription>
               From {effectiveFrom}, leave and attendance will classify days using this working
-              week and the linked holiday calendars. Existing approved leave records are not
-              changed, and locked attendance periods and closed payroll are not recalculated.
+              week and the linked holiday calendars. Existing approved leave is not rewritten
+              automatically: if it no longer matches the new calendar, attendance period close
+              stops until HR runs leave reconciliation. Locked attendance periods and closed
+              payroll are not recalculated.
             </DialogDescription>
           </DialogHeader>
           <label className="flex items-start gap-2 text-sm">

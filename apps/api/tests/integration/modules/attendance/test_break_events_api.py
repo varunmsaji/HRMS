@@ -14,6 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from tests.integration.auth.test_employee_jwt_linkage import _PASSWORD, _link_user_to_employee
 
+from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory, set_rls_company_id
 from hrms.modules.attendance import break_service
 from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH, ATTENDANCE_VIEW
@@ -495,4 +496,39 @@ async def test_closed_period_refuses_new_break_events(
         assert refused.status_code == 409 and _code(refused) == "ATTENDANCE_PERIOD_CLOSED"
         assert await _event_count(ctx) == 0
     finally:
+        await _cleanup_all(ctx)
+
+
+async def test_break_modes_and_break_punching_are_refused_while_hidden(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SH-15: with `SHIFT_BREAK_MODES_ENABLED` off (the production default) the API refuses a
+    break `mode` and the break start/end endpoints. The test env turns the setting on."""
+    ctx = await _setup(client, [LUNCH])
+    monkeypatch.setenv("SHIFT_BREAK_MODES_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        for action in ("start", "end"):
+            refused = await _post(client, ctx, action, break_name="Lunch")
+            assert refused.status_code == 409, refused.text
+            assert _code(refused) == "BREAK_MODES_DISABLED"
+        shift = (
+            await client.post("/v1/shifts", headers=ctx["hr"], json={"name": "Hidden modes"})
+        ).json()["data"]
+        with_mode = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}",
+            headers={**ctx["hr"], "If-Match": "1"},
+            json={"breaks": [AUTO]},
+        )
+        assert with_mode.status_code == 422, with_mode.text
+        without_mode = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}",
+            headers={**ctx["hr"], "If-Match": "1"},
+            json={"breaks": [{k: v for k, v in AUTO.items() if k != "mode"}]},
+        )
+        assert without_mode.status_code == 200, without_mode.text
+        assert await _event_count(ctx) == 0
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
         await _cleanup_all(ctx)

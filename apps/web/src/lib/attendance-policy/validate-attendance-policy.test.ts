@@ -96,3 +96,43 @@ describe("attendance policy early punch-in allowance", () => {
     ).toBe("Bad");
   });
 });
+
+describe("attendance policy mark credit ceiling (R-2)", () => {
+  it("defaults to 59 minutes and is sent as a number", () => {
+    expect(base.markCreditCeilingMinutes).toBe("59");
+    expect(buildAttendancePolicyVersionPayload(base).mark_credit_ceiling_minutes).toBe(59);
+  });
+
+  it("sends the chosen number of minutes, including 0 for no credit", () => {
+    expect(
+      buildAttendancePolicyVersionPayload({ ...base, markCreditCeilingMinutes: "90" })
+        .mark_credit_ceiling_minutes,
+    ).toBe(90);
+    expect(
+      buildAttendancePolicyVersionPayload({ ...base, markCreditCeilingMinutes: "0" })
+        .mark_credit_ceiling_minutes,
+    ).toBe(0);
+  });
+
+  it.each(["0", "59", "120"])("accepts %s", (value) => {
+    expect(
+      validateAttendancePolicyVersionForm({ ...base, markCreditCeilingMinutes: value })
+        .markCreditCeilingMinutes,
+    ).toBeUndefined();
+  });
+
+  it.each(["-1", "121", "", "abc"])("rejects %s", (value) => {
+    expect(
+      validateAttendancePolicyVersionForm({ ...base, markCreditCeilingMinutes: value })
+        .markCreditCeilingMinutes,
+    ).toBeTruthy();
+  });
+
+  it("maps a server field error onto the form", () => {
+    expect(
+      mapAttendancePolicyVersionApiErrors([
+        { field: "mark_credit_ceiling_minutes", code: "X", message: "Too high" },
+      ]).markCreditCeilingMinutes,
+    ).toBe("Too high");
+  });
+});

@@ -285,6 +285,11 @@ class LeaveApplication(Base, TimestampMixin):
     # PAY-010 (decision 9) — days approved as loss of pay because the balance could not cover
     # them ("approve with excess as LOP"). Only `total_days - lop_days` is debited.
     lop_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    # R-1 (pre-commit review) - which half a single-date application covers (`FIRST_HALF` /
+    # `SECOND_HALF`; NULL = a whole day or a multi-day range). Kept here because calendar
+    # reconciliation deletes a day row when its date stops consuming leave, and the half must
+    # survive that so the leave can be rebuilt exactly if the date becomes a working day again.
+    half_day: Mapped[str | None] = mapped_column(String(20), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachment_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # LD-17 — client spec §F. Generic, optional, harmless for every non-maternity leave type
@@ -498,3 +503,29 @@ class LeaveYearEndRun(Base):
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class LeaveBalanceShortfall(Base, TimestampMixin):
+    """AC-03 / owner decision P-E — a date inside approved leave that a calendar change turned
+    into a leave-consuming day, which the balance could not cover and the leave type does not
+    allow to go negative. It is neither debited nor converted to loss of pay: HR resolves it
+    (grant balance, or cancel the leave), and attendance period close is blocked meanwhile.
+    One row per application-date; reopened if the same shortfall recurs."""
+
+    __tablename__ = "leave_balance_shortfall"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    leave_application_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_application.id")
+    )
+    leave_type_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("leave_type.id"))
+    calendar_date: Mapped[date] = mapped_column(Date)
+    required_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2))
+    available_balance: Mapped[Decimal] = mapped_column(Numeric(8, 2))
+    status: Mapped[str] = mapped_column(String(20), default="OPEN")
+    resolution: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

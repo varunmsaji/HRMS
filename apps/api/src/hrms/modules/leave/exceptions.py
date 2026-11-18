@@ -756,3 +756,16 @@ class LeaveEncashmentAlreadyRecordedTodayError(ConflictError):
         ),
     ) -> None:
         super().__init__(message)
+
+
+class LeaveReconciliationPreviewStaleError(ConflictError):
+    """R-3 - the leave, calendar, schedule or balance changed after the reviewer's preview, so
+    what would be written is no longer what was reviewed. Nothing was changed; preview again."""
+
+    code = "LEAVE_RECONCILIATION_PREVIEW_STALE"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The leave data changed since this preview was produced. Nothing was changed; "
+            "preview again and review the new result before applying."
+        )

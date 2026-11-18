@@ -28,6 +28,8 @@ const version = {
   grace_in_minutes: 5,
   grace_out_minutes: 0,
   early_in_allowance_minutes: null,
+  max_early_punch_minutes: 240,
+  max_late_punch_minutes: 720,
   punch_rounding: "NONE",
   rounding_minutes: null,
   missing_punch_behaviour: "INCOMPLETE",

@@ -269,7 +269,9 @@ async def test_roster_week_off_after_night_shift_leaves_the_overnight_out_to_the
         data = week_off.json()["data"]
         assert data["attendance_status"] == "NOT_EXPECTED"
         assert data["missing_punch"] is False
-        assert len(data["computation_snapshot"]["prior_day_claimed_punch_ids"]) == 1
+        # Invariant B: the 06:23 OUT is owned by the shift day, so the week-off never sees it.
+        assert data["computation_snapshot"]["inputs"]["punch_ids"] == []
+        assert len(shift_day.json()["data"]["computation_snapshot"]["inputs"]["punch_ids"]) == 2
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

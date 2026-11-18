@@ -70,26 +70,26 @@ describe("buildTimeline", () => {
     expect(items[items.length - 1].kind).toBe("MISSING_OUT");
   });
 
-  it("drops punches far outside the day's window", () => {
+  it("shows exactly the punches the backend owns for the day", () => {
+    const owned = day({ computation_snapshot: { inputs: { punch_ids: ["1", "3"] } } });
     const kept = punchesForDay(
-      [punch("1", "2026-08-10T09:00:00Z", "IN"), punch("2", "2026-08-12T09:00:00Z", "IN")],
-      day(),
+      [
+        punch("1", "2026-08-10T09:00:00Z", "IN"),
+        punch("2", "2026-08-10T12:00:00Z", "IN"), // inside the old six-hour window, owned by another day
+        punch("3", "2026-08-11T05:30:00Z", "OUT"), // 11.5 hours after shift end: owned, was hidden
+      ],
+      owned,
     );
-    expect(kept.map((p) => p.id)).toEqual(["1"]);
+    expect(kept.map((p) => p.id)).toEqual(["1", "3"]);
   });
 
-  it("a day with no window keeps only its own punches, not the next day fetched alongside", () => {
-    const offDay = day({
-      attendance_date: "2026-08-10",
-      scheduled_start: null,
-      scheduled_end: null,
-      actual_first_in: null,
-      actual_last_out: null,
-    });
-    const kept = punchesForDay(
-      [punch("1", "2026-08-10T11:00:00Z", "IN"), punch("2", "2026-08-11T03:30:00Z", "IN")],
-      offDay,
-    );
+  it("a day with no owned punches shows none of the neighbouring ones", () => {
+    const offDay = day({ computation_snapshot: { inputs: { punch_ids: [] } } });
+    expect(punchesForDay([punch("1", "2026-08-10T11:00:00Z", "IN")], offDay)).toEqual([]);
+  });
+
+  it("an uncalculated day falls back to the list it was given", () => {
+    const kept = punchesForDay([punch("1", "2026-08-10T09:00:00Z", "IN")], day({ computation_snapshot: null }));
     expect(kept.map((p) => p.id)).toEqual(["1"]);
   });
 });

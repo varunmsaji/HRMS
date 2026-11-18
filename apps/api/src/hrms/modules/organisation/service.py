@@ -66,6 +66,7 @@ from hrms.modules.organisation.exceptions import (
     InvalidShiftVersionDutyBlockCountError,
     InvalidShiftVersionDutyBlockOverlapError,
     InvalidShiftVersionDutyBlockSequenceError,
+    InvalidShiftVersionDutyBlockSpanError,
     InvalidShiftVersionEffectiveFromError,
     InvalidShiftVersionFlexWindowError,
     InvalidShiftVersionTimeRangeError,
@@ -81,6 +82,7 @@ from hrms.modules.organisation.exceptions import (
     PolicyNotPublishedError,
     ShiftDeleteConfirmationMismatchError,
     ShiftDeletionBlockedError,
+    ShiftNameAlreadyExistsError,
     ShiftVersionDraftAlreadyExistsError,
     ShiftVersionNotDraftError,
     ShiftVersionNotFoundForDateError,
@@ -224,6 +226,7 @@ from hrms.modules.organisation.schemas import (
     shift_to_read,
     shift_version_to_audit_dict,
     shift_version_to_read,
+    validate_schedule_timezone,
     weekly_off_pattern_to_audit_dict,
     weekly_off_pattern_to_read,
     work_calendar_to_audit_dict,
@@ -232,7 +235,6 @@ from hrms.modules.organisation.schemas import (
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
 from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
-from hrms.shared.timezone import validate_iana_timezone
 
 # No explicit trial length is defined anywhere in the frozen Company docs — 14 days is an
 # assumed, easily-changed default (common SaaS convention), not a sourced product decision.
@@ -273,6 +275,9 @@ EMPLOYEE_ROLE_CODE = "EMPLOYEE"
 
 # FR-ORG-005 — department hierarchy is capped at 5 levels (root = depth 1).
 DEPARTMENT_MAX_DEPTH = 5
+
+# SC-01: partial unique index on (company_id, lower(btrim(name))) for live shifts.
+SHIFT_NAME_UNIQUE_INDEX = "shift_company_live_name_key"
 
 # Extensibility point (05_Backend_Architecture.md §3.1): Company owns this registry and the
 # aggregation loop in `get_setup_progress`, never the predicate logic for a sibling step once
@@ -2170,32 +2175,40 @@ class OrganisationService:
         schedule, so an initial empty DRAFT `ShiftVersion` is created in the same transaction
         rather than requiring a mandatory second round-trip. The `code` is always auto-assigned
         (`SHF-001`, `SHF-002`, …); the client never supplies one."""
+        await self._assert_shift_name_free(company_id, body.name)
         now = datetime.now(UTC)
         shift_id = uuid4()
         code = await self._repo.next_auto_shift_code(self._session, company_id=company_id)
-        shift = await self._repo.insert_shift(
-            self._session,
-            data={
-                "id": shift_id,
-                "company_id": company_id,
-                "name": body.name,
-                "code": code,
-                "start_time": time(0, 0),
-                "end_time": time(0, 0),
-                "break_minutes_paid": 0,
-                "break_minutes_unpaid": 0,
-                "grace_in_minutes": 0,
-                "grace_out_minutes": 0,
-                "half_day_threshold_hours": None,
-                "min_hours_full_day": None,
-                "is_night_shift": False,
-                "is_cross_midnight": False,
-                "is_ot_eligible": False,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+        try:
+            shift = await self._repo.insert_shift(
+                self._session,
+                data={
+                    "id": shift_id,
+                    "company_id": company_id,
+                    "name": body.name,
+                    "code": code,
+                    "start_time": time(0, 0),
+                    "end_time": time(0, 0),
+                    "break_minutes_paid": 0,
+                    "break_minutes_unpaid": 0,
+                    "grace_in_minutes": 0,
+                    "grace_out_minutes": 0,
+                    "half_day_threshold_hours": None,
+                    "min_hours_full_day": None,
+                    "is_night_shift": False,
+                    "is_cross_midnight": False,
+                    "is_ot_eligible": False,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # SC-01 backstop: a write that reached the database without having waited on the name
+            # lock above is still refused by the unique index.
+            if self._is_shift_name_violation(exc):
+                raise ShiftNameAlreadyExistsError() from exc
+            raise
         draft = await self._shift_version_repo.insert(
             self._session,
             data=self._empty_draft_shift_version_data(
@@ -2227,6 +2240,45 @@ class OrganisationService:
             user_agent=user_agent,
         )
         return read
+
+    async def _assert_shift_name_free(
+        self, company_id: UUID, name: str, *, except_id: UUID | None = None
+    ) -> None:
+        """SH-21 / SC-01 - shift names are unique per company, ignoring case and surrounding
+        spaces, and a deactivated shift keeps its name (only a deleted one releases it).
+
+        Two things make this hold for concurrent writers. First, a transaction-scoped advisory
+        lock on the normalised name is taken before the check, so a second create or rename of the
+        same name waits for the first to commit and then sees it (a clean 409 instead of passing
+        the check at the same moment). Second, the partial unique index
+        `shift_company_live_name_key` is the backstop for any writer that does not go through
+        here; `create_shift` and `update_shift` map its violation to the same error."""
+        from sqlalchemy import func, select, text
+
+        from hrms.modules.organisation.models import Shift
+
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtext('shift_name:' || CAST(:company_id AS text) "
+                "|| ':' || lower(btrim(:name))))"
+            ),
+            {"company_id": str(company_id), "name": name},
+        )
+        stmt = select(Shift.id).where(
+            Shift.company_id == company_id,
+            Shift.deleted_at.is_(None),
+            func.lower(func.btrim(Shift.name)) == name.strip().lower(),
+        )
+        if except_id is not None:
+            stmt = stmt.where(Shift.id != except_id)
+        if (await self._session.execute(stmt.limit(1))).first() is not None:
+            raise ShiftNameAlreadyExistsError()
+
+    @staticmethod
+    def _is_shift_name_violation(exc: IntegrityError) -> bool:
+        """True when the database refused a write because of `shift_company_live_name_key`."""
+        return SHIFT_NAME_UNIQUE_INDEX in str(exc.orig) or SHIFT_NAME_UNIQUE_INDEX in str(exc)
 
     def _empty_draft_shift_version_data(
         self, *, company_id: UUID, shift_id: UUID, now: datetime
@@ -2336,16 +2388,23 @@ class OrganisationService:
         values = build_shift_update_values(patch)
         if not values:
             return before_read
+        if "name" in values:
+            await self._assert_shift_name_free(company_id, values["name"], except_id=shift_id)
 
         now = datetime.now(UTC)
-        updated = await self._repo.update_shift(
-            self._session,
-            company_id=company_id,
-            shift_id=shift_id,
-            values=values,
-            expected_version=expected_version,
-            now=now,
-        )
+        try:
+            updated = await self._repo.update_shift(
+                self._session,
+                company_id=company_id,
+                shift_id=shift_id,
+                values=values,
+                expected_version=expected_version,
+                now=now,
+            )
+        except IntegrityError as exc:
+            if self._is_shift_name_violation(exc):
+                raise ShiftNameAlreadyExistsError() from exc
+            raise
         if updated is None:
             current = await self._repo.get_shift(
                 self._session, company_id=company_id, shift_id=shift_id
@@ -2658,10 +2717,15 @@ class OrganisationService:
 
     @staticmethod
     def _validate_break_durations(brk: ShiftBreakCreate, index: int) -> None:
-        """Duration rules shared by every break kind (V1). `mode=None` legacy breaks keep the
-        pre-V1 rules only, so existing payloads still validate."""
-        if brk.mode is None:
-            return
+        """Duration rules for a break (SC-04, owner decision D-6).
+
+        The first group is about the numbers agreeing with each other, so it holds for every
+        break whatever its `mode` - before SC-04 it was skipped when `mode` was empty, which is
+        every break while `shift_break_modes_enabled` is off: `max_minutes` of 0, a scheduled
+        length above the maximum or below the minimum, or one longer than a fixed window all
+        passed. Only the last rule depends on a mode, and it is unchanged: an automatic
+        deduction of a flexible break needs a length to deduct. No mode is enabled or given new
+        behaviour here."""
         if brk.max_minutes is not None and brk.max_minutes < 1:
             raise InvalidShiftBreakError("max_minutes must be at least 1", index=index)
         if (
@@ -2686,22 +2750,25 @@ class OrganisationService:
             raise InvalidShiftBreakError(
                 "scheduled_minutes must not be below min_minutes", index=index
             )
-        if brk.mode == "AUTO_DEDUCT":
-            if brk.break_kind == "FLEXIBLE_DURATION" and not brk.scheduled_minutes:
-                raise InvalidShiftBreakError(
-                    "scheduled_minutes is required for an AUTO_DEDUCT FLEXIBLE_DURATION break",
-                    index=index,
-                )
-            if brk.break_kind == "FIXED_WINDOW" and brk.scheduled_minutes:
-                # A deduction longer than its own window can never be taken from presence.
-                start, end = brk.start_time, brk.end_time
-                if start and end:
-                    span = _clock_minutes(end) - _clock_minutes(start)
-                    span = span + 1440 if span <= 0 else span
-                    if brk.scheduled_minutes > span:
-                        raise InvalidShiftBreakError(
-                            "scheduled_minutes must not exceed the break window", index=index
-                        )
+        if brk.break_kind == "FIXED_WINDOW" and brk.scheduled_minutes:
+            # A length longer than its own window can never be taken inside it.
+            start, end = brk.start_time, brk.end_time
+            if start and end:
+                span = _clock_minutes(end) - _clock_minutes(start)
+                span = span + 1440 if span <= 0 else span
+                if brk.scheduled_minutes > span:
+                    raise InvalidShiftBreakError(
+                        "scheduled_minutes must not exceed the break window", index=index
+                    )
+        if (
+            brk.mode == "AUTO_DEDUCT"
+            and brk.break_kind == "FLEXIBLE_DURATION"
+            and not brk.scheduled_minutes
+        ):
+            raise InvalidShiftBreakError(
+                "scheduled_minutes is required for an AUTO_DEDUCT FLEXIBLE_DURATION break",
+                index=index,
+            )
 
     def _build_break_rows(
         self, *, company_id: UUID, shift_version_id: UUID, breaks: list[ShiftBreakCreate]
@@ -2794,6 +2861,20 @@ class OrganisationService:
                     a_start, a_end, a.crosses_midnight, b_start, b_end, b.crosses_midnight
                 ):
                     raise InvalidShiftVersionDutyBlockOverlapError(index=b.sequence)
+        # SH-04 — blocks are placed in sequence order (the engine's `place_duty_blocks`): each
+        # starts at the first occurrence of its start time after the previous block ends. The
+        # whole sequence must fit in one day, or one date's shift would run into the next's.
+        elapsed = 0
+        previous_end: int | None = None
+        for block in ordered:
+            start_min = self._time_to_minutes(_format_time(block.start_time) or "00:00")
+            end_min = self._time_to_minutes(_format_time(block.end_time) or "00:00")
+            if previous_end is not None:
+                elapsed += (start_min - previous_end) % 1440
+            elapsed += (end_min - start_min) % 1440 or 1440
+            previous_end = end_min
+        if elapsed > 1440:
+            raise InvalidShiftVersionDutyBlockSpanError()
 
     def _validate_breaks_boundaries_for_publish(
         self,
@@ -2804,22 +2885,43 @@ class OrganisationService:
         window_start: str | None,
         window_end: str | None,
         breaks: list[Any],
+        required_minutes: int | None = None,
     ) -> None:
-        """FIXED/FLEXIBLE only — containment of `FIXED_WINDOW` breaks inside the shift's
-        overall span. SPLIT is skipped: `ShiftBreak` has no `duty_block_id` (known
+        """FIXED/FLEXIBLE only — containment of every break (`FIXED_WINDOW` start-end, and since
+        SC-03 `FLEXIBLE_DURATION` window start-end) inside the shift's overall span. SPLIT is
+        skipped (deferred, D-7): `ShiftBreak` has no `duty_block_id` (known
         limitation — the architecture's own field list omits this link), so
-        containment-within-duty-block can't be validated."""
+        containment-within-duty-block can't be validated.
+
+        SH-11: a FLEXIBLE shift's `window_start`-`window_end` is when the day may *start*, not
+        the working day, so a lunch break after the start window was refused at publish. The
+        bound is the start window's opening to its close plus `required_minutes` (the latest a
+        day can end)."""
         if shift_type == "SPLIT":
             return
-        bound_start, bound_end = (
-            (start_time, end_time) if shift_type == "FIXED" else (window_start, window_end)
-        )
+        if shift_type == "FIXED":
+            bound_start, bound_end = start_time, end_time
+        else:
+            bound_start = window_start
+            bound_end = (
+                None
+                if window_end is None
+                else _format_time(
+                    (
+                        datetime.combine(date(2000, 1, 1), _parse_time(window_end))
+                        + timedelta(minutes=min(required_minutes or 0, 1439))
+                    ).time()
+                )
+            )
         if bound_start is None or bound_end is None:
             return
         for brk in breaks:
-            if brk.break_kind != "FIXED_WINDOW":
-                continue
-            b_start, b_end = _format_time(brk.start_time), _format_time(brk.end_time)
+            # SC-03 (D-5): a flexible break's window - the span it may be taken in - must also lie
+            # wholly inside the shift's window, or the break can never be taken during the shift.
+            if brk.break_kind == "FIXED_WINDOW":
+                b_start, b_end = _format_time(brk.start_time), _format_time(brk.end_time)
+            else:
+                b_start, b_end = _format_time(brk.window_start), _format_time(brk.window_end)
             if b_start is None or b_end is None:
                 continue
             if not self._interval_contains(bound_start, bound_end, b_start, b_end):
@@ -2879,9 +2981,10 @@ class OrganisationService:
         # optional and only-if-set). Re-validating here, once, at the one gate every version must
         # pass before it can affect real attendance, closes that window without needing a
         # one-off data migration to sweep legacy rows first.
+        # SH-06: and the zone must be on the allow-list (a draft saved before the restriction).
         if version.timezone is not None:
             try:
-                validate_iana_timezone(version.timezone)
+                validate_schedule_timezone(version.timezone)
             except ValueError as exc:
                 raise ValidationError(
                     str(exc),
@@ -2939,8 +3042,45 @@ class OrganisationService:
             window_start=window_start,
             window_end=window_end,
             breaks=breaks,
+            required_minutes=version.required_minutes,
         )
+        self._validate_breaks_shorter_than_shift(version, breaks, duty_blocks)
         return is_cross_midnight
+
+    def _validate_breaks_shorter_than_shift(
+        self, version: Any, breaks: list[Any], duty_blocks: list[Any]
+    ) -> None:
+        """SH-21 - the breaks together must be shorter than the working day, or the day has no
+        working time at all. A fixed break counts its window; a flexible one its scheduled (or
+        minimum) minutes."""
+        if version.shift_type == "FIXED":
+            start, end = _format_time(version.start_time), _format_time(version.end_time)
+            assert start is not None and end is not None  # checked above
+            shift_minutes = (self._time_to_minutes(end) - self._time_to_minutes(start)) % 1440
+        elif version.shift_type == "FLEXIBLE":
+            shift_minutes = int(version.required_minutes or 0)
+        else:
+            shift_minutes = sum(
+                (
+                    self._time_to_minutes(_format_time(b.end_time) or "00:00")
+                    - self._time_to_minutes(_format_time(b.start_time) or "00:00")
+                )
+                % 1440
+                for b in duty_blocks
+            )
+        total = 0
+        for brk in breaks:
+            if not getattr(brk, "is_enabled", True):
+                continue
+            if brk.break_kind == "FIXED_WINDOW" and brk.start_time and brk.end_time:
+                total += (
+                    self._time_to_minutes(_format_time(brk.end_time) or "00:00")
+                    - self._time_to_minutes(_format_time(brk.start_time) or "00:00")
+                ) % 1440
+            else:
+                total += int(brk.scheduled_minutes or brk.min_minutes or 0)
+        if shift_minutes and total >= shift_minutes:
+            raise InvalidShiftBreakError("the breaks together must be shorter than the shift")
 
     async def _validate_weekly_off_pattern_reference(
         self, company_id: UUID, weekly_off_pattern_id: UUID
@@ -3479,6 +3619,20 @@ class OrganisationService:
             )
 
         after_read = shift_version_to_read(updated, breaks, duty_blocks)
+        # Invariant C - days already calculated against this shift from the new version's start
+        # are stale now.
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            date_from=draft.effective_from,
+            shift_id=shift_id,
+            reason="SHIFT_VERSION_PUBLISHED",
+            source_entity_type="shift_version",
+            source_entity_id=version_id,
+            requested_by=actor_user_id,
+        )
         await self._audit.record(
             self._session,
             company_id=company_id,
@@ -3659,6 +3813,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        if {"valid_from", "valid_to", "is_active"} & set(values):
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="HOLIDAY_CALENDAR_CHANGED",
+                source_entity_type="holiday_calendar",
+                source_entity_id=calendar_id,
+                requested_by=actor_user_id,
+                holiday_calendar_id=calendar_id,
+            )
         return after_read
 
     async def deactivate_holiday_calendar(
@@ -3741,6 +3907,18 @@ class OrganisationService:
             after=holiday_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="HOLIDAY_CHANGED",
+            source_entity_type="holiday",
+            source_entity_id=holiday_id,
+            requested_by=actor_user_id,
+            dates=[(body.date, body.date)],
+            holiday_calendar_id=calendar_id,
         )
         return read
 
@@ -3838,6 +4016,19 @@ class OrganisationService:
             after=holiday_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        holiday_dates = sorted({before_read.date, after_read.date})
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="HOLIDAY_CHANGED",
+            source_entity_type="holiday",
+            source_entity_id=holiday_id,
+            requested_by=actor_user_id,
+            dates=[(d, d) for d in holiday_dates],
+            holiday_calendar_id=row.calendar_id,
         )
         return after_read
 
@@ -4051,6 +4242,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        if patch.pattern_kind is not None or patch.rules is not None or patch.is_active is not None:
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="WEEKLY_OFF_PATTERN_CHANGED",
+                source_entity_type="weekly_off_pattern",
+                source_entity_id=pattern_id,
+                requested_by=actor_user_id,
+                weekly_off_pattern_id=pattern_id,
+            )
         return after_read
 
     async def deactivate_weekly_off_pattern(
@@ -4291,6 +4494,25 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        # AR-08 - `model_fields_set`, not `is not None`: clearing the pattern (an explicit null)
+        # turns every weekly off of this calendar into a working day.
+        if (
+            "weekly_off_pattern_id" in patch.model_fields_set
+            or patch.holiday_calendar_ids is not None
+            or patch.restricted_holidays_are_off_by_default is not None
+            or patch.is_active is not None
+        ):
+            await request_calendar_recalc(
+                self._session,
+                company_id=company_id,
+                reason="WORK_CALENDAR_CHANGED",
+                source_entity_type="work_calendar",
+                source_entity_id=work_calendar_id,
+                requested_by=actor_user_id,
+                work_calendar_id=work_calendar_id,
+            )
         return after_read
 
     async def _calendar_dependents(
@@ -4417,6 +4639,18 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="CALENDAR_EXCEPTION_CHANGED",
+            source_entity_type="calendar_exception",
+            source_entity_id=read.id,
+            requested_by=actor_user_id,
+            dates=[(read.exception_date, read.exception_date)],
+            work_calendar_id=work_calendar_id,
+        )
         return read
 
     async def list_calendar_exceptions(
@@ -4496,6 +4730,18 @@ class OrganisationService:
             after=calendar_exception_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        from hrms.modules.attendance.recalc import request_calendar_recalc
+
+        await request_calendar_recalc(
+            self._session,
+            company_id=company_id,
+            reason="CALENDAR_EXCEPTION_CHANGED",
+            source_entity_type="calendar_exception",
+            source_entity_id=exception_id,
+            requested_by=actor_user_id,
+            dates=[(after_read.exception_date, after_read.exception_date)],
+            work_calendar_id=after_read.work_calendar_id,
         )
         return after_read
 
@@ -4704,6 +4950,7 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._queue_policy_recalc(company_id, read, body.effective_from, actor_user_id)
         return read
 
     async def get_policy_assignment(
@@ -4715,6 +4962,32 @@ class OrganisationService:
         if row is None:
             raise NotFoundError("Resource not found")
         return policy_assignment_to_read(row)
+
+    async def _queue_policy_recalc(
+        self,
+        company_id: UUID,
+        assignment: PolicyAssignmentRead,
+        date_from: date,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """Invariant C - a policy, calendar or weekly-off assignment that starts or ends changes
+        the rules for every day it covers from `date_from`. Leave and regularization policies do
+        not feed the attendance calculation."""
+        if assignment.policy_kind in ("LEAVE_POLICY", "REGULARIZATION_POLICY"):
+            return
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            date_from=date_from,
+            employee_id=assignment.scope_id if assignment.scope_type == "EMPLOYEE" else None,
+            shift_id=assignment.scope_id if assignment.scope_type == "SHIFT" else None,
+            reason="POLICY_ASSIGNMENT_CHANGED",
+            source_entity_type="policy_assignment",
+            source_entity_id=assignment.id,
+            requested_by=actor_user_id,
+        )
 
     async def end_policy_assignment(
         self,
@@ -4789,6 +5062,9 @@ class OrganisationService:
             after=policy_assignment_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await self._queue_policy_recalc(
+            company_id, read, body.effective_to + timedelta(days=1), actor_user_id
         )
         return read
 

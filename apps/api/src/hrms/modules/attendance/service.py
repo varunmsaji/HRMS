@@ -6,6 +6,7 @@ identical CRUD/versioning/publish mechanics. Mirrors `organisation.service.Organ
 `ShiftVersion` methods (create/list/get/update/discard/publish/resolve_as_of) three times over,
 plus policy-resolution delegation (§16/§19 step 7)."""
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -14,6 +15,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
@@ -22,8 +24,14 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
 from hrms.core.db.session import session_scope
-from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
-from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
+from hrms.core.db.timeouts import bounded_lock_wait, bounded_waits, is_wait_timeout
+from hrms.core.errors.base import (
+    AppError,
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.observability.security_events import security_event
@@ -68,6 +76,7 @@ from hrms.modules.attendance.exceptions import (
     PolicyVersionOverlapError,
     PolicyVersionPreviousVersionRequiredError,
     PunchAlreadyRecordedError,
+    PunchNotOrphanedError,
     PunchTimeBeforeEmploymentError,
     PunchTooSoonError,
     RegularizationApproverMismatchError,
@@ -109,8 +118,11 @@ from hrms.modules.attendance.models import (
     OvertimePolicyVersion,
     OvertimeRecord,
     Punch,
+    PunchDismissal,
     RegularizationPolicy,
 )
+from hrms.modules.attendance.ownership_service import PunchOwnershipService
+from hrms.modules.attendance.recalc import request_policy_version_recalc
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
     AttendanceDayRepository,
@@ -153,6 +165,9 @@ from hrms.modules.attendance.schemas import (
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
+    ManualDayEntryRequest,
+    ManualDayEntryResponse,
+    ManualDayEntryResult,
     OvertimePolicyCreate,
     OvertimePolicyRead,
     OvertimePolicyUpdate,
@@ -223,6 +238,15 @@ from hrms.modules.attendance.shift_window import (
     combine_shift_window_decisions,
     evaluate_shift_window,
 )
+from hrms.modules.attendance.work_schedule import (
+    ResolvedShiftSchedule as _ResolvedShiftSchedule,
+)
+from hrms.modules.attendance.work_schedule import (
+    WorkScheduleResolver,
+)
+from hrms.modules.attendance.work_schedule import (
+    zone_or_none as _zone_or_none,
+)
 from hrms.modules.notification.approvals import (
     OVERTIME_FLOW,
     REGULARIZATION_FLOW,
@@ -264,6 +288,58 @@ def _validate_bands(bands: list[Any], *, required: bool, field: str) -> None:
             raise InvalidPolicyBandError(
                 f"Only the last {field[:-1]} may leave max_minutes open-ended", field=field
             )
+
+
+def _validate_hour_band_coverage(bands: list[Any]) -> None:
+    """H-01 (owner decision) - the worked-hour bands must cover every possible number of minutes:
+    they start at minute 0, follow each other with no gap, and the last one is open-ended. A day
+    whose minutes fall in a gap cannot be classified, so it is refused at publication instead of
+    being resolved silently (the engine returns CONFIG_ERROR for such a day).
+
+    Hour bands only: late-mark and early-departure bands may legitimately leave gaps (a gap means
+    no mark). Drafts may be saved incomplete; this runs when a version is published. Overlaps are
+    reported by `_validate_bands`, which runs first."""
+    ordered = sorted(bands, key=lambda b: b.min_minutes)
+    if not ordered:
+        return
+    first = ordered[0]
+    if first.min_minutes != 0:
+        raise InvalidPolicyBandError(
+            "Hour bands must start at 0 minutes so every day can be classified: the first band "
+            f"starts at {first.min_minutes}, leaving 0 to {first.min_minutes - 1} minutes "
+            "uncovered",
+            field="hour_bands",
+        )
+    for band, following in zip(ordered, ordered[1:], strict=False):
+        if band.max_minutes is None:
+            continue  # reported by `_validate_bands` (only the last band may be open-ended)
+        if following.min_minutes != band.max_minutes + 1:
+            raise InvalidPolicyBandError(
+                "Hour bands must follow each other with no gap: minutes "
+                f"{band.max_minutes + 1} to {following.min_minutes - 1} are not covered between "
+                f"the band ending at {band.max_minutes} and the band starting at "
+                f"{following.min_minutes}",
+                field="hour_bands",
+            )
+    last = ordered[-1]
+    if last.max_minutes is not None:
+        raise InvalidPolicyBandError(
+            "The last hour band must be open-ended (leave its maximum empty) so that longer days "
+            f"are classified: the last band ends at {last.max_minutes} minutes",
+            field="hour_bands",
+        )
+
+
+def _validate_hour_bands_have_present(bands: list[Any]) -> None:
+    """P-05 (owner decision) - publication requires at least one `PRESENT` hour band. The lowest
+    PRESENT band's minimum is the reference full-day length that shorter shifts are scaled against;
+    the system never guesses one."""
+    if bands and not any(b.result_status == "PRESENT" for b in bands):
+        raise InvalidPolicyBandError(
+            "At least one hour band must have the result PRESENT: its starting minute is the "
+            "full-day length that shorter shifts are scaled against",
+            field="hour_bands",
+        )
 
 
 class AttendanceService:
@@ -507,7 +583,10 @@ class AttendanceService:
                 "effective_to": None,
                 "grace_in_minutes": body.grace_in_minutes,
                 "grace_out_minutes": body.grace_out_minutes,
+                "mark_credit_ceiling_minutes": body.mark_credit_ceiling_minutes,
                 "early_in_allowance_minutes": body.early_in_allowance_minutes,
+                "max_early_punch_minutes": body.max_early_punch_minutes,
+                "max_late_punch_minutes": body.max_late_punch_minutes,
                 "punch_rounding": body.punch_rounding,
                 "rounding_minutes": body.rounding_minutes,
                 "missing_punch_behaviour": body.missing_punch_behaviour,
@@ -885,6 +964,8 @@ class AttendanceService:
         before_read = attendance_policy_version_to_read(draft, hour_bands, late_bands, early_bands)
 
         _validate_bands(hour_bands, required=True, field="hour_bands")
+        _validate_hour_band_coverage(hour_bands)
+        _validate_hour_bands_have_present(hour_bands)
         _validate_bands(late_bands, required=False, field="late_bands")
         _validate_bands(early_bands, required=False, field="early_departure_bands")
 
@@ -954,6 +1035,16 @@ class AttendanceService:
             after=attendance_policy_version_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await request_policy_version_recalc(
+            self._session,
+            company_id=company_id,
+            policy_kind="ATTENDANCE_POLICY",
+            policy_id=policy_id,
+            effective_from=draft.effective_from,
+            source_entity_type="attendance_policy_version",
+            source_entity_id=version_id,
+            requested_by=actor_user_id,
         )
         return after_read
 
@@ -1471,6 +1562,16 @@ class AttendanceService:
             after=overtime_policy_version_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await request_policy_version_recalc(
+            self._session,
+            company_id=company_id,
+            policy_kind="OVERTIME_POLICY",
+            policy_id=policy_id,
+            effective_from=draft.effective_from,
+            source_entity_type="overtime_policy_version",
+            source_entity_id=version_id,
+            requested_by=actor_user_id,
         )
         return after_read
 
@@ -2087,7 +2188,9 @@ class AttendanceService:
             self._session, company_id=company_id, employee_ids=employee_ids
         )
 
-    async def assert_date_open(self, company_id: UUID, target_date: date) -> None:
+    async def assert_date_open(
+        self, company_id: UUID, target_date: date, *, employee_id: UUID | None = None
+    ) -> None:
         """`SR-11` (execution gate §12.4) — the cross-module seam for the narrow CLOSED-period
         check added to shift-version publish (`organisation.service.publish_shift_version`):
         a backdated version whose `effective_from` falls inside an already-`CLOSED` period must
@@ -2099,7 +2202,7 @@ class AttendanceService:
         reaching a closed period" — that is recorded as debt against the policy-versioning
         workstream (§12.4), not absorbed here. Only `ShiftVersion` publish gets this check,
         because it is the one the Phase 2/3 timezone work already touches in the same file."""
-        await _ensure_date_open(self._session, company_id, target_date, employee_id=None)
+        await _ensure_date_open(self._session, company_id, target_date, employee_id=employee_id)
 
     async def closed_period_overlapping(
         self, company_id: UUID, employee_id: UUID, date_from: date, date_to: date
@@ -2267,11 +2370,69 @@ async def _ensure_shift_in_company(
     await OrganisationService(session).get_shift(company_id, shift_id)
 
 
+async def _ensure_shift_usable_on(
+    session: AsyncSession, company_id: UUID, shift_id: UUID | None, on: date
+) -> None:
+    """SH-18 - a roster row may only name an active shift of this company that has a published
+    version covering the roster date. Before, an inactive shift or one with no version that day
+    was accepted and the day calculated as a configuration error."""
+    if shift_id is None:
+        return
+    from hrms.modules.attendance.exceptions import RosterShiftNotUsableError
+    from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
+    from hrms.modules.organisation.service import OrganisationService
+
+    organisation = OrganisationService(session)
+    shift = await organisation.get_shift(company_id, shift_id)
+    if not shift.is_active:
+        raise RosterShiftNotUsableError("INACTIVE_SHIFT", "This shift is no longer active")
+    try:
+        await organisation.resolve_shift_version_as_of(company_id, shift_id, on)
+    except ShiftVersionNotFoundForDateError as exc:
+        raise RosterShiftNotUsableError(
+            "SHIFT_NOT_SCHEDULED_ON_DATE", "The shift has no published version on this date"
+        ) from exc
+
+
 def _is_unique_violation(exc: IntegrityError) -> bool:
     """Only a unique-constraint violation (SQLSTATE 23505) is a date conflict; any other integrity
     error (a foreign key, a check) must surface as what it is."""
     cause = getattr(exc.orig, "__cause__", None) or exc.orig
     return str(getattr(cause, "sqlstate", None) or "") == "23505"
+
+
+def _ot_record_snapshot(record: OvertimeRecord) -> dict[str, Any]:
+    """What an overtime decision looked like when a recalculation superseded it (AC-01). Kept on
+    the record's own timeline so the original decision, and who made it, stay visible."""
+    return {
+        "status": record.status,
+        "minutes_detected": record.minutes_detected,
+        "minutes_approved": record.minutes_approved,
+        "comp_off_minutes": record.comp_off_minutes,
+        "day_class": record.day_class,
+        "overtime_policy_version_id": (
+            str(record.overtime_policy_version_id) if record.overtime_policy_version_id else None
+        ),
+        "reviewed_by_user_id": str(record.reviewed_by_user_id)
+        if record.reviewed_by_user_id
+        else None,
+        "reviewed_at": record.reviewed_at.isoformat() if record.reviewed_at else None,
+        "reviewer_comment": record.reviewer_comment,
+        "rejection_reason": record.rejection_reason,
+    }
+
+
+#: `rejection_reason` written by `AttendancePeriodService._withdraw_overtime_at_lock`. Together
+#: with the absent reviewer it marks a rejection made by period lock, not by a person (AR-03).
+LOCK_WITHDRAWAL_REASON = "Attendance day was incomplete and resolved as absent at period lock"
+
+
+def _is_lock_withdrawal(record: OvertimeRecord) -> bool:
+    return (
+        record.status == "REJECTED"
+        and record.reviewed_by_user_id is None
+        and record.rejection_reason == LOCK_WITHDRAWAL_REASON
+    )
 
 
 def _counts_as_excess_break_day(breaks: Iterable[Any]) -> bool:
@@ -2282,17 +2443,33 @@ def _counts_as_excess_break_day(breaks: Iterable[Any]) -> bool:
 
 
 async def _ensure_not_after_last_working_day(
-    session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
+    session: AsyncSession,
+    company_id: UUID,
+    employee_id: UUID,
+    punch_time: datetime,
+    *,
+    direction: str | None = None,
 ) -> None:
     """A punch cannot land after the employee's last working day. The comparison is on the
-    company-local calendar date of the instant (the same business-date basis the rest of the punch
-    path uses), never the server's or the UTC date: with a last working day of the 15th, a punch at
-    23:59 local on the 15th is accepted and one at 00:00 local on the 16th is not."""
+    company-local calendar date of the instant, never the server's or the UTC date: with a last
+    working day of the 15th, a punch at 23:59 local on the 15th is accepted and one at 00:00
+    local on the 16th is not — **unless** (SH-09) the instant falls inside the last working
+    day's own punch-ownership window: the 06:00 checkout of a 22:00-06:00 shift that started on
+    the 15th belongs to the 15th and is accepted."""
     from hrms.modules.organisation.service import OrganisationService
 
     company = await OrganisationService(session).get_company_profile(company_id)
     local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
-    await _ensure_date_within_employment(session, company_id, employee_id, local_date)
+    try:
+        await _ensure_date_within_employment(session, company_id, employee_id, local_date)
+    except EmployeeTerminatedError as exc:
+        if direction is None:
+            raise
+        owner = await PunchOwnershipService(session).claimed_by(
+            company_id, employee_id, punch_time, [exc.last_working_day], direction=direction
+        )
+        if owner is None:
+            raise
 
 
 async def _ensure_date_within_employment(
@@ -2470,7 +2647,7 @@ class ShiftRosterService:
         user_agent: str | None,
     ) -> ShiftRosterRead:
         await _ensure_date_open(self._session, company_id, roster_date, employee_id=employee_id)
-        await _ensure_shift_in_company(self._session, company_id, shift_id)
+        await _ensure_shift_usable_on(self._session, company_id, shift_id, roster_date)
         now = datetime.now(UTC)
         roster_id = uuid4()
         data = {
@@ -2536,7 +2713,9 @@ class ShiftRosterService:
         values = build_shift_roster_update_values(patch)
         if not values:
             return before_read
-        await _ensure_shift_in_company(self._session, company_id, values.get("shift_id"))
+        await _ensure_shift_usable_on(
+            self._session, company_id, values.get("shift_id"), row.roster_date
+        )
 
         now = datetime.now(UTC)
         try:
@@ -2576,6 +2755,8 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if "PUBLISHED" in (before_read.status, after_read.status):
+            await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
 
     async def publish_roster_entry(
@@ -2640,6 +2821,7 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
 
     async def delete_roster_entry(
@@ -2697,7 +2879,28 @@ class ShiftRosterService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if before_read.status == "PUBLISHED":
+            await self._queue_recalc(company_id, after_read, actor_user_id)
         return after_read
+
+    async def _queue_recalc(
+        self, company_id: UUID, entry: ShiftRosterRead, actor_user_id: UUID | None
+    ) -> None:
+        """Invariant C - a published roster row decides the day's shift, so changing one makes
+        that day's calculated attendance stale. A draft row changes nothing until published."""
+        from hrms.modules.attendance.recalc import request_recalc
+
+        await request_recalc(
+            self._session,
+            company_id=company_id,
+            employee_id=entry.employee_id,
+            date_from=entry.roster_date,
+            date_to=entry.roster_date,
+            reason="ROSTER_CHANGED",
+            source_entity_type="shift_roster",
+            source_entity_id=entry.id,
+            requested_by=actor_user_id,
+        )
 
     async def get_roster_entry(
         self,
@@ -2750,138 +2953,6 @@ def _ensure_same_logical_punch(existing: Punch, *, direction: str, source: str) 
         raise DuplicatePunchIdempotencyKeyError(
             "This idempotency_key was already used for a different punch"
         )
-
-
-@dataclass(frozen=True)
-class _ResolvedShiftSchedule:
-    shift_inputs: calc.ShiftInputs | None
-    shift_version_id: UUID | None
-    tz_name: str
-    window: calc.ScheduleWindow
-
-
-def _zone_or_none(tz_name: str | None) -> ZoneInfo | None:
-    """A stored timezone, or None when it is missing or no longer resolvable.
-
-    `None` is not a guess at UTC: the shift-window check fails open when the date it would
-    judge cannot be resolved (`TimezoneConfigurationError`), rather than refusing a punch
-    against the wrong day or failing the request."""
-    if not tz_name:
-        return None
-    try:
-        return resolve_zoneinfo(tz_name)
-    except TimezoneConfigurationError:
-        return None
-
-
-async def _resolve_shift_schedule(
-    organisation_service: Any,
-    *,
-    company_id: UUID,
-    shift_id: UUID | None,
-    target_date: date,
-    branch_timezone: str | None,
-    company_timezone: str,
-) -> _ResolvedShiftSchedule:
-    """The shift version, timezone and schedule window of `shift_id` on one date. The single
-    resolution both the calculation input and the self-service punch shift-window check use."""
-    from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
-
-    shift_inputs: calc.ShiftInputs | None = None
-    shift_version_timezone: str | None = None
-    shift_version_id: UUID | None = None
-    raw_start_time = raw_end_time = raw_window_start = raw_window_end = None
-    if shift_id is not None:
-        try:
-            shift_version = await organisation_service.resolve_shift_version_as_of(
-                company_id, shift_id, target_date
-            )
-        except ShiftVersionNotFoundForDateError:
-            shift_version = None
-        if shift_version is not None:
-            shift_version_id = shift_version.id
-            shift_version_timezone = shift_version.timezone
-            raw_start_time = (
-                _parse_time(shift_version.start_time) if shift_version.start_time else None
-            )
-            raw_end_time = _parse_time(shift_version.end_time) if shift_version.end_time else None
-            raw_window_start = (
-                _parse_time(shift_version.window_start) if shift_version.window_start else None
-            )
-            raw_window_end = (
-                _parse_time(shift_version.window_end) if shift_version.window_end else None
-            )
-            shift_inputs = calc.ShiftInputs(
-                shift_type=shift_version.shift_type,
-                is_ot_eligible=shift_version.is_ot_eligible,
-                operates_on_holiday=shift_version.operates_on_holiday,
-                operates_on_weekly_off=shift_version.operates_on_weekly_off,
-                is_cross_midnight=shift_version.is_cross_midnight,
-                is_night_shift=shift_version.is_night_shift,
-                breaks=[
-                    calc.ShiftBreakData(
-                        id=b.id,
-                        break_kind=b.break_kind,
-                        start_time=_parse_time(b.start_time) if b.start_time else None,
-                        end_time=_parse_time(b.end_time) if b.end_time else None,
-                        window_start=_parse_time(b.window_start) if b.window_start else None,
-                        window_end=_parse_time(b.window_end) if b.window_end else None,
-                        min_minutes=b.min_minutes,
-                        max_minutes=b.max_minutes,
-                        is_paid=b.is_paid,
-                        is_mandatory=b.is_mandatory,
-                        name=b.name,
-                        break_type=b.break_type,
-                        mode=b.mode,
-                        scheduled_minutes=b.scheduled_minutes,
-                        crosses_midnight=b.crosses_midnight,
-                        excess_outcome=b.excess_outcome,
-                        auto_deduct_full=b.auto_deduct_full,
-                        optional_recorded_deducts=b.optional_recorded_deducts,
-                        optional_scheduled_fallback=b.optional_scheduled_fallback,
-                        is_enabled=b.is_enabled,
-                        sort_order=b.sort_order,
-                        allows_split=b.allows_split,
-                    )
-                    for b in shift_version.breaks
-                ],
-                duty_blocks=[
-                    calc.ShiftDutyBlockData(
-                        sequence=d.sequence,
-                        start_time=_parse_time(d.start_time),
-                        end_time=_parse_time(d.end_time),
-                        crosses_midnight=d.crosses_midnight,
-                    )
-                    for d in shift_version.duty_blocks
-                ],
-                core_start=(
-                    _parse_time(shift_version.core_start) if shift_version.core_start else None
-                ),
-                core_end=(_parse_time(shift_version.core_end) if shift_version.core_end else None),
-                required_minutes=shift_version.required_minutes,
-            )
-
-    tz_name = calc.resolve_timezone(
-        shift_version_timezone=shift_version_timezone,
-        branch_timezone=branch_timezone,
-        company_timezone=company_timezone,
-    )
-
-    window = calc.resolve_schedule_window(
-        attendance_date=target_date,
-        tz_name=tz_name,
-        shift=shift_inputs,
-        start_time=raw_start_time,
-        end_time=raw_end_time,
-        window_start=raw_window_start,
-        window_end=raw_window_end,
-    )
-    return _ResolvedShiftSchedule(
-        shift_inputs=shift_inputs,
-        shift_version_id=shift_version_id,
-        tz_name=tz_name,
-        window=window,
-    )
 
 
 class PunchService:
@@ -2949,6 +3020,7 @@ class PunchService:
         user_agent: str | None = None,
         location: PunchLocation | None = None,
         location_error: str | None = None,
+        calculate: bool = True,
     ) -> tuple[PunchRead, bool]:
         """Returns `(punch, replayed)`: `replayed` is True when an earlier row with the same
         `idempotency_key` was returned instead of writing a new one (callers that attach
@@ -2982,6 +3054,11 @@ class PunchService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
+        # Every punch writer takes the employee's punch-write lock, so HR's "no punch on this day
+        # yet" check in `record_manual_days` holds until it commits against an ordinary punch too
+        # (review finding on PR 61). It is re-entrant: a day entry already holds it for each of its
+        # employees and takes it again here for free. Taken before anything else in this method.
+        await _lock_manual_day(self._session, company_id, employee_id)
         if source == "WEB" and direction == "IN":
             # Face verification gates check-in only; a plain check-out is always allowed.
             await self._ensure_plain_punch_allowed(
@@ -3060,7 +3137,9 @@ class PunchService:
         # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
         # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
         # facts), never a silent rewrite.
-        await _ensure_not_after_last_working_day(self._session, company_id, employee_id, punch_time)
+        await _ensure_not_after_last_working_day(
+            self._session, company_id, employee_id, punch_time, direction=direction
+        )
         await _ensure_punch_date_open(self._session, company_id, employee_id, punch_time)
         punch_id = uuid4()
         data = {
@@ -3116,10 +3195,14 @@ class PunchService:
                 punch_id=punch_id,
             )
             read = read.model_copy(update={"geofence": geofence.to_read()})
+        if not calculate:
+            # The caller writes more punches for the same day and recalculates once afterwards.
+            return read, False
         await self._try_immediate_calculate(
             company_id,
             employee_id,
             punch_time,
+            punch_id=punch_id,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
@@ -3160,7 +3243,6 @@ class PunchService:
         shift does not bypass the window of the shift this resolution returns."""
         if source not in GEOFENCED_SOURCES:
             return
-        from hrms.modules.employee.service import EmployeeAssignmentService
         from hrms.modules.organisation.service import OrganisationService
 
         def skip(reason: str) -> None:
@@ -3174,43 +3256,18 @@ class PunchService:
             )
 
         organisation_service = OrganisationService(self._session)
-        assignment_service = EmployeeAssignmentService(self._session)
         company = await organisation_service.get_company_profile(company_id)
         resolved: dict[date, tuple[_ResolvedShiftSchedule, str | None]] = {}
+
+        work_schedules = WorkScheduleResolver(self._session)
 
         async def schedule_for(target_date: date) -> tuple[_ResolvedShiftSchedule, str | None]:
             cached = resolved.get(target_date)
             if cached is not None:
                 return cached
-            assignment = await assignment_service.get_assignment_as_of(
-                company_id, employee_id, target_date
-            )
-            branch_timezone: str | None = None
-            if assignment is not None and assignment.branch_id is not None:
-                branch_timezone = (
-                    await organisation_service.get_branch(company_id, assignment.branch_id)
-                ).timezone
-            roster_entry = await self._roster_repo.get_published_for_date(
-                self._session,
-                company_id=company_id,
-                employee_id=employee_id,
-                roster_date=target_date,
-            )
-            shift_id = (
-                roster_entry.shift_id
-                if roster_entry is not None
-                else (assignment.shift_id if assignment else None)
-            )
-            schedule = await _resolve_shift_schedule(
-                organisation_service,
-                company_id=company_id,
-                shift_id=shift_id,
-                target_date=target_date,
-                branch_timezone=branch_timezone,
-                company_timezone=company.timezone,
-            )
-            resolved[target_date] = (schedule, branch_timezone)
-            return schedule, branch_timezone
+            work = await work_schedules.resolve(company_id, employee_id, target_date)
+            resolved[target_date] = (work.schedule, work.branch_timezone)
+            return resolved[target_date]
 
         try:
             company_zone = _zone_or_none(company.timezone)
@@ -3446,6 +3503,7 @@ class PunchService:
         employee_id: UUID,
         punch_time: datetime,
         *,
+        punch_id: UUID | None = None,
         actor_user_id: UUID | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -3453,43 +3511,44 @@ class PunchService:
         """Execution gate §16.2's "immediate trigger" — best-effort, non-blocking, failure-
         tolerant. **Must never fail the punch write.** The punch is a fact; a calculation is a
         derivation of it, and losing the fact because a derivation failed is unacceptable. Any
-        failure here — a `CONFIG_ERROR`-producing gap, a lock conflict, an unexpected exception —
-        is swallowed and logged; the Phase 8 scheduled sweep (`attendance.run_daily_calculation`,
-        trailing 3 days) picks up whatever this attempt missed.
+        failure here is swallowed and logged; the scheduled sweep (`attendance.run_daily_
+        calculation`, trailing 3 days) picks up whatever this attempt missed.
 
-        Wrapped in `begin_nested()` (a `SAVEPOINT`) rather than a bare try/except: `calculate()`
-        does real writes (the day row, break rows, the overtime record) on this same session/
-        transaction as the punch insert above, so an exception here — including one that aborts
-        the transaction at the Postgres level, e.g. a constraint violation deep in
-        `_build_calculation_input` — must not poison the outer transaction the punch insert and
-        its audit row are still pending in. Rolling back to the savepoint discards only this
-        attempt's work, never the punch itself.
-
-        The target date is the *local* (company-timezone) calendar date of the punch instant —
-        the same derivation `_ensure_punch_date_open` uses for its own local/previous-local
-        check — not `business_today()`: an on-behalf punch backdated to last week must trigger a
-        calculation for last week, not for today. Cross-midnight attribution can differ from this
-        local-calendar-date approximation (`FR-ATT-005` — a shift's punch may actually belong to
-        the *previous* local date); this hook does not need to get that exactly right, because
-        `calculate()` re-derives ownership from the shift itself when it runs, and the trailing
-        sweep recomputes both the punch's local date and the day before it (`SR-14`'s window
-        shapes already cover the shift/no-shift distinction), whichever one recompute here
-        doesn't reach."""
+        SH-05 — recalculates the day that **owns** the punch (`ownership_service.py`) as well as
+        the punch's company-local date. An overnight checkout at 06:00 belongs to the shift that
+        started the evening before; before this it only recalculated the checkout's own date, so
+        the shift's day showed a missing checkout until the next sweep. Dates are calculated
+        oldest first, in one SAVEPOINT, so a failure rolls back only this attempt."""
         from hrms.modules.organisation.service import OrganisationService
 
+        targets: set[date] = set()
         try:
             async with self._session.begin_nested():
                 company = await OrganisationService(self._session).get_company_profile(company_id)
                 local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
-                await AttendanceDayService(self._session).calculate(
-                    company_id,
-                    employee_id,
-                    local_date,
-                    actor_user_id=actor_user_id,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    lock_timeout_ms=get_settings().attendance_punch_calc_lock_timeout_ms,
-                )
+                targets = {local_date}
+                if punch_id is not None:
+                    owners = await PunchOwnershipService(self._session).owners_near(
+                        company_id, employee_id, local_date
+                    )
+                    owner = owners.get(punch_id)
+                    if owner is not None:
+                        targets.add(owner)
+                day_service = AttendanceDayService(self._session)
+                for target in sorted(targets):
+                    if target != local_date and await _is_date_closed(
+                        self._session, company_id, target, employee_id=employee_id
+                    ):
+                        continue
+                    await day_service.calculate(
+                        company_id,
+                        employee_id,
+                        target,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        lock_timeout_ms=get_settings().attendance_punch_calc_lock_timeout_ms,
+                    )
         except Exception as exc:  # noqa: BLE001 - best-effort by design; see docstring
             # A lock/statement timeout is logged under its own event so a sweep holding the row
             # (or a stuck transaction) shows up distinctly; the punch itself is already stored and
@@ -3501,6 +3560,46 @@ class PunchService:
                 company_id=str(company_id),
                 employee_id=str(employee_id),
                 punch_time=punch_time.isoformat(),
+            )
+            await self._queue_failed_immediate_calculation(
+                company_id,
+                employee_id,
+                targets or {punch_time.date()},
+                actor_user_id=actor_user_id,
+            )
+
+    async def _queue_failed_immediate_calculation(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        dates: set[date],
+        *,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """A failed immediate calculation must not depend on the daily sweep (which only looks back
+        three days) or on period close: a durable recalculation request is stored for the dates it
+        covered, so the queue retries it and it stays visible in `attendance_recalc_request`.
+        Best effort in its own savepoint - it can never fail the punch either."""
+        from hrms.modules.attendance.recalc import request_recalc
+
+        try:
+            async with self._session.begin_nested():
+                await request_recalc(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    date_from=min(dates),
+                    date_to=max(dates),
+                    reason="IMMEDIATE_CALCULATION_FAILED",
+                    source_entity_type="punch",
+                    source_entity_id=None,
+                    requested_by=actor_user_id,
+                )
+        except Exception:  # noqa: BLE001 - the punch is already stored; log and move on
+            _logger.warning(
+                "attendance_recalc_request_after_failed_calculation_not_queued",
+                company_id=str(company_id),
+                employee_id=str(employee_id),
             )
 
     async def _ensure_within_employment(
@@ -3551,6 +3650,9 @@ class PunchService:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
         rows, total = await self._repo.page_filtered(
             self._session,
             page=page,
@@ -3559,8 +3661,371 @@ class PunchService:
             employee_id=employee_id,
             date_from=date_from,
             date_to=date_to,
+            tz_name=company.timezone,
         )
         return [punch_to_read(r) for r in rows], total
+
+    # --- manual day entry (HR marks an IN and an OUT in one step) ------------------------------
+
+    async def preview_manual_days(
+        self,
+        company_id: UUID,
+        body: ManualDayEntryRequest,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> ManualDayEntryResponse:
+        """What `record_manual_days` would do with `body`, without writing anything.
+
+        Runs the same checks in the same order, so a `READY` line here fails at submit time only
+        if something changed in between (a period was closed, another punch arrived). Submit
+        re-checks everything; the preview is advice for the person, never a guarantee."""
+        timezone = await self._company_zone(company_id)
+        results: list[ManualDayEntryResult] = []
+        for employee_id in body.employee_ids:
+            existing: list[PunchRead] = []
+            try:
+                _ensure_not_self_entry(employee_id, caller_employee_id)
+                await _ensure_employee_visible(
+                    self._session, company_id, employee_id, scope, caller_employee_id
+                )
+                existing = await self._punches_on_manual_days(
+                    company_id, employee_id, body, timezone
+                )
+                if existing:
+                    raise _ExistingPunchesError()
+                await self._ensure_manual_day_allowed(company_id, employee_id, body, timezone)
+            except AppError as exc:
+                results.append(_blocked(employee_id, exc, existing))
+                continue
+            results.append(ManualDayEntryResult(employee_id=employee_id, outcome="READY"))
+        return _manual_day_response(body, results)
+
+    @logged_operation(
+        "attendance.manual_day.record",
+        result_fields=lambda r: {"recorded": r.recorded_count, "blocked": r.blocked_count},
+    )
+    async def record_manual_days(
+        self,
+        company_id: UUID,
+        body: ManualDayEntryRequest,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ManualDayEntryResponse:
+        """Records an `ADMIN` IN at `punch_in_at` and OUT at `punch_out_at` for each employee.
+        Never for the caller's own employee record (`SELF_ENTRY_NOT_ALLOWED`).
+
+        **Per employee, both punches or neither** — each employee runs in its own savepoint, so a
+        refusal (closed period, terminated, out of scope, an existing punch on the day) rolls back
+        only that employee and is reported as `BLOCKED`; the others are still recorded. An
+        unexpected error is not caught and fails the whole request.
+
+        Every punch goes through `record_punch_outcome`, so the single on-behalf punch's bounds
+        and its per-punch `PUNCH_CREATED` audit row apply unchanged. One more audit row,
+        `ATTENDANCE_MANUAL_DAY_ENTRY`, records the submission as a whole: who, when, the reason
+        and every employee's outcome.
+
+        A per-employee advisory lock (taken for all employees up front, in sorted order, so two
+        overlapping submissions cannot deadlock) makes the "no punch on this day yet" check hold
+        until commit against another manual-day submission for the same person, and, because
+        `record_punch_outcome` takes the same lock, against a single punch for that person too.
+        Nothing in `core.db.locks` is acquired before it, and no punch path acquires it after
+        one of those, so it cannot take part in a cycle; the day calculation takes no advisory
+        lock."""
+        timezone = await self._company_zone(company_id)
+        for employee_id in sorted(body.employee_ids):
+            await _lock_manual_day(self._session, company_id, employee_id)
+
+        results: list[ManualDayEntryResult] = []
+        for employee_id in body.employee_ids:
+            results.append(
+                await self._record_manual_day(
+                    company_id,
+                    employee_id,
+                    body,
+                    timezone,
+                    scope=scope,
+                    caller_employee_id=caller_employee_id,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            )
+        response = _manual_day_response(body, results)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_MANUAL_DAY_ENTRY",
+            entity_type="attendance_manual_day",
+            entity_id=uuid4(),
+            after={
+                "punch_in_at": response.punch_in_at,
+                "punch_out_at": response.punch_out_at,
+                "reason": body.reason,
+                "idempotency_key": body.idempotency_key,
+                "results": [
+                    {
+                        "employee_id": str(r.employee_id),
+                        "outcome": r.outcome,
+                        "code": r.code,
+                        "replayed": r.replayed,
+                        "punch_ids": [str(p.id) for p in r.punches],
+                    }
+                    for r in results
+                ],
+            },
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return response
+
+    async def _record_manual_day(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> ManualDayEntryResult:
+        existing: list[PunchRead] = []
+        try:
+            async with self._session.begin_nested():
+                _ensure_not_self_entry(employee_id, caller_employee_id)
+                await _ensure_employee_visible(
+                    self._session, company_id, employee_id, scope, caller_employee_id
+                )
+                replay = await self._manual_day_replay(company_id, employee_id, body)
+                if replay is not None:
+                    return ManualDayEntryResult(
+                        employee_id=employee_id, outcome="RECORDED", replayed=True, punches=replay
+                    )
+                existing = await self._punches_on_manual_days(
+                    company_id, employee_id, body, timezone
+                )
+                if existing:
+                    raise _ExistingPunchesError()
+                await self._ensure_manual_dates_open(company_id, employee_id, body, timezone)
+                punches: list[PunchRead] = []
+                for direction, instant in (("IN", body.punch_in_at), ("OUT", body.punch_out_at)):
+                    punch, _replayed = await self.record_punch_outcome(
+                        company_id,
+                        employee_id,
+                        direction=direction,
+                        requested_punch_time=instant,
+                        source="ADMIN",
+                        reference=body.reason,
+                        idempotency_key=_manual_day_key(body, employee_id, direction),
+                        scope=scope,
+                        caller_employee_id=caller_employee_id,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        calculate=False,
+                    )
+                    punches.append(punch)
+        except AppError as exc:
+            return _blocked(employee_id, exc, existing)
+
+        # Outside the employee's savepoint: a failed calculation must never undo the punches
+        # (`_try_immediate_calculate` swallows its own errors; the daily sweep retries).
+        calculated: set[date] = set()
+        for punch, instant in zip(punches, (body.punch_in_at, body.punch_out_at), strict=False):
+            local_date = instant.astimezone(timezone).date()
+            if local_date in calculated:
+                continue
+            calculated.add(local_date)
+            await self._try_immediate_calculate(
+                company_id,
+                employee_id,
+                instant,
+                punch_id=punch.id,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return ManualDayEntryResult(employee_id=employee_id, outcome="RECORDED", punches=punches)
+
+    async def _ensure_manual_day_allowed(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+    ) -> None:
+        """The bounds `record_punch_outcome` applies to an on-behalf punch, plus
+        `_ensure_manual_dates_open`, checked for both instants without writing — used by the
+        preview."""
+        await self._ensure_manual_dates_open(company_id, employee_id, body, timezone)
+        now = datetime.now(UTC)
+        for direction, instant in (("IN", body.punch_in_at), ("OUT", body.punch_out_at)):
+            if instant > now:
+                raise FuturePunchTimeError()
+            await self._ensure_within_employment(company_id, employee_id, instant)
+            await _ensure_not_after_last_working_day(
+                self._session, company_id, employee_id, instant, direction=direction
+            )
+            await _ensure_punch_date_open(self._session, company_id, employee_id, instant)
+
+    async def _ensure_manual_dates_open(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: ManualDayEntryRequest,
+        timezone: ZoneInfo,
+    ) -> None:
+        """Stricter than punch ingestion's `_ensure_punch_date_open`, on purpose.
+
+        Ingestion accepts a punch unless both its local date and the day before are closed,
+        because refusing a real device punch destroys a fact, while accepting one into a closed
+        day is harmless (the calculation never rewrites a locked day). A manual day is not an
+        observed fact but a correction HR is typing in, and accepting it into a closed period
+        would tell HR it worked while changing nothing. So every company-local date the entry
+        touches must be open; a closed period has to be reopened first."""
+        dates = {
+            instant.astimezone(timezone).date() for instant in (body.punch_in_at, body.punch_out_at)
+        }
+        for local_date in sorted(dates):
+            await _ensure_date_open(self._session, company_id, local_date, employee_id=employee_id)
+
+    async def _punches_on_manual_days(
+        self, company_id: UUID, employee_id: UUID, body: ManualDayEntryRequest, timezone: ZoneInfo
+    ) -> list[PunchRead]:
+        """Every live punch on the company-local calendar day(s) the manual entry covers: from
+        local midnight of the IN's date to local midnight after the OUT's date."""
+        first = body.punch_in_at.astimezone(timezone).date()
+        last = body.punch_out_at.astimezone(timezone).date()
+        window_start = datetime.combine(first, datetime.min.time(), tzinfo=timezone)
+        window_end = datetime.combine(
+            last + timedelta(days=1), datetime.min.time(), tzinfo=timezone
+        )
+        rows = await self._repo.list_for_employee_window(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            window_start=window_start.astimezone(UTC),
+            window_end=window_end.astimezone(UTC),
+        )
+        return [punch_to_read(r) for r in rows]
+
+    async def _manual_day_replay(
+        self, company_id: UUID, employee_id: UUID, body: ManualDayEntryRequest
+    ) -> list[PunchRead] | None:
+        """The punches an earlier attempt with the same idempotency key stored for this employee,
+        or `None` when there was no such attempt. The pair is written in one savepoint, so either
+        both keys exist or neither does."""
+        if not body.idempotency_key:
+            return None
+        found: list[PunchRead] = []
+        for direction in ("IN", "OUT"):
+            row = await self._repo.get_by_idempotency_key(
+                self._session,
+                company_id=company_id,
+                idempotency_key=_manual_day_key(body, employee_id, direction) or "",
+            )
+            if row is None:
+                return None
+            if row.employee_id != employee_id:
+                raise DuplicatePunchIdempotencyKeyError()
+            found.append(punch_to_read(row))
+        return found
+
+    async def _company_zone(self, company_id: UUID) -> ZoneInfo:
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        return resolve_zoneinfo(company.timezone)
+
+
+class _ExistingPunchesError(ConflictError):
+    """Internal to manual day entry; surfaces only as a `BLOCKED` line, never as a response."""
+
+    code = "EXISTING_PUNCHES"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This employee already has punches on this day. Correct it with a single punch instead."
+        )
+
+
+class _SelfEntryNotAllowedError(PermissionDeniedError):
+    """Internal to manual day entry; surfaces only as a `BLOCKED` line."""
+
+    code = "SELF_ENTRY_NOT_ALLOWED"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "You cannot mark your own attendance. Ask another HR admin, or raise a regularization."
+        )
+
+
+def _ensure_not_self_entry(employee_id: UUID, caller_employee_id: UUID | None) -> None:
+    """Separation of duties: HR backdating their own attendance is the case this whole path most
+    needs to prevent, so it is refused even though the caller holds the permission. (The single
+    on-behalf punch still accepts self; tightening that is a separate decision.)"""
+    if caller_employee_id is not None and employee_id == caller_employee_id:
+        raise _SelfEntryNotAllowedError()
+
+
+def _manual_day_key(body: ManualDayEntryRequest, employee_id: UUID, direction: str) -> str | None:
+    if not body.idempotency_key:
+        return None
+    return f"{body.idempotency_key}:{employee_id}:{direction}"
+
+
+def _blocked(employee_id: UUID, exc: AppError, existing: list[PunchRead]) -> ManualDayEntryResult:
+    return ManualDayEntryResult(
+        employee_id=employee_id,
+        outcome="BLOCKED",
+        code=exc.code,
+        message=exc.message,
+        existing_punches=existing,
+    )
+
+
+def _manual_day_response(
+    body: ManualDayEntryRequest, results: list[ManualDayEntryResult]
+) -> ManualDayEntryResponse:
+    return ManualDayEntryResponse(
+        punch_in_at=_format_instant(body.punch_in_at),
+        punch_out_at=_format_instant(body.punch_out_at),
+        ready_count=sum(r.outcome == "READY" for r in results),
+        recorded_count=sum(r.outcome == "RECORDED" for r in results),
+        blocked_count=sum(r.outcome == "BLOCKED" for r in results),
+        results=results,
+    )
+
+
+def _format_instant(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+async def _lock_manual_day(session: AsyncSession, company_id: UUID, employee_id: UUID) -> None:
+    """The employee's punch-write lock, held until the transaction ends. Taken by every punch
+    writer (`PunchService.record_punch_outcome`) and, for all of a submission's employees up front
+    and in sorted order, by `PunchService.record_manual_days`. Re-entrant within one transaction.
+    It is acquired before anything in `core.db.locks`, never after."""
+    key = f"attendance-manual-day:{company_id}:{employee_id}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+
+def _last_day_of_month(day: date) -> date:
+    first_of_next = (
+        date(day.year + 1, 1, 1) if day.month == 12 else date(day.year, day.month + 1, 1)
+    )
+    return first_of_next - timedelta(days=1)
 
 
 class AttendanceDayService:
@@ -3763,10 +4228,30 @@ class AttendanceDayService:
             )
 
         existing_ot_record: OvertimeRecord | None = None
+        cap_minutes_before = 0
+        # R-6 - the sibling-day pass exists for the weekly and monthly overtime caps; a policy
+        # with neither has no budget for the days to share, so it never pays for the pass.
+        weekly_cap = ot_version is not None and ot_version.weekly_cap_minutes is not None
+        monthly_cap = ot_version is not None and ot_version.monthly_cap_minutes is not None
+        caps_configured = weekly_cap or monthly_cap
         if existing is not None:
             existing_ot_record = await self._ot_record_repo.get_by_attendance_day(
                 self._session, company_id=company_id, attendance_day_id=existing.id
             )
+            if caps_configured:
+                # D-04 — what this day took from the weekly / monthly overtime budget before this
+                # calculation (read before the day row and its record are replaced below).
+                cap_minutes_before = await self._cap_minutes_counted(
+                    company_id, employee_id, target_date
+                )
+        # BUS-011 / F11 — on a full-day leave day, or an ON_DUTY day that does not require
+        # punches, overtime is never payable and the engine reports zero. A decision already
+        # made for the day must then be left exactly as decided, not superseded by that zero:
+        # cancelling the leave brings the approved minutes back on the recompute that follows.
+        overtime_not_payable = (
+            result.attendance_status == "LEAVE"
+            and Decimal(result.leave_fraction) >= Decimal("1.00")
+        ) or result.attendance_status == "ON_DUTY"
         ot_decision = await self._resolve_ot_decision(
             company_id=company_id,
             employee_id=employee_id,
@@ -3775,6 +4260,8 @@ class AttendanceDayService:
             ot_version=ot_version,
             ot_rate_rows=ot_rate_rows,
             existing_ot_record=existing_ot_record,
+            overtime_policy_version_id=resolved_refs["overtime_policy_version_id"],
+            preserve_existing=overtime_not_payable,
         )
         # W7 (WD-29 decision 2) — the OT-facing summary columns on the day row always reflect
         # the current *decision*, not raw engine output: a frozen terminal record's own values
@@ -3786,10 +4273,6 @@ class AttendanceDayService:
         # stays as decided and the day keeps the engine's zeros, so cancelling the leave brings
         # the approved minutes back on the recompute that follows. F11 (D-5): the same for an
         # ON_DUTY day that does not require punches, which the engine only reports as ON_DUTY.
-        overtime_not_payable = (
-            result.attendance_status == "LEAVE"
-            and Decimal(result.leave_fraction) >= Decimal("1.00")
-        ) or result.attendance_status == "ON_DUTY"
         frozen_on_unpayable_day = (
             ot_decision is not None and ot_decision["frozen"] and overtime_not_payable
         )
@@ -3926,7 +4409,12 @@ class AttendanceDayService:
             user_agent=user_agent,
         )
         counter_flags_after = (bool(row.is_late), _counts_as_excess_break_day(result.breaks))
-        if recompute_later_days and counter_flags_after != counter_flags_before:
+        cap_moved = caps_configured and (
+            await self._cap_minutes_counted(company_id, employee_id, target_date)
+            != cap_minutes_before
+        )
+        counters_moved = counter_flags_after != counter_flags_before
+        if recompute_later_days and (counters_moved or cap_moved):
             await self._recompute_later_days_of_month(
                 company_id,
                 employee_id,
@@ -3934,8 +4422,23 @@ class AttendanceDayService:
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                counters_moved=counters_moved,
+                weekly_cap=cap_moved and weekly_cap,
+                monthly_cap=cap_moved and monthly_cap,
             )
         return read
+
+    async def _cap_minutes_counted(
+        self, company_id: UUID, employee_id: UUID, target_date: date
+    ) -> int:
+        """Minutes this one day counts toward the weekly / monthly overtime caps right now."""
+        return await self._ot_record_repo.sum_minutes_counted_for_cap(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=target_date,
+            date_to=target_date,
+        )
 
     async def recalculate_days_for_close(
         self,
@@ -3978,29 +4481,45 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None,
         user_agent: str | None,
+        counters_moved: bool = True,
+        weekly_cap: bool = False,
+        monthly_cap: bool = False,
     ) -> None:
         """R-04 — the cumulative late and excess-break rules count the earlier days of the month
-        (`count_flagged_days_in_window`), so when a day starts or stops counting, every later
-        computed day of that month may now be a different Nth day. Recompute them, oldest first,
-        so each reads the corrected count. Locked days are left alone: they are final.
+        (`count_flagged_days_in_window`), so when a day starts or stops counting (`counters_moved`),
+        every later computed day of that month may now be a different Nth day. Recompute them,
+        oldest first, so each reads the corrected count. Locked days are left alone: they are
+        final.
 
-        This cannot run away: the counters change a later day's status, never its own `is_late`
-        or break flags, so a later day only cascades further if its own inputs had changed."""
-        month_end = (
-            date(target_date.year, 12, 31)
-            if target_date.month == 12
-            else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
-        )
-        if target_date >= month_end:
+        D-04 — the weekly and monthly overtime caps are allocated in date order, so when the
+        minutes this day takes from the budget change, every later day of its week (`weekly_cap`)
+        and month (`monthly_cap`) may be owed more or less. They are recomputed the same way.
+
+        R-4 — a week can span two months. Its days in the second month change their own counted
+        minutes, and the second month's *monthly* budget reads them, so with a monthly cap the pass
+        continues to the end of that second month. (A weekly cap alone reaches only the week's
+        last day.)
+
+        One pass in date order is enough, so the later days do not cascade again themselves:
+        each one reads earlier days that this pass has already corrected, and neither the
+        counters nor the caps change a day's own `is_late`, break flags or worked time."""
+        month_end = _last_day_of_month(target_date)
+        window_end = month_end if counters_moved or monthly_cap else target_date
+        if weekly_cap or monthly_cap:
+            week_end = target_date + timedelta(days=6 - target_date.weekday())
+            window_end = max(window_end, week_end)
+            if monthly_cap and week_end > month_end:
+                window_end = _last_day_of_month(month_end + timedelta(days=1))
+        if target_date >= window_end:
             return
         later_dates = await self._day_repo.list_unlocked_dates_in_window(
             self._session,
             company_id=company_id,
             employee_id=employee_id,
             window_start=target_date + timedelta(days=1),
-            window_end=month_end,
+            window_end=window_end,
         )
-        for later_date in later_dates:
+        for later_date in sorted(later_dates):
             await self._calculate(
                 company_id,
                 employee_id,
@@ -4008,6 +4527,61 @@ class AttendanceDayService:
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                recompute_later_days=False,
+            )
+
+    async def reallocate_caps_after_decision(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """R-5 - an HR approval (full or partial) or rejection changes what the day counts toward
+        the weekly and monthly overtime caps (a pending record counts at its detected minutes, a
+        decided one at its approved minutes), so the later days of the week and month are
+        re-allocated now, in the reviewer's transaction, exactly as a recalculation would.
+        Runs only when the policy that governs the day has a cap (R-6). Locked days are skipped."""
+        resolution = await self._resolution.resolve(
+            company_id, "OVERTIME_POLICY", employee_id=employee_id, target_date=target_date
+        )
+        if (
+            resolution.config_incomplete
+            or resolution.resolved_policy_id is None
+            or resolution.resolved_version_id is None
+        ):
+            return
+        version = await self._overtime_repo.get_version(
+            self._session,
+            company_id=company_id,
+            policy_id=resolution.resolved_policy_id,
+            version_id=resolution.resolved_version_id,
+        )
+        if version is None:
+            return
+        weekly_cap = version.weekly_cap_minutes is not None
+        monthly_cap = version.monthly_cap_minutes is not None
+        if not (weekly_cap or monthly_cap):
+            return
+        settings = get_settings()
+        async with bounded_waits(
+            self._session,
+            lock_timeout_ms=settings.attendance_lock_timeout_ms,
+            statement_timeout_ms=settings.attendance_statement_timeout_ms,
+        ):
+            await self._recompute_later_days_of_month(
+                company_id,
+                employee_id,
+                target_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                counters_moved=False,
+                weekly_cap=weekly_cap,
+                monthly_cap=monthly_cap,
             )
 
     async def recompute(
@@ -4186,86 +4760,99 @@ class AttendanceDayService:
     async def list_orphaned_punches(
         self, company_id: UUID, *, date_from: date, date_to: date
     ) -> list[PunchRead]:
-        """The orphan-punch report (`TZ-08`/`DEC-TZ-16`, execution gate §16.4) — punches that
-        fall outside every attendance day's own load window, and are therefore invisible to
-        `calculate()` regardless of how many times it runs: a supervisor arriving at 06:45 for a
-        09:00 shift and leaving at 20:30 punches successfully, but if 06:45 falls outside the
-        ±2h pad, that punch never gets picked up by any `AttendanceDay` row — the employee shows
-        `ABSENT` for a day nearly fourteen hours long, silently.
+        """Punches no attendance day owns (`TZ-08`/`DEC-TZ-16`, Invariant B): outside every
+        candidate day's ownership window, or a lone punch no shift can take (a check-in after
+        its shift ended). Dismissed punches (`punch_dismissal`) are left out.
 
-        `[date_from, date_to]` are **local** (company-timezone) business dates — the same
-        convention as every other date-range parameter in this module — widened by one day on
-        each side when fetching candidate `AttendanceDay` rows, so a window that legitimately
-        extends past midnight (a cross-midnight shift's pad, or `FLEXIBLE`'s asymmetric +12h
-        lookahead) is still found even when its own `attendance_date` falls just outside the
-        nominal range.
-
-        **`SR-14` — the fourth window shape.** A no-shift day (`shift_id IS NULL`) uses
-        `calendar_day_window_utc` — the full local calendar day, no pad at all — never the ±2h
-        FIXED/SPLIT logic; applying the padded shape to an unscheduled employee would flag every
-        punch a little outside midnight as a false orphan. `FIXED`/`SPLIT` shifts share the same
-        `scheduled_start - 2h .. scheduled_end + 2h` shape and are reconstructed exactly from the
-        row's own stored `scheduled_start`/`scheduled_end`, with no further DB access needed.
-        `FLEXIBLE`'s own pad is asymmetric (`-2h/+12h`, `calculation.resolve_schedule_window`) —
-        not distinguishable from `FIXED`/`SPLIT` using only what's stored on `AttendanceDay`
-        (`shift_id`, not `shift_type`), so this report applies the narrower ±2h shape to every
-        shift-bearing day regardless of type. That is conservative in the safe direction for a
-        report: it can only ever over-report (flag a `FLEXIBLE` employee's punch inside their
-        real +12h lookahead as an orphan candidate for HR to dismiss), never under-report a
-        genuinely missed punch.
-
-        A date with **no** `AttendanceDay` row at all (calculation never ran for it) has no
-        window to cover anything — every punch on such a date is orphaned by definition, which is
-        exactly the visibility this report exists to provide (`F-14`'s gap, before the row is
-        ever created)."""
+        `[date_from, date_to]` are company-local dates of the punch instants. Ownership is the
+        same computation the calculation uses (`ownership_service.py`), so this report and
+        `calculate()` can never disagree about whether a punch is counted. A punch is reported
+        whether or not its day has been calculated yet."""
         from hrms.modules.organisation.service import OrganisationService
 
         company = await OrganisationService(self._session).get_company_profile(company_id)
-        tz_name = company.timezone
-
-        padded_from = date_from - timedelta(days=1)
-        padded_to = date_to + timedelta(days=1)
-        window_start, _ = calc.calendar_day_window_utc(attendance_date=padded_from, tz_name=tz_name)
-        _, window_end = calc.calendar_day_window_utc(attendance_date=padded_to, tz_name=tz_name)
-
-        days = await self._day_repo.list_filtered(
-            self._session,
-            company_id=company_id,
-            visible_employee_ids=None,
-            employee_id=None,
-            date_from=padded_from,
-            date_to=padded_to,
-            status=None,
+        tz = resolve_zoneinfo(company.timezone)
+        window_start, _ = calc.calendar_day_window_utc(
+            attendance_date=date_from, tz_name=company.timezone
         )
-        windows_by_employee: dict[UUID, list[tuple[datetime, datetime]]] = {}
-        for day in days:
-            if day.shift_id is None:
-                covering = calc.calendar_day_window_utc(
-                    attendance_date=day.attendance_date, tz_name=day.timezone
-                )
-            elif day.scheduled_start is not None and day.scheduled_end is not None:
-                covering = (
-                    day.scheduled_start - timedelta(hours=2),
-                    day.scheduled_end + timedelta(hours=2),
-                )
-            else:
-                covering = calc.calendar_day_window_utc(
-                    attendance_date=day.attendance_date, tz_name=day.timezone
-                )
-            windows_by_employee.setdefault(day.employee_id, []).append(covering)
-
+        _, window_end = calc.calendar_day_window_utc(
+            attendance_date=date_to, tz_name=company.timezone
+        )
         punches = await self._punch_repo.list_for_company_window(
             self._session, company_id=company_id, window_start=window_start, window_end=window_end
         )
-        orphaned = [
-            punch
-            for punch in punches
-            if not any(
-                start <= punch.punch_time < end
-                for start, end in windows_by_employee.get(punch.employee_id, [])
-            )
-        ]
+        by_employee: dict[UUID, list[Punch]] = {}
+        for punch in punches:
+            by_employee.setdefault(punch.employee_id, []).append(punch)
+
+        orphaned: list[Punch] = []
+        for employee_id, rows in by_employee.items():
+            ownership = PunchOwnershipService(self._session)
+            owners_by_date: dict[date, dict[UUID, date | None]] = {}
+            dismissed = await ownership._dismissed_ids(company_id, [r.id for r in rows])
+            for row in rows:
+                if row.id in dismissed:
+                    continue
+                local_date = row.punch_time.astimezone(tz).date()
+                if local_date not in owners_by_date:
+                    owners_by_date[local_date] = await ownership.owners_near(
+                        company_id, employee_id, local_date
+                    )
+                if owners_by_date[local_date].get(row.id) is None:
+                    orphaned.append(row)
+        orphaned.sort(key=lambda r: (str(r.employee_id), r.punch_time))
         return [punch_to_read(p) for p in orphaned]
+
+    async def dismiss_orphan_punch(
+        self,
+        company_id: UUID,
+        punch_id: UUID,
+        *,
+        reason: str,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PunchRead:
+        """Invariant B — records that an orphan punch (owned by no day) is not attendance, so it
+        stops blocking period close. Refused for a punch some day owns: that would change a
+        result without a correction. The punch row itself is never touched (WD-11)."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        row = await self._punch_repo.get(self._session, company_id=company_id, punch_id=punch_id)
+        if row is None:
+            raise NotFoundError("Resource not found")
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        local_date = row.punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
+        ownership = PunchOwnershipService(self._session)
+        if await ownership._dismissed_ids(company_id, [row.id]):
+            return punch_to_read(row)
+        owners = await ownership.owners_near(company_id, row.employee_id, local_date)
+        if owners.get(row.id) is not None:
+            raise PunchNotOrphanedError()
+        self._session.add(
+            PunchDismissal(
+                id=uuid4(),
+                company_id=company_id,
+                punch_id=row.id,
+                reason=reason.strip(),
+                dismissed_by=actor_user_id,
+                dismissed_at=datetime.now(UTC),
+            )
+        )
+        await self._session.flush()
+        read = punch_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PUNCH_DISMISSED",
+            entity_type="punch",
+            entity_id=row.id,
+            after={**punch_to_audit_dict(read), "dismissal_reason": reason.strip()},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
 
     @staticmethod
     def _result_to_values(
@@ -4348,55 +4935,6 @@ class AttendanceDayService:
             "calculated_at": datetime.now(UTC),
         }
 
-    async def _prior_day_window_end(
-        self,
-        organisation_service: Any,
-        assignment_service: Any,
-        *,
-        company_id: UUID,
-        employee_id: UUID,
-        target_date: date,
-        company_timezone: str,
-        load_start: datetime,
-    ) -> datetime | None:
-        """Where the previous date's shift stops loading punches, if that is after this date's
-        own window starts (an overnight shift). Resolved the same way the previous date's own
-        calculation resolves its shift: published roster row first, then the assignment."""
-        prior_date = target_date - timedelta(days=1)
-        assignment = await assignment_service.get_assignment_as_of(
-            company_id, employee_id, prior_date
-        )
-        roster_entry = await self._roster_repo.get_published_for_date(
-            self._session, company_id=company_id, employee_id=employee_id, roster_date=prior_date
-        )
-        shift_id = (
-            roster_entry.shift_id
-            if roster_entry is not None
-            else (assignment.shift_id if assignment else None)
-        )
-        if shift_id is None:
-            return None
-        branch_timezone: str | None = None
-        if assignment is not None and assignment.branch_id is not None:
-            branch_timezone = (
-                await organisation_service.get_branch(company_id, assignment.branch_id)
-            ).timezone
-        try:
-            prior = await _resolve_shift_schedule(
-                organisation_service,
-                company_id=company_id,
-                shift_id=shift_id,
-                target_date=prior_date,
-                branch_timezone=branch_timezone,
-                company_timezone=company_timezone,
-            )
-        except (TimezoneConfigurationError, ZoneInfoNotFoundError):
-            # The previous date fails on its own; this date keeps every punch it loaded.
-            return None
-        if prior.shift_inputs is None or prior.window.load_end <= load_start:
-            return None
-        return prior.window.load_end
-
     async def _build_calculation_input(
         self, company_id: UUID, employee_id: UUID, target_date: date
     ) -> tuple[
@@ -4408,16 +4946,13 @@ class AttendanceDayService:
         # Local, function-scoped imports — the established cross-module-seam convention
         # (module docstring; mirrors `PolicyResolutionService.resolve`,
         # `CalendarResolutionService._scope_candidates`, `EmployeeService._check_seat_limit`).
-        from hrms.modules.employee.service import EmployeeAssignmentService, EmploymentService
+        from hrms.modules.employee.service import EmploymentService
         from hrms.modules.organisation.calendar_resolution import (
             CalendarResolutionService,
             weekly_off_fraction_of,
         )
-        from hrms.modules.organisation.service import OrganisationService
 
         employment_service = EmploymentService(self._session)
-        assignment_service = EmployeeAssignmentService(self._session)
-        organisation_service = OrganisationService(self._session)
         calendar_service = CalendarResolutionService(self._session)
 
         employment = await employment_service.get_employment_as_of(
@@ -4431,44 +4966,14 @@ class AttendanceDayService:
         else:
             population_status = "ACTIVE"
 
-        assignment = await assignment_service.get_assignment_as_of(
-            company_id, employee_id, target_date
-        )
-
-        company = await organisation_service.get_company_profile(company_id)
-        branch_timezone: str | None = None
-        branch_id = assignment.branch_id if assignment else None
-        if branch_id is not None:
-            branch = await organisation_service.get_branch(company_id, branch_id)
-            branch_timezone = branch.timezone
-
-        # W5 (architecture §9.7) — a PUBLISHED `ShiftRoster` row for this employee-date outranks
-        # `EmployeeAssignment.shift_id`; falling back to the assignment default when none
-        # exists. Only PUBLISHED rows are considered (`get_published_for_date`) — a staged
-        # DRAFT roster must never change a live calculation (WD-27).
-        roster_entry = await self._roster_repo.get_published_for_date(
-            self._session, company_id=company_id, employee_id=employee_id, roster_date=target_date
-        )
-        roster_week_off_override = (
-            roster_entry.is_week_off_override if roster_entry is not None else False
-        )
-        roster_holiday_working_override = (
-            roster_entry.is_holiday_working_override if roster_entry is not None else False
-        )
-
-        shift_id = (
-            roster_entry.shift_id
-            if roster_entry is not None
-            else (assignment.shift_id if assignment else None)
-        )
-        schedule = await _resolve_shift_schedule(
-            organisation_service,
-            company_id=company_id,
-            shift_id=shift_id,
-            target_date=target_date,
-            branch_timezone=branch_timezone,
-            company_timezone=company.timezone,
-        )
+        # Invariant A — the one resolution of which shift applies on this date (published roster
+        # row, else the assignment's shift, else none). `work_schedule.py`.
+        resolver = WorkScheduleResolver(self._session)
+        resolved = await resolver.resolve(company_id, employee_id, target_date)
+        roster_week_off_override = resolved.roster_week_off_override
+        roster_holiday_working_override = resolved.roster_holiday_working_override
+        shift_id = resolved.shift_id
+        schedule = resolved.schedule
         # Break management V1 — the employee's in-force break overrides are layered over the
         # shift version's breaks (deterministic, dated; the shift rows are never touched).
         from hrms.modules.attendance.break_service import (
@@ -4489,21 +4994,28 @@ class AttendanceDayService:
         shift_version_id = schedule.shift_version_id
         tz_name = schedule.tz_name
         window = schedule.window
+        # AR-01 (D-03) — a roster week-off row carries no shift. Work on it is weekly-off
+        # overtime, and under `eligibility = SHIFT_FLAG` the flag comes from the shift the
+        # employee's assignment names for the date (the shift they would otherwise have worked).
+        off_day_shift_ot_eligible: bool | None = None
+        if (
+            roster_week_off_override
+            and resolved.assignment is not None
+            and resolved.assignment.shift_id is not None
+        ):
+            from hrms.modules.attendance.work_schedule import resolve_shift_schedule
+            from hrms.modules.organisation.service import OrganisationService
 
-        # A date with no shift loads its whole calendar day, which can include the morning end
-        # of the previous date's overnight shift. Hand the engine where that shift's punch
-        # window ends so those punches stay with the previous date.
-        prior_day_window_end: datetime | None = None
-        if shift_inputs is None and population_status == "ACTIVE":
-            prior_day_window_end = await self._prior_day_window_end(
-                organisation_service,
-                assignment_service,
+            usual = await resolve_shift_schedule(
+                OrganisationService(self._session),
                 company_id=company_id,
-                employee_id=employee_id,
+                shift_id=resolved.assignment.shift_id,
                 target_date=target_date,
-                company_timezone=company.timezone,
-                load_start=window.load_start,
+                branch_timezone=resolved.branch_timezone,
+                company_timezone=resolved.company_timezone,
             )
+            if usual.shift_inputs is not None:
+                off_day_shift_ot_eligible = usual.shift_inputs.is_ot_eligible
 
         calendar_result = await calendar_service.resolve_for_employee(
             company_id, employee_id, target_date
@@ -4555,6 +5067,7 @@ class AttendanceDayService:
                 policy_inputs = calc.PolicyInputs(
                     grace_in_minutes=version.grace_in_minutes,
                     grace_out_minutes=version.grace_out_minutes,
+                    mark_credit_ceiling_minutes=version.mark_credit_ceiling_minutes,
                     punch_rounding=version.punch_rounding,
                     rounding_minutes=version.rounding_minutes,
                     missing_punch_behaviour=version.missing_punch_behaviour,
@@ -4613,11 +5126,6 @@ class AttendanceDayService:
                 # the calendar month containing `target_date`, mirroring the OT monthly cap's own
                 # `month_start`/`month_end` computation below.
                 month_start = target_date.replace(day=1)
-                month_end = (
-                    date(target_date.year, 12, 31)
-                    if target_date.month == 12
-                    else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
-                )
                 window_end = target_date - timedelta(days=1)
                 if version.lates_to_half_day_count is not None and window_end >= month_start:
                     prior_late_days_in_window = await self._day_repo.count_flagged_days_in_window(
@@ -4672,31 +5180,26 @@ class AttendanceDayService:
                 remaining_weekly_minutes: int | None = None
                 if ot_version.weekly_cap_minutes is not None:
                     week_start = target_date - timedelta(days=target_date.weekday())
-                    week_end = week_start + timedelta(days=6)
+                    # D-04 — the budget is allocated in date order: a day sees only what the
+                    # *earlier* days of its week have used. Counting later days too made the
+                    # result depend on which day happened to be calculated first.
                     week_sum = await self._ot_record_repo.sum_minutes_counted_for_cap(
                         self._session,
                         company_id=company_id,
                         employee_id=employee_id,
                         date_from=week_start,
-                        date_to=week_end,
-                        exclude_date=target_date,
+                        date_to=target_date - timedelta(days=1),
                     )
                     remaining_weekly_minutes = max(0, ot_version.weekly_cap_minutes - week_sum)
                 remaining_monthly_minutes: int | None = None
                 if ot_version.monthly_cap_minutes is not None:
                     month_start = target_date.replace(day=1)
-                    month_end = (
-                        date(target_date.year, 12, 31)
-                        if target_date.month == 12
-                        else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
-                    )
                     month_sum = await self._ot_record_repo.sum_minutes_counted_for_cap(
                         self._session,
                         company_id=company_id,
                         employee_id=employee_id,
                         date_from=month_start,
-                        date_to=month_end,
-                        exclude_date=target_date,
+                        date_to=target_date - timedelta(days=1),
                     )
                     remaining_monthly_minutes = max(0, ot_version.monthly_cap_minutes - month_sum)
                 ot_inputs = calc.OvertimePolicyInputs(
@@ -4729,19 +5232,13 @@ class AttendanceDayService:
             else None
         )
 
-        punches: list[calc.PunchData] = []
-        if population_status == "ACTIVE":
-            punch_rows = await self._punch_repo.list_for_employee_window(
-                self._session,
-                company_id=company_id,
-                employee_id=employee_id,
-                window_start=window.load_start,
-                window_end=window.load_end,
-            )
-            punches = [
-                calc.PunchData(id=p.id, punch_time=p.punch_time, direction=p.direction)
-                for p in punch_rows
-            ]
+        # Invariant B (SH-01/SH-02) — the punches this date owns: compared with its neighbours'
+        # claims so every punch belongs to exactly one day, however long after the shift it is
+        # (up to the policy's `max_late_punch_minutes`). `ownership_service.py`.
+        ownership = await PunchOwnershipService(self._session, resolver).owned_punches(
+            company_id, employee_id, target_date
+        )
+        punches: list[calc.PunchData] = ownership.punches if population_status == "ACTIVE" else []
         break_events = to_event_data(
             await self._break_event_repo.list_for_date(
                 self._session,
@@ -4751,8 +5248,12 @@ class AttendanceDayService:
             )
         )
         # An open break START is *active* only while the day can still receive its END; once the
-        # punch window has closed it is unresolved (and the sweep's recompute flips it).
-        day_open = utcnow() <= window.load_end
+        # ownership window has closed it is unresolved (and the sweep's recompute flips it).
+        day_open = (
+            utcnow() < ownership.claim.window_end
+            if ownership.claim is not None
+            else utcnow() <= window.load_end
+        )
 
         # W9 (architecture §21) — active approved leave projections for this employee-date,
         # resolved here (DB access) exactly like the roster overrides above, then handed to the
@@ -4818,7 +5319,12 @@ class AttendanceDayService:
             on_duty_approved=on_duty_approved,
             break_events=break_events,
             day_open=day_open,
-            prior_day_window_end=prior_day_window_end,
+            ownership_window=(
+                (ownership.claim.window_start, ownership.claim.window_end)
+                if ownership.claim is not None
+                else None
+            ),
+            off_day_shift_ot_eligible=off_day_shift_ot_eligible,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -4841,25 +5347,134 @@ class AttendanceDayService:
         ot_version: OvertimePolicyVersion | None,
         ot_rate_rows: list[OvertimePolicyRateRow],
         existing_ot_record: OvertimeRecord | None,
+        overtime_policy_version_id: UUID | None = None,
+        preserve_existing: bool = False,
     ) -> dict[str, Any] | None:
-        """W7 (WD-29 decisions 2/4) — the single source of truth for "what is this
+        """W7 (WD-29 decisions 2/4) + AC-01 — the single source of truth for "what is this
         calculate() call's OT decision", used both to override the day row's OT summary
         columns and to sync `overtime_record`. Returns `None` when there is nothing to record
         (no prior record and nothing newly eligible this run) — the caller then deletes any
-        stale `PENDING` record and leaves the day's OT columns at the engine's own output
-        (already zeroed for a no-OT day)."""
+        stale `PENDING`/`AUTO_APPROVED` record and leaves the day's OT columns at the engine's
+        own output (already zeroed for a no-OT day).
+
+        What a recompute does to an earlier decision (AC-01, P-C):
+
+        * `PENDING` — replaced; nothing was decided yet.
+        * `AUTO_APPROVED` — never a human judgement, so it is re-derived from the fresh
+          detection. Identical figures leave the record untouched (idempotent).
+        * human `APPROVED` — kept as a human decision only while the fresh detection still
+          supports it. More detected minutes, or another day class, reopen it as `PENDING` for
+          HR; fewer minutes cap it at the new detection. The earlier decision stays on the
+          record's timeline (`SUPERSEDED_BY_RECALCULATION`).
+        * human `REJECTED` — stays rejected unless the detection grows or changes class, which
+          is new overtime nobody has judged, so it is reopened as `PENDING`. It never becomes
+          an approval by itself.
+        * `preserve_existing` (full-day leave, ON_DUTY) — left exactly as decided (BUS-011)."""
+        supersede: dict[str, Any] | None = None
+        force_hold = False
         if existing_ot_record is not None and existing_ot_record.status != "PENDING":
-            # Frozen (WD-29 decision 2) — a terminal decision is never revised by a recompute,
-            # however that recompute was triggered.
-            return {
+            frozen = {
                 "frozen": True,
                 "status": existing_ot_record.status,
                 "minutes_approved": existing_ot_record.minutes_approved,
                 "comp_off_minutes": existing_ot_record.comp_off_minutes,
             }
+            if preserve_existing:
+                return frozen
+            supersede = _ot_record_snapshot(existing_ot_record)
+            if _is_lock_withdrawal(existing_ot_record):
+                # AR-03 — rejected by period lock because the day was resolved as absent, not by
+                # a person. If the period is reopened it is re-derived from the day as it now
+                # stands, like any automatic decision: a corrected day gets its overtime back
+                # (through the policy's own approval chain), a still-incomplete day is held.
+                pass
+            elif existing_ot_record.status in ("APPROVED", "REJECTED"):
+                new_detected = result.ot_minutes_detected if ot_version is not None else 0
+                class_changed = new_detected > 0 and (
+                    (result.ot_day_class or None) != existing_ot_record.day_class
+                )
+                if new_detected > existing_ot_record.minutes_detected or class_changed:
+                    force_hold = True  # reopen for HR; falls through to a fresh derivation
+                elif existing_ot_record.status == "REJECTED":
+                    return frozen
+                else:
+                    capped = min(existing_ot_record.minutes_approved, new_detected)
+                    configured_multiplier = next(
+                        (
+                            r.multiplier_decimal
+                            for r in ot_rate_rows
+                            if r.day_class == result.ot_day_class
+                        ),
+                        None,
+                    )
+                    version_changed = (
+                        overtime_policy_version_id is not None
+                        and overtime_policy_version_id
+                        != existing_ot_record.overtime_policy_version_id
+                    )
+                    if (
+                        capped == existing_ot_record.minutes_approved
+                        and new_detected == existing_ot_record.minutes_detected
+                        and not version_changed
+                    ):
+                        return frozen
+                    # R-7 - the audit label says what actually happened to the decision: the
+                    # approved minutes were cut (`CAPPED`), only the policy version it is priced
+                    # under moved (`POLICY_VERSION_CHANGED`), or only the detected figure moved.
+                    if capped < existing_ot_record.minutes_approved:
+                        outcome = "CAPPED"
+                    elif version_changed:
+                        outcome = "POLICY_VERSION_CHANGED"
+                    else:
+                        outcome = "DETECTION_UPDATED"
+                    return {
+                        "frozen": False,
+                        "kind": "cap",
+                        "outcome": outcome,
+                        "status": existing_ot_record.status,
+                        "minutes_detected": new_detected,
+                        "minutes_approved": capped,
+                        "comp_off_minutes": (
+                            capped if existing_ot_record.comp_off_minutes > 0 else 0
+                        ),
+                        "day_class": (
+                            result.ot_day_class
+                            if new_detected > 0
+                            else existing_ot_record.day_class
+                        ),
+                        "classification_code": (
+                            result.ot_classification
+                            if new_detected > 0
+                            else existing_ot_record.classification_code
+                        ),
+                        "configured_multiplier": (
+                            configured_multiplier
+                            if new_detected > 0
+                            else existing_ot_record.configured_multiplier
+                        ),
+                        "overtime_policy_version_id": (
+                            overtime_policy_version_id
+                            or existing_ot_record.overtime_policy_version_id
+                        ),
+                        "supersede": supersede,
+                    }
+            # AUTO_APPROVED (re-derived below) and a reopened human decision share the path.
 
         if result.ot_minutes_detected <= 0 or ot_version is None:
             return None
+
+        # AC-04 — overtime on a day that still ends INCOMPLETE is never approved by itself: an
+        # orphan punch means the worked time is not yet established. It is held for HR, and
+        # resolved with the day (a regularization recomputes it; period lock under
+        # `TREAT_ABSENT` rejects it).
+        # AR-11 — the same for any day with an orphan punch, whatever status the policy's
+        # `missing_punch_behaviour` gives it (`AUTO_CLOSE` leaves it PRESENT).
+        if result.attendance_status == "INCOMPLETE" or result.missing_punch:
+            force_hold = True
+        # D-03 — work on a roster week-off is overtime only once someone has approved it: the
+        # employee was rostered off, so nobody planned the work.
+        if (result.snapshot.get("derived_inputs") or {}).get("roster_week_off_override"):
+            force_hold = True
 
         approval_chain = ot_version.approval_chain
         resolved_manager_id: UUID | None = None
@@ -4903,7 +5518,13 @@ class AttendanceDayService:
                 ):
                     approval_stage = "HR"
 
-        if needs_review:
+        if force_hold and not needs_review:
+            status = "PENDING"
+            minutes_approved = 0
+            approval_stage = "HR"
+            resolved_manager_id = None
+            approver_unresolved = False
+        elif needs_review:
             status = "PENDING"
             minutes_approved = 0
         else:
@@ -4933,8 +5554,11 @@ class AttendanceDayService:
             None,
         )
 
-        return {
+        decision = {
             "frozen": False,
+            "kind": "replace",
+            "supersede": supersede,
+            "overtime_policy_version_id": overtime_policy_version_id,
             "status": status,
             "approval_chain": approval_chain,
             "approval_stage": approval_stage,
@@ -4948,6 +5572,26 @@ class AttendanceDayService:
             "comp_off_minutes": comp_off_minutes,
             "comp_off_expiry_date": comp_off_expiry_date,
         }
+        if (
+            existing_ot_record is not None
+            and existing_ot_record.status == "AUTO_APPROVED"
+            and status == "AUTO_APPROVED"
+            and existing_ot_record.minutes_detected == decision["minutes_detected"]
+            and existing_ot_record.minutes_approved == decision["minutes_approved"]
+            and existing_ot_record.day_class == decision["day_class"]
+            and existing_ot_record.comp_off_minutes == decision["comp_off_minutes"]
+            and existing_ot_record.overtime_policy_version_id
+            == (overtime_policy_version_id or existing_ot_record.overtime_policy_version_id)
+            and existing_ot_record.configured_multiplier == decision["configured_multiplier"]
+        ):
+            # Same inputs, same answer: nothing to supersede and nothing to log again.
+            return {
+                "frozen": True,
+                "status": existing_ot_record.status,
+                "minutes_approved": existing_ot_record.minutes_approved,
+                "comp_off_minutes": existing_ot_record.comp_off_minutes,
+            }
+        return decision
 
     async def _sync_overtime_record(
         self,
@@ -4975,8 +5619,55 @@ class AttendanceDayService:
 
         if decision is None:
             if existing_ot_record is not None:
-                await self._ot_record_repo.delete_if_pending(
-                    self._session, company_id=company_id, attendance_day_id=attendance_day_id
+                if existing_ot_record.status == "AUTO_APPROVED":
+                    # AC-01 — an automatic approval whose overtime no longer exists is withdrawn.
+                    # The audit row keeps what it was; the record (and its timeline) goes.
+                    await self._audit.record(
+                        self._session,
+                        company_id=company_id,
+                        actor_user_id=actor_user_id,
+                        action="OVERTIME_SUPERSEDED_BY_RECALCULATION",
+                        entity_type="overtime_record",
+                        entity_id=existing_ot_record.id,
+                        before=_ot_record_snapshot(existing_ot_record),
+                        after={"minutes_detected": 0, "minutes_approved": 0},
+                        ip=ip_address,
+                        user_agent=user_agent,
+                    )
+                await self._ot_record_repo.delete_for_day(
+                    self._session,
+                    company_id=company_id,
+                    attendance_day_id=attendance_day_id,
+                    statuses=("PENDING", "AUTO_APPROVED"),
+                )
+            return
+
+        if decision.get("kind") == "cap":
+            assert existing_ot_record is not None
+            capped = await self._ot_record_repo.cap_decided(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=attendance_day_id,
+                values={
+                    "minutes_detected": decision["minutes_detected"],
+                    "minutes_approved": decision["minutes_approved"],
+                    "comp_off_minutes": decision["comp_off_minutes"],
+                    "day_class": decision["day_class"],
+                    "classification_code": decision["classification_code"],
+                    "configured_multiplier": decision["configured_multiplier"],
+                    "overtime_policy_version_id": decision["overtime_policy_version_id"],
+                },
+                now=now,
+            )
+            if capped is not None:
+                await self._record_supersede(
+                    company_id=company_id,
+                    record=capped,
+                    prior=decision["supersede"],
+                    outcome=decision["outcome"],
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
                 )
             return
 
@@ -4997,14 +5688,23 @@ class AttendanceDayService:
             "comp_off_expiry_date": decision["comp_off_expiry_date"],
         }
 
+        values["overtime_policy_version_id"] = (
+            decision.get("overtime_policy_version_id") or overtime_policy_version_id
+        )
         record: OvertimeRecord | None = None
         if existing_ot_record is not None:
-            record = await self._ot_record_repo.replace_pending_for_day(
+            # A human decision is only ever superseded when `_resolve_ot_decision` reopened it
+            # (it carries `supersede`); otherwise only undecided / automatic ones are replaced.
+            replaceable: tuple[str, ...] = ("PENDING", "AUTO_APPROVED")
+            if decision.get("supersede") is not None:
+                replaceable = ("PENDING", "AUTO_APPROVED", "APPROVED", "REJECTED")
+            record = await self._ot_record_repo.replace_for_day(
                 self._session,
                 company_id=company_id,
                 attendance_day_id=attendance_day_id,
                 values=values,
                 now=now,
+                statuses=replaceable,
             )
         if record is None:
             record = await self._ot_record_repo.insert(
@@ -5019,6 +5719,16 @@ class AttendanceDayService:
                 },
             )
 
+        if decision.get("supersede") is not None:
+            await self._record_supersede(
+                company_id=company_id,
+                record=record,
+                prior=decision["supersede"],
+                outcome="REOPENED" if decision["status"] == "PENDING" else "RE-DERIVED",
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         await self._ot_action_repo.insert(
             self._session,
             data={
@@ -5094,6 +5804,52 @@ class AttendanceDayService:
                     ip=ip_address,
                     user_agent=user_agent,
                 )
+
+    async def _record_supersede(
+        self,
+        *,
+        company_id: UUID,
+        record: OvertimeRecord,
+        prior: dict[str, Any],
+        outcome: str,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """AC-01 — writes `SUPERSEDED_BY_RECALCULATION` on the record's append-only timeline and
+        an audit row, both carrying the decision that was superseded (who decided it, when, and
+        what it said)."""
+        await self._ot_action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "overtime_record_id": record.id,
+                "action": "SUPERSEDED_BY_RECALCULATION",
+                "actor_user_id": None,
+                "actor_employee_id": None,
+                "stage": None,
+                "comment": json.dumps({"outcome": outcome, "previous": prior}, sort_keys=True),
+            },
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="OVERTIME_SUPERSEDED_BY_RECALCULATION",
+            entity_type="overtime_record",
+            entity_id=record.id,
+            before=prior,
+            after={
+                "outcome": outcome,
+                "status": record.status,
+                "minutes_detected": record.minutes_detected,
+                "minutes_approved": record.minutes_approved,
+                "day_class": record.day_class,
+            },
+            ip=ip_address,
+            user_agent=user_agent,
+        )
 
 
 def _validate_rate_rows(rate_rows: list[Any]) -> None:
@@ -5930,7 +6686,11 @@ class RegularizationRequestService:
             replaceable = list(day_input.punches)
         for requested in requested_punches:
             await _ensure_not_after_last_working_day(
-                self._session, company_id, row.employee_id, requested.requested_time
+                self._session,
+                company_id,
+                row.employee_id,
+                requested.requested_time,
+                direction=requested.direction,
             )
             # WRONG_PUNCH replaces the nearest punch of that direction, not adds alongside it.
             replaced = min(
@@ -6275,6 +7035,22 @@ class OvertimeRecordService:
                 )
         return row
 
+    async def _lock_day_first(self, company_id: UUID, record_id: UUID) -> None:
+        """Phase 4 lock order. `AttendanceDayService._calculate` locks the attendance-day row
+        (`FOR UPDATE`) and then writes the overtime record; a review used to write the record
+        first and the day second, so the two could deadlock on one day. A review now takes the
+        day lock first, then reads the record — so it also sees whatever a recalculation that
+        held the lock just wrote, never a stale copy."""
+        peek = await self._repo.get_by_id(self._session, company_id=company_id, record_id=record_id)
+        if peek is None:
+            return  # `_get_reviewable` reports the not-found
+        await self._day_repo.get_by_employee_date_for_update(
+            self._session,
+            company_id=company_id,
+            employee_id=peek.employee_id,
+            attendance_date=peek.attendance_date,
+        )
+
     async def _stale_error(
         self, company_id: UUID, record_id: UUID
     ) -> OvertimeRecordNotFoundError | StaleOvertimeRecordResourceError:
@@ -6329,6 +7105,7 @@ class OvertimeRecordService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> OvertimeRecordRead:
+        await self._lock_day_first(company_id, record_id)
         row = await self._get_reviewable(
             company_id, record_id, scope=scope, caller_employee_id=caller_employee_id
         )
@@ -6461,6 +7238,16 @@ class OvertimeRecordService:
                 ip=ip_address,
                 user_agent=user_agent,
             )
+        if updated.minutes_approved != before_read.minutes_detected:
+            # R-5 - a partial approval hands the minutes it did not approve back to the budget.
+            await AttendanceDayService(self._session).reallocate_caps_after_decision(
+                company_id,
+                updated.employee_id,
+                updated.attendance_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         return read
 
     @logged_operation("attendance.overtime.reject")
@@ -6477,6 +7264,7 @@ class OvertimeRecordService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> OvertimeRecordRead:
+        await self._lock_day_first(company_id, record_id)
         row = await self._get_reviewable(
             company_id, record_id, scope=scope, caller_employee_id=caller_employee_id
         )
@@ -6549,6 +7337,16 @@ class OvertimeRecordService:
             entity_id=record_id,
             actor_user_id=actor_user_id,
         )
+        if row.minutes_detected > 0:
+            # R-5 - a rejected record no longer reserves its minutes: later days get them.
+            await AttendanceDayService(self._session).reallocate_caps_after_decision(
+                company_id,
+                updated.employee_id,
+                updated.attendance_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         return read
 
 
@@ -6605,6 +7403,7 @@ class AttendancePeriodService:
         self._day_repo = AttendanceDayRepository()
         self._reg_repo = AttendanceRegularizationRequestRepository()
         self._ot_repo = OvertimeRecordRepository()
+        self._ot_action_repo = OvertimeActionRepository()
         self._roster_repo = ShiftRosterRepository()
         self._policy_repo = AttendancePolicyRepository()
         self._audit = AuditService()
@@ -6849,8 +7648,9 @@ class AttendancePeriodService:
                 AttendancePeriodBlockingReason(
                     code="WORK_ON_LEAVE_UNRESOLVED",
                     message=(
-                        "Some employees punched on a day of approved full-day leave — cancel "
-                        "the leave or confirm it stands before finalizing"
+                        "Some employees worked during approved leave (a full-day leave, or "
+                        "the leave half of a half-day leave) — cancel the leave or confirm it "
+                        "stands before finalizing"
                     ),
                     count=len(unresolved_leave_rows),
                     sample=[
@@ -6893,6 +7693,9 @@ class AttendancePeriodService:
         # `TREAT_ABSENT`/`TREAT_PRESENT` policy is auto-resolved by `finalize` itself, not a
         # blocker.
         incomplete_rows = [r for r in day_rows if r.attendance_status == "INCOMPLETE"]
+        # AC-04 — INCOMPLETE days that lock will resolve as absent: their held overtime is
+        # withdrawn by `_apply_incomplete_lock_resolution`, so it is not a blocker.
+        absent_at_lock_day_ids: set[UUID] = set()
         if incomplete_rows:
             version_ids = {
                 r.attendance_policy_version_id
@@ -6911,6 +7714,20 @@ class AttendancePeriodService:
                 if behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
                 == "KEEP_INCOMPLETE"
             ]
+            absent_at_lock_day_ids = {
+                r.id
+                for r in incomplete_rows
+                if behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
+                != "KEEP_INCOMPLETE"
+                and (
+                    behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
+                    != "TREAT_PRESENT"
+                    # H-02: a no-punch day resolves as absent even under TREAT_PRESENT
+                    or calc.day_has_no_punches(
+                        r.computation_snapshot, r.actual_first_in, r.actual_last_out
+                    )
+                )
+            }
             if blocking_incomplete:
                 reasons.append(
                     AttendancePeriodBlockingReason(
@@ -6927,6 +7744,53 @@ class AttendancePeriodService:
                         ],
                     )
                 )
+
+        # PENDING_LEAVE - LV-04. A leave request still waiting for a decision would lock its
+        # days as absent (loss of pay), and approval is refused once the period is closed. It
+        # is decided, or withdrawn, first - the same rule as a pending regularization.
+        from hrms.modules.leave.models import LeaveApplication
+
+        pending_leave = [
+            a
+            for a in (
+                await self._session.execute(
+                    select(LeaveApplication).where(
+                        LeaveApplication.company_id == company_id,
+                        LeaveApplication.status == "SUBMITTED",
+                        LeaveApplication.start_date <= period.period_end,
+                        LeaveApplication.end_date >= period.period_start,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+            if any(
+                scope.owns(
+                    a.employee_id, max(a.start_date, period.period_start) + timedelta(days=i)
+                )
+                for i in range(
+                    (
+                        min(a.end_date, period.period_end) - max(a.start_date, period.period_start)
+                    ).days
+                    + 1
+                )
+            )
+        ]
+        if pending_leave:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="PENDING_LEAVE",
+                    message=(
+                        "Some leave requests for this period are still waiting for a decision - "
+                        "approve, reject or withdraw them before finalizing"
+                    ),
+                    count=len(pending_leave),
+                    sample=[
+                        f"{a.employee_id}:{a.start_date.isoformat()}..{a.end_date.isoformat()}"
+                        for a in pending_leave[:20]
+                    ],
+                )
+            )
 
         # PENDING_REGULARIZATION
         pending_reg = await self._reg_repo.list_filtered(
@@ -6964,7 +7828,12 @@ class AttendancePeriodService:
             date_to=period.period_end,
             status="PENDING",
         )
-        pending_ot = [r for r in pending_ot if scope.owns(r.employee_id, r.attendance_date)]
+        pending_ot = [
+            r
+            for r in pending_ot
+            if scope.owns(r.employee_id, r.attendance_date)
+            and r.attendance_day_id not in absent_at_lock_day_ids
+        ]
         if pending_ot:
             reasons.append(
                 AttendancePeriodBlockingReason(
@@ -6974,6 +7843,114 @@ class AttendancePeriodService:
                     sample=[
                         f"{r.employee_id}:{r.attendance_date.isoformat()}" for r in pending_ot[:20]
                     ],
+                )
+            )
+
+        # OVERTIME_INTEGRITY — AC-01. What payroll reads (the day row) must agree with what was
+        # decided (the overtime record) and with what the punches support. A recalculation keeps
+        # them in step; this blocks the close if anything ever slipped past it.
+        ot_integrity: list[str] = []
+        day_by_id = {r.id: r for r in day_rows}
+        for r in day_rows:
+            if (r.ot_minutes_approved or 0) > (r.ot_minutes_detected or 0):
+                ot_integrity.append(
+                    f"{r.employee_id}:{r.attendance_date.isoformat()}:approved>detected"
+                    f"({r.ot_minutes_approved}>{r.ot_minutes_detected})"
+                )
+        all_ot = await self._ot_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status=None,
+        )
+        for rec in all_ot:
+            paid_day = day_by_id.get(rec.attendance_day_id)
+            if paid_day is None or rec.status not in ("APPROVED", "AUTO_APPROVED"):
+                continue
+            unpayable = paid_day.attendance_status == "ON_DUTY" or (
+                paid_day.attendance_status == "LEAVE"
+                and Decimal(str(paid_day.leave_fraction or 0)) >= Decimal("1.00")
+            )
+            if unpayable or paid_day.attendance_status == "INCOMPLETE":
+                continue
+            if rec.minutes_approved != (paid_day.ot_minutes_approved or 0) or (
+                rec.minutes_approved > 0
+                and (
+                    (rec.day_class or None) != (paid_day.ot_day_class or None)
+                    or rec.overtime_policy_version_id != paid_day.overtime_policy_version_id
+                )
+            ):
+                ot_integrity.append(
+                    f"{rec.employee_id}:{rec.attendance_date.isoformat()}:record-differs-from-day"
+                )
+        if ot_integrity:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="OVERTIME_INTEGRITY",
+                    message=(
+                        "Approved overtime disagrees with the attendance day it is paid on "
+                        "(more than detected, or another day class or policy version) — "
+                        "recompute the listed days before finalizing"
+                    ),
+                    count=len(ot_integrity),
+                    sample=ot_integrity[:20],
+                )
+            )
+
+        # LEAVE_CALENDAR_MISMATCH - AC-03. Approved leave whose stored days disagree with the
+        # calendar and schedule as they stand now would charge leave on a holiday, or leave an
+        # unpaid gap inside approved leave. Nothing is rewritten here; HR resolves each one.
+        from hrms.modules.leave.reconciliation import LeaveCalendarReconciliationService
+
+        reconciliation = LeaveCalendarReconciliationService(self._session)
+        # LEAVE_BALANCE_SHORTFALL - P-E. A calendar change made a date inside approved leave a
+        # leave day that the balance cannot cover. It is not debited and not turned into loss of
+        # pay; the period stays open until HR resolves it (grant balance, or cancel the leave).
+        shortfalls = [
+            s
+            for s in await reconciliation.list_open_shortfalls(
+                company_id, date_from=period.period_start, date_to=period.period_end
+            )
+            if scope.owns(s.employee_id, s.calendar_date)
+        ]
+        if shortfalls:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="LEAVE_BALANCE_SHORTFALL",
+                    message=(
+                        "Approved leave has a balance shortfall after a calendar change "
+                        "(employee:application:date) - resolve it in Leave before finalizing"
+                    ),
+                    count=len(shortfalls),
+                    sample=[
+                        f"{s.employee_id}:{s.leave_application_id}:{s.calendar_date.isoformat()}:"
+                        f"needs {s.required_fraction}, balance {s.available_balance}"
+                        for s in shortfalls[:20]
+                    ],
+                )
+            )
+        short_keys = {(s.leave_application_id, s.calendar_date) for s in shortfalls}
+        drift = [
+            d
+            for d in await reconciliation.find_discrepancies(
+                company_id, date_from=period.period_start, date_to=period.period_end
+            )
+            if scope.owns(d.employee_id, d.calendar_date)
+            and (d.application_id, d.calendar_date) not in short_keys
+        ]
+        if drift:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="LEAVE_CALENDAR_MISMATCH",
+                    message=(
+                        "Approved leave disagrees with the current calendar or schedule "
+                        "(employee:application:date:kind) - reconcile the leave before finalizing"
+                    ),
+                    count=len(drift),
+                    sample=[d.describe() for d in drift[:20]],
                 )
             )
 
@@ -6997,6 +7974,37 @@ class AttendancePeriodService:
                     sample=[
                         f"{r.employee_id}:{r.roster_date.isoformat()}" for r in draft_roster[:20]
                     ],
+                )
+            )
+
+        # ORPHAN_PUNCHES — Invariant B: a punch no attendance day owns is attendance nobody has
+        # counted. It blocks close until it is corrected (a regularization puts the time on the
+        # right day) or dismissed with a reason (`dismiss_orphan_punch`).
+        from hrms.modules.organisation.service import OrganisationService
+
+        company_zone = resolve_zoneinfo(
+            (await OrganisationService(self._session).get_company_profile(company_id)).timezone
+        )
+        orphans = [
+            p
+            for p in await AttendanceDayService(self._session).list_orphaned_punches(
+                company_id, date_from=period.period_start, date_to=period.period_end
+            )
+            if scope.owns(
+                p.employee_id,
+                datetime.fromisoformat(p.punch_time).astimezone(company_zone).date(),
+            )
+        ]
+        if orphans:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="ORPHAN_PUNCHES",
+                    message=(
+                        "Some punches belong to no attendance day — correct them with a "
+                        "regularization or dismiss them with a reason before finalizing"
+                    ),
+                    count=len(orphans),
+                    sample=[f"{p.employee_id}:{p.id}" for p in orphans[:20]],
                 )
             )
 
@@ -7333,7 +8341,16 @@ class AttendancePeriodService:
         now = datetime.now(UTC)
         resolved: list[dict[str, Any]] = []
         for row in incomplete_rows:
-            behaviour = behaviour_by_version.get(row.attendance_policy_version_id, "TREAT_ABSENT")
+            configured = behaviour_by_version.get(row.attendance_policy_version_id, "TREAT_ABSENT")
+            behaviour = configured
+            # H-02 / H-07 - a day with NO punches at all is a no-show: it resolves as absent at lock
+            # whatever the company chose, so `TREAT_PRESENT` never pays one. (A day with at least
+            # one punch, an IN-only day included, follows the configured behaviour.)
+            zero_punch = calc.day_has_no_punches(
+                row.computation_snapshot, row.actual_first_in, row.actual_last_out
+            )
+            if zero_punch and behaviour == "TREAT_PRESENT":
+                behaviour = "TREAT_ABSENT"
             # PAY-012 — the off half of a half-day weekly off is never LOP; BUS-001 — for a
             # daily-wage employee that half is unpaid rather than paid.
             off = Decimal(str(row.weekly_off_fraction or 0)).quantize(Decimal("0.01"))
@@ -7360,6 +8377,8 @@ class AttendancePeriodService:
                     "employee_id": str(row.employee_id),
                     "attendance_date": row.attendance_date.isoformat(),
                     "behaviour": behaviour,
+                    "configured_behaviour": configured,
+                    "zero_punch": zero_punch,
                     "before": {
                         "paid_day_fraction": str(row.paid_day_fraction),
                         "lop_fraction": str(row.lop_fraction),
@@ -7378,6 +8397,11 @@ class AttendancePeriodService:
                 lop_fraction=lop_fraction,
                 now=now,
             )
+            if behaviour == "TREAT_ABSENT":
+                # AC-04 — a day resolved as absent never also pays overtime.
+                await self._withdraw_overtime_at_lock(
+                    company_id, row, actor_user_id=actor_user_id, now=now
+                )
             set_committed_value(row, "paid_day_fraction", paid_day_fraction)
             set_committed_value(row, "lop_fraction", lop_fraction)
 
@@ -7393,6 +8417,76 @@ class AttendancePeriodService:
             ip=ip_address,
             user_agent=user_agent,
         )
+
+    async def _withdraw_overtime_at_lock(
+        self,
+        company_id: UUID,
+        row: "AttendanceDay",
+        *,
+        actor_user_id: UUID | None,
+        now: datetime,
+    ) -> None:
+        """AC-04 — an `INCOMPLETE` day resolved as absent at lock (`TREAT_ABSENT`) pays no
+        overtime. The record is rejected with a system action that keeps what it said, and the
+        day row's payroll-facing overtime is zeroed before the row is locked."""
+        record = await self._ot_repo.get_by_attendance_day(
+            self._session, company_id=company_id, attendance_day_id=row.id
+        )
+        if record is not None and record.status != "REJECTED":
+            before = _ot_record_snapshot(record)
+            reason = LOCK_WITHDRAWAL_REASON
+            updated = await self._ot_repo.update(
+                self._session,
+                company_id=company_id,
+                record_id=record.id,
+                values={
+                    "status": "REJECTED",
+                    "approval_stage": None,
+                    "minutes_approved": 0,
+                    "comp_off_minutes": 0,
+                    "reviewed_by_user_id": None,
+                    "reviewed_at": now,
+                    "rejection_reason": reason,
+                },
+                expected_version=record.version,
+                now=now,
+            )
+            if updated is not None:
+                await self._ot_action_repo.insert(
+                    self._session,
+                    data={
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "overtime_record_id": record.id,
+                        "action": "REJECTED",
+                        "actor_user_id": None,
+                        "actor_employee_id": None,
+                        "stage": None,
+                        "comment": reason,
+                    },
+                )
+                await self._audit.record(
+                    self._session,
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    action="OVERTIME_WITHDRAWN_AT_LOCK",
+                    entity_type="overtime_record",
+                    entity_id=record.id,
+                    before=before,
+                    after={"status": "REJECTED", "minutes_approved": 0},
+                )
+        if (row.ot_minutes_approved or 0) or row.comp_off_minutes_earned or row.ot_pending:
+            await self._day_repo.mark_ot_approved(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=row.id,
+                minutes_approved=0,
+                comp_off_minutes=0,
+                now=now,
+            )
+            set_committed_value(row, "ot_minutes_approved", 0)
+            set_committed_value(row, "comp_off_minutes_earned", 0)
+            set_committed_value(row, "ot_pending", False)
 
     async def _recalculate_open_days(
         self,

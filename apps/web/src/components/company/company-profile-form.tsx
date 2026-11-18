@@ -6,7 +6,7 @@ import type {
   CompanyProfileFormErrors,
   CompanyProfileFormValues,
 } from "@/lib/company/validate-company-profile";
-import { listTimezones } from "@/lib/timezones";
+import { useAllowedTimezones } from "@/lib/timezones";
 
 const DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
 const DAY_LABELS: Record<(typeof DAYS)[number], string> = {
@@ -37,7 +37,7 @@ export function CompanyProfileForm({
   onChange,
   currencyLocked,
 }: CompanyProfileFormProps) {
-  const timezones = listTimezones();
+  const timezones = useAllowedTimezones(values.timezone);
 
   function update<K extends keyof CompanyProfileFormValues>(
     key: K,

@@ -90,6 +90,7 @@ const assignmentChangeLabels = {
 const workLocationLabels = {'OFFICE': 'Office', 'WFH': 'Work from home', 'HYBRID': 'Hybrid', 'FIELD': 'Field'};
 
 /// `AssignmentCreate` — empty reference fields carry forward from the current assignment.
+/// SH-13: `clear_shift` removes the shift; it cannot be combined with choosing one.
 FormSpec assignmentSpec(List<String> allowedChangeTypes) => FormSpec(
       name: 'assignment',
       label: 'Assignment',
@@ -103,7 +104,9 @@ FormSpec assignmentSpec(List<String> allowedChangeTypes) => FormSpec(
         const FieldSpec('grade_id', 'Grade', kind: FieldKind.choice, choiceKey: 'grades'),
         const FieldSpec('reporting_manager_id', 'Reporting manager', kind: FieldKind.choice, choiceKey: 'employees'),
         const FieldSpec('dotted_line_manager_id', 'Dotted-line manager', kind: FieldKind.choice, choiceKey: 'employees'),
-        const FieldSpec('shift_id', 'Shift', kind: FieldKind.choice, choiceKey: 'shifts'),
+        const FieldSpec('shift_id', 'Shift', kind: FieldKind.choice, choiceKey: 'shifts', hint: 'Leave empty to keep the current shift'),
+        // SH-13: an empty shift keeps the current one, so removing it is its own switch.
+        const FieldSpec('clear_shift', 'Remove the shift (no shift from this date)', kind: FieldKind.toggle),
         const FieldSpec('work_location_type', 'Work location', kind: FieldKind.select, options: ['OFFICE', 'WFH', 'HYBRID', 'FIELD'], optionLabels: workLocationLabels),
         const FieldSpec('cost_centre_id', 'Cost centre ID', hint: 'No cost centre directory exists yet — enter the ID directly'),
       ],

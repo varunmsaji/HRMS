@@ -42,7 +42,7 @@ Known, documented simplifications (not silent gaps):
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -69,7 +69,39 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: to that day (a night worker's rostered week-off is no longer INCOMPLETE).
 #: 12 = a day with an IN and no complete pair (checked in, not yet out) records that IN as
 #: `actual_first_in`, so the overview counts a mid-shift employee as present.
-ENGINE_VERSION = 12
+#: 13 = shift remediation (`docs/audits/SHIFT_REMEDIATION_PLAN_2026-11-15.md`): split-shift blocks
+#: placed in sequence with scheduled minutes from the blocks (SH-04); punch ownership replaces the
+#: fixed two-hour pad (SH-01/02); a shift operating on an off day makes it a working day (SH-03);
+#: no-shift days off are not expected and worked no-shift days use hour bands (SH-08); breaks
+#: matched by overlap and automatic deduction not stacked on a punched break (SH-10/SH-12).
+#: 14 = grace minutes (at most the grace, and no more than the minutes actually missed) are credited
+#: to the hour-band lookup only (N-02, `grace_band_credit`), so an arrival or departure inside grace
+#: no longer drops an exactly-full day under the band. Worked minutes, overtime and the raw
+#: late/early figures are unchanged. Ownership also stops pairing an IN with an OUT that lies
+#: beyond its day's punch window (N-03, `punch_ownership.assign_owners`).
+#: 15 = overtime follows the half of the day that is worked (AC-05, P-A: after the net schedule of
+#: the worked half of a half-day leave or half weekly off); work inside a half-day-leave half is
+#: flagged and earns no overtime; a roster week-off is a WEEKLY_OFF for overtime (AC-06); a
+#: HALF_DAY or ABSENT-by-band day pays no overtime (P-B).
+#: 16 = attendance rules audit AR-01..AR-14 (owner decisions D-01..D-04, 16 Nov 2026):
+#: lateness judged by a late/early band no longer also costs the hour band (D-01); a short worked
+#: half on a half-day-leave day is paid in proportion, not lost (D-02); work on a roster week-off
+#: is weekly-off overtime (D-03); the harsher of the hour band and a late/early band wins (AR-05);
+#: half-day-leave rules cover SPLIT and FLEXIBLE shifts and only the worked half is credited, so
+#: early arrival is neither overtime nor a leave conflict (AR-06, AR-07); a completed short shift
+#: keeps its overtime (AR-12); a half-day weekly off records no lateness (AR-13); an orphan punch
+#: on a split shift is INCOMPLETE before the missed-block rule (AR-14). The credit a late/early mark
+#: gives the hour band is bounded by ONE combined ceiling per day and policy version
+#: (`PolicyInputs.mark_credit_ceiling_minutes`, default 59; review R-2 as corrected by owner
+#: decision D-01b), so a broad mark band cannot pay for unworked time; plain grace is credited
+#: separately and never uses the ceiling. Engine 15 was never committed: the commit that carries
+#: this change moves the stored version 14 -> 16.
+ENGINE_VERSION = 16
+
+#: The default of the per-policy-version mark-credit ceiling (R-2): the length of the shipped
+#: templates' "1-59 minutes" mark band. Stored per policy version (0-120); this is the default.
+DEFAULT_MARK_CREDIT_CEILING_MINUTES = 59
+MARK_CREDIT_CEILING_MINUTES = DEFAULT_MARK_CREDIT_CEILING_MINUTES  # name kept for older callers
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -175,6 +207,9 @@ class PolicyInputs:
     excess_break_days_to_half_day_count: int | None = None
     early_departure_requires_approval: bool = False
     on_duty_requires_punch: bool = False
+    # R-2 (combined, per policy version): the most beyond-grace minutes, summed over the late and
+    # the early end of one day, that late/early marks may credit to the hour-band lookup (0 = none).
+    mark_credit_ceiling_minutes: int = DEFAULT_MARK_CREDIT_CEILING_MINUTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +329,15 @@ class AttendanceCalculationInput:
     # date (an overnight shift). Resolved by `service.py`, and only used when this date has no
     # shift: punches at or before it belong to the previous date, not to this one.
     prior_day_window_end: datetime | None = None
+    # Invariant B (engine 13) — the `[start, end)` ownership window of this date's claim
+    # (`punch_ownership.py`). Recorded in the snapshot only: `punches` already holds exactly the
+    # punches this date owns, so the engine never filters by it.
+    ownership_window: tuple[datetime, datetime] | None = None
+    # AR-01 (D-03) — a roster week-off row carries no shift, so the shift's overtime-eligibility
+    # flag is not on `shift`. `service.py` resolves it from the shift the employee's assignment
+    # names for the date; `None` when there is none. Read only for work on a roster week-off
+    # under an overtime policy with `eligibility = SHIFT_FLAG`.
+    off_day_shift_ot_eligible: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,6 +519,35 @@ def local_time_to_utc(attendance_date: date, local_time: time, tz_name: str) -> 
     return _local_to_utc(attendance_date, local_time, ZoneInfo(tz_name))
 
 
+def place_duty_blocks(
+    *, attendance_date: date, tz_name: str, blocks: list[ShiftDutyBlockData]
+) -> list[tuple[datetime, datetime]]:
+    """SH-04 — the UTC span of each SPLIT duty block, in sequence order. The first block starts
+    on the attendance date; each later block starts at the first occurrence of its start time at
+    or after the previous block's end, so a 01:00 block after a 20:00-23:00 block falls on the
+    next calendar day. A block ending at or before its start crosses midnight."""
+    tz = ZoneInfo(tz_name)
+    placed: list[tuple[datetime, datetime]] = []
+    cursor: datetime | None = None
+    for block in sorted(blocks, key=lambda b: b.sequence):
+        day = attendance_date if cursor is None else cursor.astimezone(tz).date()
+        start = _local_to_utc(day, block.start_time, tz)
+        if cursor is not None and start < cursor:
+            start = _local_to_utc(day + timedelta(days=1), block.start_time, tz)
+        start_day = start.astimezone(tz).date()
+        end = _local_to_utc(start_day, block.end_time, tz)
+        if end <= start:
+            end = _local_to_utc(start_day + timedelta(days=1), block.end_time, tz)
+        placed.append((start, end))
+        cursor = end
+    return placed
+
+
+def split_scheduled_minutes(placed: list[tuple[datetime, datetime]]) -> int:
+    """SH-04 — a split shift's scheduled minutes are the sum of its duty blocks."""
+    return sum(int((end - start).total_seconds() // 60) for start, end in placed)
+
+
 @dataclass(frozen=True, slots=True)
 class ScheduleWindow:
     scheduled_start: datetime | None
@@ -514,15 +587,10 @@ def resolve_schedule_window(
         )
 
     if shift.shift_type == "SPLIT" and shift.duty_blocks:
-        first_block = min(shift.duty_blocks, key=lambda b: b.sequence)
-        last_block = max(shift.duty_blocks, key=lambda b: b.sequence)
-        sched_start = _local_to_utc(attendance_date, first_block.start_time, tz)
-        end_date = (
-            attendance_date + timedelta(days=1) if last_block.crosses_midnight else attendance_date
+        placed = place_duty_blocks(
+            attendance_date=attendance_date, tz_name=tz_name, blocks=shift.duty_blocks
         )
-        sched_end = _local_to_utc(end_date, last_block.end_time, tz)
-        if sched_end <= sched_start:
-            sched_end += timedelta(days=1)
+        sched_start, sched_end = placed[0][0], placed[-1][1]
         return ScheduleWindow(
             scheduled_start=sched_start,
             scheduled_end=sched_end,
@@ -668,6 +736,19 @@ def pair_punches(punches: list[PunchData]) -> PairingResult:
     return PairingResult(pairs=pairs, orphans=orphans)
 
 
+def day_has_no_punches(
+    snapshot: dict[str, Any] | None, first_in: datetime | None, last_out: datetime | None
+) -> bool:
+    """H-02 / H-07 - whether a stored day had NO punches at all (not even a lone OUT). Read from the
+    calculation snapshot's list of the punches the day owned; rows that predate it fall back to the
+    recorded first-in / last-out. A day with no punches is a no-show: at period lock it is absent,
+    whatever the company's `incomplete_at_lock_behaviour` says (`TREAT_PRESENT` never pays it)."""
+    inputs = (snapshot or {}).get("inputs")
+    if isinstance(inputs, dict) and isinstance(inputs.get("punch_ids"), list):
+        return len(inputs["punch_ids"]) == 0
+    return first_in is None and last_out is None
+
+
 def recorded_first_in(pairing: PairingResult) -> datetime | None:
     """When the employee arrived, as stored on `attendance_day.actual_first_in`.
 
@@ -765,21 +846,66 @@ def _break_window_contains(start: time, end: time | None, point: time) -> bool:
     return point >= start or point <= end
 
 
+def _break_window_overlap_seconds(
+    start: time, end: time | None, gap: tuple[datetime, datetime], tz: ZoneInfo
+) -> float:
+    """SH-10 — seconds of `gap` inside the break window, the window anchored on the gap's local
+    date and the day before (a window that wraps past midnight). A point-in-time window (no end,
+    or end == start) has no overlap."""
+    if end is None or end == start:
+        return 0.0
+    gap_start, gap_end = gap
+    local_date = gap_start.astimezone(tz).date()
+    best = 0.0
+    for day in (local_date - timedelta(days=1), local_date):
+        window_start = datetime.combine(day, start, tzinfo=tz)
+        window_end = datetime.combine(day if end > start else day + timedelta(days=1), end, tz)
+        overlap = (min(gap_end, window_end) - max(gap_start, window_start)).total_seconds()
+        best = max(best, overlap)
+    return best
+
+
+def _break_window_bounds(shift_break: ShiftBreakData) -> tuple[time, time | None] | None:
+    if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
+        return shift_break.start_time, shift_break.end_time
+    if shift_break.break_kind == "FLEXIBLE_DURATION" and shift_break.window_start is not None:
+        return shift_break.window_start, shift_break.window_end
+    return None
+
+
 def match_breaks(
-    gaps: list[tuple[datetime, datetime]], shift_breaks: list[ShiftBreakData], *, tz_name: str
+    gaps: list[tuple[datetime, datetime]],
+    shift_breaks: list[ShiftBreakData],
+    *,
+    tz_name: str,
+    deduct_paid_excess: bool = False,
 ) -> list[MatchedBreak]:
-    """Matches each detected punch gap against the configured `ShiftBreak`s by time overlap
-    (local time-of-day comparison for `FIXED_WINDOW`/`FLEXIBLE_DURATION` window bounds). An
-    unmatched gap defaults unpaid (conservative — architecture §10.2's default is that unpaid
-    break minutes are excluded from worked minutes unless configured otherwise). A matched gap
-    exceeding the break's `max_minutes` is flagged `is_excess`."""
+    """Matches each detected punch gap against the configured `ShiftBreak`s. An unmatched gap
+    defaults unpaid (conservative — architecture §10.2's default is that unpaid break minutes
+    are excluded from worked minutes unless configured otherwise). A matched gap exceeding the
+    break's `max_minutes` is flagged `is_excess`.
+
+    SH-10 (engine 13): a gap matches the break whose window it overlaps most. Before, only the
+    gap's start time was compared, so a paid 13:00-14:00 lunch taken 12:50-13:50 was wholly
+    unpaid. Only when no window overlaps does the old start-time rule apply (a point-in-time
+    break, or a gap that starts exactly at a window's end). With `deduct_paid_excess` (policy
+    `excess_break_behaviour` DEDUCT) a paid break pays up to its `max_minutes` and the rest of
+    the gap is unpaid; otherwise the excess is only flagged, as before."""
     tz = ZoneInfo(tz_name)
     matched: list[MatchedBreak] = []
     for gap_start, gap_end in gaps:
         minutes = max(0, int((gap_end - gap_start).total_seconds() // 60))
         gap_start_local = gap_start.astimezone(tz).time()
         best: ShiftBreakData | None = None
+        best_overlap = 0.0
         for shift_break in shift_breaks:
+            bounds = _break_window_bounds(shift_break)
+            if bounds is None:
+                continue
+            overlap = _break_window_overlap_seconds(*bounds, (gap_start, gap_end), tz)
+            if overlap > best_overlap:
+                best, best_overlap = shift_break, overlap
+        for shift_break in shift_breaks if best is None else ():
             if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
                 if _break_window_contains(
                     shift_break.start_time, shift_break.end_time, gap_start_local
@@ -797,6 +923,30 @@ def match_breaks(
                     break
         is_paid = best.is_paid if best is not None else False
         is_excess = best is not None and best.max_minutes is not None and minutes > best.max_minutes
+        if is_excess and is_paid and deduct_paid_excess:
+            assert best is not None and best.max_minutes is not None
+            paid_end = gap_start + timedelta(minutes=best.max_minutes)
+            matched.append(
+                MatchedBreak(
+                    start=gap_start,
+                    end=paid_end,
+                    minutes=best.max_minutes,
+                    is_paid=True,
+                    is_excess=True,
+                    shift_break_id=best.id,
+                )
+            )
+            matched.append(
+                MatchedBreak(
+                    start=paid_end,
+                    end=gap_end,
+                    minutes=minutes - best.max_minutes,
+                    is_paid=False,
+                    is_excess=True,
+                    shift_break_id=best.id,
+                )
+            )
+            continue
         matched.append(
             MatchedBreak(
                 start=gap_start,
@@ -1087,8 +1237,20 @@ def compute_breaks(
     notes: dict[str, Any] = {}
 
     # --- legacy: punch gaps matched against mode-less breaks only (behaviour unchanged) -------
-    for gap_break in match_breaks(gaps, legacy_rules, tz_name=inputs.timezone):
+    for gap_break in match_breaks(
+        gaps,
+        legacy_rules,
+        tz_name=inputs.timezone,
+        deduct_paid_excess=policy.excess_break_behaviour == "DEDUCT",
+    ):
         out.append(gap_break)
+    # SH-12: punched gaps no legacy break claimed; one that overlaps an automatic deduction's
+    # window counts toward that deduction (see below).
+    unclaimed_gaps = [
+        (b.start, b.end, b.minutes)
+        for b in out
+        if b.shift_break_id is None and b.start is not None and b.end is not None
+    ]
 
     presence = _merge_intervals([(i.punch_time, o.punch_time) for i, o in credit_pairs])
     all_events = inputs.break_events
@@ -1196,6 +1358,22 @@ def compute_breaks(
         )
         duration = _rule_duration(rule, rule_window)
         if rule_window is None or duration <= 0:
+            continue
+        # SH-12 (engine 13): an unpaid punched gap overlapping the window already took (part of)
+        # this break. Before, the gap was excluded from worked time and the window was deducted
+        # again on top - 90 minutes lost for a 60-minute lunch punched 12:30-13:30 against a
+        # 13:00-14:00 deduction. Each gap counts toward one rule only.
+        punched = 0
+        for gap in list(unclaimed_gaps):
+            if gap[0] < rule_window[1] and gap[1] > rule_window[0]:
+                punched += gap[2]
+                unclaimed_gaps.remove(gap)
+        if punched:
+            notes.setdefault("auto_satisfied_by_punch", []).append(
+                {"rule": rule.name, "punched_minutes": punched}
+            )
+        duration -= punched
+        if duration <= 0:
             continue
         eligible = _subtract_intervals(
             _intersect_intervals(presence, [rule_window]), explicit_union + claimed
@@ -1312,14 +1490,36 @@ class DayPresence:
     worked_minutes: int
     gross_elapsed_minutes: int
     counter_excess_minutes: int
+    #: F2 - the first CREDITED in-shift presence, the reference for lateness, grace and mark credit.
+    #: A session that straddles the start counts from the start; a separate session wholly before
+    #: the start earns no credit and cannot stand in for arrival. None when nothing was credited.
+    #: For flexible and split shifts, and on a day off, it is the raw first IN (unchanged).
+    credited_first_in: datetime | None = None
+    #: P-04 - minutes worked in sessions wholly before the scheduled start of a FIXED shift, on a
+    #: day with no credited work at all (merged: nothing is counted twice), and how many sessions.
+    #: Classification only; never worked time, overtime or lateness relief.
+    pre_start_minutes: int = 0
+    pre_start_sessions: int = 0
+
+
+_OFF_DAY_TYPES = ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN")
+
+
+def _work_not_expected(inputs: AttendanceCalculationInput, day_type: str | None) -> bool:
+    """SH-03 (owner decision P-02, engine 13) — whether no work is expected on the day. A roster
+    week-off is never expected. A holiday, weekly off or shutdown is not expected *unless the
+    shift operates on it* (`operates_on_holiday` / `operates_on_weekly_off`, or a roster
+    "working this holiday" row): then it is an ordinary working day — absence follows the
+    missing-punch rule and work is ordinary pay. Before engine 13 such a day counted as both
+    expected and not expected, so a no-show was paid while a short day was loss of pay."""
+    if inputs.roster_week_off_override:
+        return True
+    return day_type in _OFF_DAY_TYPES and not _shift_operates(inputs, day_type)
 
 
 def _is_non_operating_off_day(inputs: AttendanceCalculationInput) -> bool:
     day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
-    not_expected = (
-        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
-    )
-    return not_expected and not _shift_operates(inputs, day_type)
+    return _work_not_expected(inputs, day_type)
 
 
 def evaluate_presence_and_breaks(
@@ -1332,12 +1532,44 @@ def evaluate_presence_and_breaks(
     )
     cutoff = credit_cutoff_for(inputs, pairing.pairs)
     credit_pairs = clip_pairs_at(pairing.pairs, cutoff)
-    if inputs.shift.shift_type == "FIXED" and not _is_non_operating_off_day(inputs):
+    fixed_working_day = inputs.shift.shift_type == "FIXED" and not _is_non_operating_off_day(inputs)
+    unclamped_pairs = credit_pairs
+    if fixed_working_day:
         # Early punch-in allowance is a punch permission, not credited work (see
         # `clamp_pairs_to_start`). FLEXIBLE/SPLIT shifts have no single start to clamp to, and a
         # day off the shift does not operate has no start to arrive before.
         credit_pairs = clamp_pairs_to_start(credit_pairs, inputs.scheduled_start)
-    _fi, _lo, gross_minutes, gaps = presence_span(credit_pairs, mode=policy.multi_punch_mode)
+    if not _is_non_operating_off_day(inputs):
+        # AR-07 — on a half-day-leave day only the worked half is credited; presence inside the
+        # half that is on leave is already paid as leave.
+        plan = half_day_plan(inputs)
+        if plan is not None:
+            credit_pairs = clamp_pairs_to_start(credit_pairs, plan.credit_from)
+            credit_pairs = clip_pairs_at(credit_pairs, plan.credit_until)
+    credited_in, _lo, gross_minutes, gaps = presence_span(
+        credit_pairs, mode=policy.multi_punch_mode
+    )
+    # F2 - lateness is measured from the first CREDITED in-shift presence on a fixed shift's working
+    # day; everything else keeps the raw first IN.
+    credited_first_in = credited_in if fixed_working_day else first_in
+    # P-04 - sessions wholly before the start count toward the classification only when the day has
+    # no credited work at all (a straddling session or any in-window work keeps today's rule), and
+    # not on a half-day-leave day (its worked half is judged on its own).
+    pre_start_minutes = pre_start_sessions = 0
+    if (
+        fixed_working_day
+        and not credit_pairs
+        and inputs.scheduled_start is not None
+        and half_day_plan(inputs) is None
+    ):
+        before_start = [
+            (in_p.punch_time, out_p.punch_time)
+            for in_p, out_p in unclamped_pairs
+            if out_p.punch_time <= inputs.scheduled_start
+        ]
+        merged = _merge_intervals(before_start)
+        pre_start_sessions = len(before_start)
+        pre_start_minutes = sum(int((end - start).total_seconds() // 60) for start, end in merged)
 
     computation = compute_breaks(inputs, pairs=pairing.pairs, credit_pairs=credit_pairs, gaps=gaps)
     legacy = [b for b in computation.breaks if b.kind == "PUNCHED_GAP"]
@@ -1373,6 +1605,14 @@ def evaluate_presence_and_breaks(
         "unpaid_break_minutes": totals.unpaid_minutes,
         "worked_minutes": worked_minutes,
     }
+    if pre_start_minutes > 0:
+        # HR flag + R11 evidence: the actual punches are untouched (`actual_first_in` keeps the
+        # real instant); only the classification may use these minutes (capped by the evaluator).
+        snapshot["worked_outside_shift"] = {
+            "flag": "WORKED_OUTSIDE_SHIFT",
+            "sessions": pre_start_sessions,
+            "minutes": pre_start_minutes,
+        }
     snapshot["breaks"] = {
         **computation.snapshot,
         "credit_cutoff": cutoff.isoformat() if cutoff else None,
@@ -1390,6 +1630,9 @@ def evaluate_presence_and_breaks(
         worked_minutes=worked_minutes,
         gross_elapsed_minutes=gross_elapsed,
         counter_excess_minutes=counter_excess,
+        credited_first_in=credited_first_in,
+        pre_start_minutes=pre_start_minutes,
+        pre_start_sessions=pre_start_sessions,
     )
 
 
@@ -1433,6 +1676,45 @@ def lookup_band(value: int, bands: list[BandData]) -> str | None:
         if band.min_minutes <= value and (band.max_minutes is None or value <= band.max_minutes):
             return band.classification
     return None
+
+
+def scale_hour_bands(bands: list[BandData], net_scheduled_minutes: int | None) -> list[BandData]:
+    """P-05 - shift-length-aware hour bands.
+
+    The stored bands describe one full day, and the reference full-day length is the minimum of the
+    LOWEST `PRESENT` band. When the day's net scheduled minutes are SHORTER than that reference
+    (a 4-hour shift under 8-hour bands), every threshold is scaled proportionally::
+
+        scaled_threshold = stored_threshold * net_scheduled_minutes / reference
+
+    rounded half-up to whole minutes, so a 4-hour shift worked in full is a full day instead of a
+    half day. Never scaled upward: a net equal to or longer than the reference uses the stored
+    bands unchanged. Boundaries are scaled once and shared by neighbouring bands, so bands that were
+    contiguous stay contiguous (and a gap in a legacy version stays where it was). A policy with no
+    `PRESENT` band (legacy, unpublishable now) has no reference and is left alone. Late/early mark
+    bands and grace are not touched here: they keep their own approved rules."""
+    if not bands or net_scheduled_minutes is None or net_scheduled_minutes <= 0:
+        return bands
+    present = [b.min_minutes for b in bands if b.classification == "PRESENT"]
+    if not present:
+        return bands
+    reference = min(present)
+    if reference <= 0 or net_scheduled_minutes >= reference:
+        return bands
+
+    def scale(value: int) -> int:  # round half up, integers only
+        return (value * net_scheduled_minutes * 2 + reference) // (2 * reference)
+
+    scaled: list[BandData] = []
+    for band in sorted(bands, key=lambda b: b.min_minutes):
+        low = scale(band.min_minutes)
+        high = None if band.max_minutes is None else scale(band.max_minutes + 1) - 1
+        if high is not None and high < low:
+            continue  # a band narrower than one scaled minute: its neighbours share its boundary
+        scaled.append(
+            BandData(min_minutes=low, max_minutes=high, classification=band.classification)
+        )
+    return scaled
 
 
 _EARLY_BAND_SEVERITY = {"NONE": 0, "EARLY_DEPARTURE": 1, "HALF_DAY": 2, "ABSENT": 3}
@@ -1639,6 +1921,11 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             "prior_day_window_end": (
                 inputs.prior_day_window_end.isoformat() if inputs.prior_day_window_end else None
             ),
+            "ownership_window": (
+                [inputs.ownership_window[0].isoformat(), inputs.ownership_window[1].isoformat()]
+                if inputs.ownership_window
+                else None
+            ),
             "on_duty_approved": inputs.on_duty_approved,
             "weekly_off_fraction": inputs.weekly_off_fraction,
             "pay_basis": inputs.pay_basis,
@@ -1675,6 +1962,17 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             snapshot["prior_day_claimed_punch_ids"] = [str(p.id) for p in claimed]
             inputs = replace(inputs, punches=[p for p in inputs.punches if p.punch_time > cutoff])
 
+    # H-04 - a rostered day off with no punches has nothing to calculate: it is paid and
+    # NOT_EXPECTED even when no calendar or attendance policy resolves, so missing configuration
+    # never blocks the close for a day nobody worked. (With punches the day is real work and goes
+    # through the configuration checks below as always.) "You're off this day" needs no shift (W5,
+    # section 9.7) and must win even when the calendar says WORKING.
+    if inputs.roster_week_off_override and not inputs.punches:
+        return _apply_overlays(
+            _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"),
+            inputs,
+        )
+
     # §19.1 step 6 — calendar resolution failure (WD-21 fail closed)
     if inputs.calendar_day_type is None:
         return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="no_calendar_resolved")
@@ -1683,23 +1981,24 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     if inputs.policy is None:
         return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="no_policy_resolved")
 
-    # W5 (architecture §9.7) — a roster week-off override is a schedule fact, independent of
-    # whether a shift resolved: "you're off this day" needs no shift to be meaningful, and must
-    # win even when the calendar itself says WORKING (a rotating-crew Wednesday-off case, not
-    # representable by the calendar/weekly-off pattern alone). Checked ahead of the "missing
-    # shift" branch below so a pure roster week-off row (shift_id NULL) doesn't fall through to
-    # `missing_shift_behaviour` and get misread as an unresolved-shift config problem.
-    if inputs.roster_week_off_override and not inputs.punches:
-        return _apply_overlays(
-            _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"),
-            inputs,
-        )
-
     # §19.1 step 4 — missing shift
     if inputs.shift is None:
         behaviour = "INCOMPLETE"  # missing_shift_behaviour default; real value read from policy
         if inputs.policy is not None:
             behaviour = inputs.policy.missing_shift_behaviour
+        # SH-08 (engine 13) — a full holiday, weekly off or shutdown needs no shift to be a day
+        # off. Before, a day off with no shift fell into `missing_shift_behaviour` and could be
+        # ABSENT (loss of pay) on a Sunday. A roster "working this holiday" row keeps it expected.
+        if (
+            not inputs.punches
+            and inputs.calendar_day_type in _OFF_DAY_TYPES
+            and not _is_half_weekly_off(inputs)
+            and not inputs.roster_holiday_working_override
+        ):
+            return _apply_overlays(
+                _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="no_shift_on_day_off"),
+                inputs,
+            )
         if not inputs.punches:
             status = "ABSENT" if behaviour == "ABSENT" else "INCOMPLETE"
             return _apply_overlays(
@@ -1716,10 +2015,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # is *expected*). `roster_holiday_working_override` mirrors what a per-shift
     # `operates_on_holiday`/`operates_on_weekly_off` flag already does, just scoped to one
     # employee-date instead of the whole shift.
-    not_expected = (
-        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
-    )
-    shift_operates = _shift_operates(inputs, day_type)
+    not_expected = _work_not_expected(inputs, day_type)
 
     collapsed = collapse_duplicate_punches(
         punches_in_order(inputs.punches),
@@ -1728,8 +2024,8 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     snapshot["collapsed_punch_ids"] = [str(p.id) for p in collapsed]
     collapsed = drop_stray_punches(collapsed, snapshot)
 
-    # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
-    if not_expected and not shift_operates and not collapsed:
+    # §19.1 step 8 — not expected (an off day the shift does not work) + no punches
+    if not_expected and not collapsed:
         return _apply_overlays(
             _terminal_result(
                 "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
@@ -1865,10 +2161,11 @@ def _apply_leave_overlay(
 
     Half-day leave (0 < fraction < 1.00): the remaining half follows the punch-derived outcome,
     which judged only the worked half (`_half_day_leave_half`). PRESENT is paid as `HALF_DAY`; a
-    HALF_DAY or ABSENT outcome loses that half to LOP (`LEAVE`, as if unworked); ON_DUTY keeps it
-    paid; a missing punch stays `INCOMPLETE` so period close resolves that half. SPLIT shifts and
-    days without a schedule have no such judgement, so any worked minutes pay the half. With no
-    punches at all the half is LOP (`LEAVE`, "if they do not punch, LEAVE not ABSENT")."""
+    HALF_DAY outcome pays half of that half and an ABSENT one none of it (D-02); ON_DUTY keeps it
+    paid; a missing punch - or no punch at all (H-07) - stays `INCOMPLETE` so period close resolves
+    that half. Days without a schedule (and SPLIT shifts with no blocks in one half) have no such
+    judgement, so any worked minutes pay the half. A policy that sets `missing_punch_behaviour` to
+    ABSENT resolves the worked half as loss of pay at once (`LEAVE`)."""
     if not inputs.leave_entries:
         return result
     if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
@@ -1922,31 +2219,53 @@ def _apply_leave_overlay(
     paid_off = weekly_off - Decimal(result.unpaid_off_fraction)  # BUS-001
     remaining = max(Decimal("0.00"), Decimal("1.00") - total_fraction - weekly_off)
     leave_fraction = str(total_fraction.quantize(Decimal("0.01")))
-    if result.attendance_status == "INCOMPLETE" and inputs.punches:
+    if result.attendance_status == "NOT_EXPECTED":
+        # H-08 - a day off (holiday, weekly off, roster week-off) with nobody working must not turn
+        # into loss of pay because a half-day leave projection still sits on it - for instance a
+        # leave approved before the calendar changed. The day keeps its normal day-off pay. The
+        # leave projection, the balance and the calendar-reconciliation blocker are the leave
+        # module's and stay exactly as they are until HR reconciles; nothing is refunded or erased
+        # here. (Work on the day off follows the normal day-off rules below.)
+        return result
+    if result.attendance_status == "INCOMPLETE" and (inputs.punches or remaining > 0):
         # Not paid and not LOP yet: `_apply_incomplete_lock_resolution` decides the worked half.
+        # H-07 - this holds with or without punches. A half-day-leave day with no punch at all is
+        # pending too (while a worked half remains to be decided): it may still be regularized, and
+        # `KEEP_INCOMPLETE` blocks the close until HR resolves it. At lock it is absent
+        # (`TREAT_PRESENT` never pays a no-show). The leave half is settled on its own (the leave
+        # debit stays exactly 0.50) and is never touched by that resolution.
         return replace(
             result,
             paid_day_fraction=str((paid_from_leave + paid_off).quantize(Decimal("0.01"))),
             lop_fraction=str(lop_from_leave.quantize(Decimal("0.01"))),
-            work_on_leave_flagged=False,
+            work_on_leave_flagged=result.work_on_leave_flagged,
             leave_fraction=leave_fraction,
         )
-    worked_half_judged = inputs.shift is not None and inputs.shift.shift_type in (
-        "FIXED",
-        "FLEXIBLE",
+    worked_half_judged = inputs.shift is not None and (
+        inputs.shift.shift_type in ("FIXED", "FLEXIBLE") or half_day_plan(inputs) is not None
     )
-    worked_half_lost = worked_half_judged and result.attendance_status in ("HALF_DAY", "ABSENT")
     on_duty = result.attendance_status == "ON_DUTY"
-    work_counts = on_duty or (has_work and not worked_half_lost)
-    work_paid = remaining if work_counts else Decimal("0.00")
-    work_lop = Decimal("0.00") if work_counts else remaining
-    status = "ON_DUTY" if on_duty else "HALF_DAY" if work_counts else "LEAVE"
+    # D-02 (engine 16) — the worked half is paid in proportion to the verdict on it: PRESENT
+    # pays all of it, HALF_DAY (the worked half scaled to a full day reached only the half-day
+    # band, or a late/early band said half) pays half of it, ABSENT none. Before, a HALF_DAY
+    # verdict lost the whole worked half, so one minute past grace cost 3h49m of work.
+    if on_duty or (has_work and not worked_half_judged):
+        share = Decimal("1.00")
+    elif not has_work or result.attendance_status == "ABSENT":
+        share = Decimal("0.00")
+    elif result.attendance_status == "HALF_DAY":
+        share = Decimal("0.50")
+    else:
+        share = Decimal("1.00")
+    work_paid = (remaining * share).quantize(Decimal("0.01"))
+    work_lop = remaining - work_paid
+    status = "ON_DUTY" if on_duty else "HALF_DAY" if work_paid > 0 else "LEAVE"
     return replace(
         result,
         attendance_status=status,
         paid_day_fraction=str((paid_from_leave + paid_off + work_paid).quantize(Decimal("0.01"))),
         lop_fraction=str((lop_from_leave + work_lop).quantize(Decimal("0.01"))),
-        work_on_leave_flagged=False,
+        work_on_leave_flagged=result.work_on_leave_flagged,
         leave_fraction=leave_fraction,
     )
 
@@ -1995,6 +2314,14 @@ def _apply_on_duty_overlay(
         ot_day_class=None,
         comp_off_minutes_earned=0,
     )
+
+
+def _hour_band_gap_result(
+    inputs: AttendanceCalculationInput, snapshot: dict[str, Any], minutes: int
+) -> AttendanceCalculationResult:
+    """H-01 - the day's minutes fall in a gap between hour bands (or below the first one)."""
+    snapshot["hour_band_gap"] = {"minutes": minutes}
+    return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="hour_band_not_covered")
 
 
 def _terminal_result(
@@ -2052,16 +2379,84 @@ def _terminal_result(
 def _evaluate_no_schedule(
     inputs: AttendanceCalculationInput, snapshot: dict[str, Any]
 ) -> AttendanceCalculationResult:
+    """A day with punches and no shift. SH-08 (owner decision P-06, engine 13): worked minutes go
+    through the policy's hour bands (before, any worked minute paid a full day). With no schedule
+    there is no lateness, early departure or overtime. On a day off (holiday, weekly off,
+    shutdown, roster week-off) the work never costs pay: the day off stays as it was."""
+    assert inputs.policy is not None
+    policy = inputs.policy
     collapsed = collapse_duplicate_punches(
         punches_in_order(inputs.punches),
-        window_seconds=(inputs.policy.duplicate_punch_window_seconds if inputs.policy else 60),
+        window_seconds=policy.duplicate_punch_window_seconds,
     )
     pairing = pair_punches(drop_stray_punches(collapsed, snapshot))
     _first_in, last_out, gross_minutes, _gaps = presence_span(
-        pairing.pairs, mode=inputs.policy.multi_punch_mode if inputs.policy else "PAIR_ALL"
+        pairing.pairs, mode=policy.multi_punch_mode
     )
     snapshot["no_schedule"] = True
-    status = "PRESENT" if gross_minutes > 0 else "INCOMPLETE"
+    day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
+    off_day = inputs.roster_week_off_override or (
+        day_type in _OFF_DAY_TYPES and not inputs.roster_holiday_working_override
+    )
+    missing_punch = bool(pairing.orphans)
+    hour_band_status = lookup_band(gross_minutes, inputs.hour_bands) if gross_minutes else None
+    status = _resolve_primary_status(
+        day_type=day_type or "WORKING",
+        not_expected=off_day,
+        worked_minutes=gross_minutes,
+        missing_punch=missing_punch,
+        missing_punch_behaviour=policy.missing_punch_behaviour,
+        hour_band_status=hour_band_status,
+        late_classification=None,
+        early_classification=None,
+    )
+    if status == "CONFIG_ERROR":
+        return _hour_band_gap_result(inputs, snapshot, gross_minutes)
+    worked_on_holiday = day_type == "HOLIDAY" and gross_minutes > 0
+    worked_on_weekly_off = _worked_on_weekly_off(inputs, day_type, gross_minutes)
+
+    # AR-01 (D-03) — a roster week-off row carries no shift, so the day is evaluated here. The
+    # employee was rostered off and worked anyway: nothing was scheduled, so every worked minute
+    # is overtime, at the weekly-off class (a holiday stays a holiday). With no shift there are
+    # no break rules and no night flag; `SHIFT_FLAG` eligibility reads the shift the employee's
+    # assignment names for the date. A plain day without any shift still earns none (P-06).
+    ot_minutes, ot_classification, ot_eligible = 0, None, False
+    ot_day_class: str | None = None
+    ot_approved = 0
+    ot_pending = False
+    comp_off_minutes = 0
+    if inputs.roster_week_off_override and gross_minutes > 0:
+        ot_minutes, ot_classification, ot_eligible = detect_overtime(
+            worked_minutes=gross_minutes,
+            scheduled_minutes=0,
+            is_shift_ot_eligible=bool(inputs.off_day_shift_ot_eligible),
+            is_holiday=worked_on_holiday,
+            is_weekly_off=worked_on_weekly_off,
+            is_night=False,
+            policy=inputs.ot_policy,
+        )
+        snapshot["roster_week_off_overtime"] = {
+            "shift_ot_eligible": inputs.off_day_shift_ot_eligible,
+            "eligible": ot_eligible,
+        }
+        if ot_eligible and ot_minutes > 0:
+            if inputs.ot_policy is not None and not inputs.ot_policy.requires_post_approval:
+                ot_approved = ot_minutes
+            else:
+                ot_pending = True
+            if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
+                comp_off_minutes = ot_minutes
+            ot_day_class = classify_ot_day(
+                is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=False
+            )
+
+    paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
+    unpaid_off_fraction = "0.00"
+    if off_day and gross_minutes > 0:
+        status = "PRESENT"
+        paid_fraction, lop_fraction, unpaid_off_fraction = _off_day_work_pay(
+            inputs, hour_band_status, ot_eligible and ot_minutes > 0
+        )
     return AttendanceCalculationResult(
         attendance_status=status,
         calendar_day_type=inputs.calendar_day_type,
@@ -2081,21 +2476,22 @@ def _evaluate_no_schedule(
         early_departure_minutes=0,
         late_classification=None,
         early_departure_classification=None,
-        missing_punch=bool(pairing.orphans),
+        missing_punch=missing_punch,
         auto_closed=False,
         is_late=False,
         is_early_out=False,
-        is_overtime=False,
-        worked_on_holiday=False,
-        worked_on_weekly_off=False,
-        paid_day_fraction="1.00" if status == "PRESENT" else "0.00",
-        lop_fraction="0.00" if status == "PRESENT" else "0.00",
-        ot_minutes_detected=0,
-        ot_minutes_approved=0,
-        ot_pending=False,
-        ot_classification=None,
-        comp_off_minutes_earned=0,
-        ot_day_class=None,
+        is_overtime=ot_minutes > 0,
+        worked_on_holiday=worked_on_holiday,
+        worked_on_weekly_off=worked_on_weekly_off,
+        paid_day_fraction=paid_fraction,
+        lop_fraction=lop_fraction,
+        unpaid_off_fraction=unpaid_off_fraction,
+        ot_minutes_detected=ot_minutes,
+        ot_minutes_approved=ot_approved,
+        ot_pending=ot_pending,
+        ot_classification=ot_classification,
+        comp_off_minutes_earned=comp_off_minutes,
+        ot_day_class=ot_day_class,
         snapshot=snapshot,
     )
 
@@ -2117,7 +2513,7 @@ def _off_day_overtime_basis(
 ) -> int | None:
     """D-1 — no work was expected on a day off the shift does not operate, so all of it counts as
     overtime. Where the shift operates (or the employee is rostered), the schedule still applies."""
-    if not_expected and not _shift_operates(inputs, day_type):
+    if not_expected:
         return 0
     return scheduled_minutes
 
@@ -2155,6 +2551,235 @@ def _half_day_split(inputs: AttendanceCalculationInput) -> tuple[datetime, datet
     return midpoint, midpoint
 
 
+def _worked_on_weekly_off(
+    inputs: AttendanceCalculationInput, day_type: str | None, worked_minutes: int
+) -> bool:
+    """AC-06 — work on a weekly off, whether the calendar says so or the published roster gave
+    the employee a week-off on an otherwise working day. A holiday that is also a roster off day
+    stays a holiday (the holiday rate wins in `classify_ot_day`)."""
+    if worked_minutes <= 0:
+        return False
+    if day_type == "WEEKLY_OFF":
+        return True
+    return inputs.roster_week_off_override and day_type != "HOLIDAY"
+
+
+def _overlap_minutes(a: tuple[datetime, datetime], b: tuple[datetime, datetime]) -> int:
+    lo, hi = max(a[0], b[0]), min(a[1], b[1])
+    return max(0, int((hi - lo).total_seconds() // 60))
+
+
+def _half_interval(
+    inputs: AttendanceCalculationInput, half: str
+) -> tuple[datetime, datetime] | None:
+    """The scheduled span of one half of a FIXED shift (`FIRST`/`SECOND`), split where
+    `_half_day_split` puts the boundary, so unequal halves and a lunch window are respected."""
+    if inputs.scheduled_start is None or inputs.scheduled_end is None or inputs.shift is None:
+        return None
+    if inputs.shift.shift_type != "FIXED":
+        return None
+    split = _half_day_split(inputs)
+    if split is None:
+        return None
+    if half == "FIRST":
+        return inputs.scheduled_start, split[0]
+    return split[1], inputs.scheduled_end
+
+
+def scheduled_half_net_minutes(inputs: AttendanceCalculationInput, half: str) -> int | None:
+    """AC-05 / P-A — net scheduled minutes of one half of a FIXED shift: its span less the
+    unpaid scheduled breaks that fall in it. Not a flat 50% of the shift: the halves can be
+    unequal and a break belongs to the half it sits in (a window rule goes to the half holding
+    its midpoint; a rule with no window is shared in proportion to the halves' length).
+    `None` when the shift has no fixed halves (flexible, split, no schedule)."""
+    interval = _half_interval(inputs, half)
+    if interval is None or inputs.shift is None:
+        return None
+    shift = inputs.shift
+    tz = ZoneInfo(inputs.timezone)
+    gross = int((interval[1] - interval[0]).total_seconds() // 60)
+    total_span = int(
+        ((inputs.scheduled_end - inputs.scheduled_start).total_seconds()) // 60  # type: ignore[operator]
+    )
+    unpaid = 0
+    for rule in shift.breaks:
+        if rule.mode is None or not rule.is_enabled or rule.is_paid:
+            continue
+        window = _rule_window(
+            rule,
+            attendance_date=inputs.attendance_date,
+            tz=tz,
+            scheduled_start=inputs.scheduled_start,
+        )
+        duration = _rule_duration(rule, window)
+        if duration <= 0:
+            continue
+        if window is None:
+            if total_span > 0:
+                unpaid += round(duration * gross / total_span)
+        elif rule.break_kind == "FIXED_WINDOW":
+            unpaid += min(duration, _overlap_minutes(window, interval))
+        else:
+            midpoint = window[0] + (window[1] - window[0]) / 2
+            if interval[0] <= midpoint < interval[1]:
+                unpaid += duration
+    return max(0, gross - unpaid)
+
+
+def _half_day_overtime_basis(
+    inputs: AttendanceCalculationInput,
+    leave_half: str | None,
+    net_scheduled_minutes: int | None,
+) -> int | None:
+    """AC-05 / P-A — the net schedule overtime is measured against when only half a day is
+    worked: the worked half of a half-day leave, or the working half of a half-day weekly off.
+    The worked half of a half-day leave is the one that is not on leave; on a half-day weekly off
+    the policy does not say which half is off, so the longer half counts (overtime only begins
+    after the longer half has been worked). A flexible shift has no fixed halves, so its required
+    minutes are halved."""
+    if net_scheduled_minutes is None:
+        return None
+    if leave_half is None and not _is_half_weekly_off(inputs):
+        return net_scheduled_minutes
+    if leave_half is not None:
+        halves = ["SECOND" if leave_half == "FIRST" else "FIRST"]
+    else:
+        halves = ["FIRST", "SECOND"]
+    nets = [scheduled_half_net_minutes(inputs, h) for h in halves]
+    known = [n for n in nets if n is not None]
+    if known:
+        return max(known)
+    return net_scheduled_minutes // 2
+
+
+@dataclass(frozen=True, slots=True)
+class HalfDayPlan:
+    """How a half-day-leave day is judged on a shift that has two definite halves (FIXED, or a
+    SPLIT shift with duty blocks on both sides of its midpoint).
+
+    Only the worked half is credited (AR-07): presence before `credit_from` or after
+    `credit_until` falls in the half that is on leave, which is already paid as leave, so it is
+    recorded but earns neither normal pay nor overtime. That makes arriving early for the worked
+    half, or leaving a little after it, an ordinary event rather than a leave conflict."""
+
+    leave_half: str  # FIRST | SECOND
+    credit_from: datetime | None
+    credit_until: datetime | None
+    late_from: datetime | None
+    early_until: datetime | None
+    leave_intervals: list[tuple[datetime, datetime]]
+    #: Net scheduled minutes of the half that is on leave / the half that is worked.
+    leave_net_minutes: int
+    worked_net_minutes: int
+    #: The worked half's own duty blocks (SPLIT only); empty for a FIXED shift.
+    worked_blocks: list[tuple[datetime, datetime]] = field(default_factory=list)
+
+
+def split_shift_halves(
+    placed: list[tuple[datetime, datetime]],
+) -> tuple[list[tuple[datetime, datetime]], list[tuple[datetime, datetime]]]:
+    """AR-06 — a SPLIT shift's duty blocks divided into the first and second half of the day:
+    a block belongs to the half its own midpoint falls in, measured against the midpoint of the
+    whole span (first block start to last block end)."""
+    if not placed:
+        return [], []
+    middle = placed[0][0] + (placed[-1][1] - placed[0][0]) / 2
+    first = [b for b in placed if b[0] + (b[1] - b[0]) / 2 < middle]
+    second = [b for b in placed if b not in first]
+    return first, second
+
+
+def half_day_plan(inputs: AttendanceCalculationInput) -> HalfDayPlan | None:
+    """The plan for a half-day-leave day, or `None` when the day has no half-day leave, sits on
+    a half-day weekly off, or the shift has no definite halves (FLEXIBLE, no schedule, a SPLIT
+    shift whose blocks all fall in one half)."""
+    leave_half = _half_day_leave_half(inputs)
+    shift = inputs.shift
+    if leave_half is None or shift is None:
+        return None
+    if inputs.scheduled_start is None or inputs.scheduled_end is None:
+        return None
+    worked_half = "SECOND" if leave_half == "FIRST" else "FIRST"
+
+    if shift.shift_type == "SPLIT" and shift.duty_blocks:
+        placed = place_duty_blocks(
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+            blocks=shift.duty_blocks,
+        )
+        first, second = split_shift_halves(placed)
+        if not first or not second:
+            return None
+        leave_blocks, worked_blocks = (first, second) if leave_half == "FIRST" else (second, first)
+        total = split_scheduled_minutes(placed)
+        unpaid = scheduled_unpaid_break_minutes(
+            shift,
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+            scheduled_start=inputs.scheduled_start,
+        )
+
+        def net(blocks: list[tuple[datetime, datetime]]) -> int:
+            gross = split_scheduled_minutes(blocks)
+            share = round(unpaid * gross / total) if total > 0 else 0
+            return max(0, gross - share)
+
+        return HalfDayPlan(
+            leave_half=leave_half,
+            credit_from=worked_blocks[0][0] if leave_half == "FIRST" else None,
+            credit_until=worked_blocks[-1][1] if leave_half == "SECOND" else None,
+            late_from=worked_blocks[0][0],
+            early_until=worked_blocks[-1][1],
+            leave_intervals=leave_blocks,
+            leave_net_minutes=net(leave_blocks),
+            worked_net_minutes=net(worked_blocks),
+            worked_blocks=worked_blocks,
+        )
+
+    if shift.shift_type != "FIXED":
+        return None
+    leave_interval = _half_interval(inputs, leave_half)
+    worked_interval = _half_interval(inputs, worked_half)
+    leave_net = scheduled_half_net_minutes(inputs, leave_half)
+    worked_net = scheduled_half_net_minutes(inputs, worked_half)
+    if leave_interval is None or worked_interval is None or leave_net is None or worked_net is None:
+        return None
+    return HalfDayPlan(
+        leave_half=leave_half,
+        credit_from=worked_interval[0] if leave_half == "FIRST" else None,
+        credit_until=worked_interval[1] if leave_half == "SECOND" else None,
+        late_from=worked_interval[0],
+        early_until=worked_interval[1],
+        leave_intervals=[leave_interval],
+        leave_net_minutes=leave_net,
+        worked_net_minutes=worked_net,
+    )
+
+
+def leave_half_overlap_minutes(
+    plan: HalfDayPlan | None, pairs: list[tuple[PunchData, PunchData]]
+) -> int:
+    """Recorded presence inside the half that is on leave, in minutes."""
+    if plan is None:
+        return 0
+    return sum(
+        _overlap_minutes((a.punch_time, b.punch_time), interval)
+        for a, b in pairs
+        for interval in plan.leave_intervals
+    )
+
+
+def _work_in_leave_half(plan: HalfDayPlan | None, overlap_minutes: int) -> bool:
+    """AC-05 / AR-07 — the leave conflict HR must resolve: the employee was present for at least
+    half of the half they were on leave for. Less than that (arriving early for the worked half,
+    staying a little after it) is not a conflict: that time is simply not credited, so nothing
+    is paid twice. The measure is relative to the leave half's own net schedule, so it needs no
+    separate tolerance setting."""
+    if plan is None or plan.leave_net_minutes <= 0:
+        return False
+    return overlap_minutes * 2 >= plan.leave_net_minutes
+
+
 def _off_day_work_pay(
     inputs: AttendanceCalculationInput,
     hour_band_status: str | None,
@@ -2171,6 +2796,172 @@ def _off_day_work_pay(
     if hour_band_status == "HALF_DAY":
         return "0.50", "0.00", "0.50"
     return "1.00", "0.00", "0.00"
+
+
+def _is_late_mark(minutes: int, classification: str | None) -> bool:
+    """D-01 — the policy's late (or early) band classified these minutes as a mark only, with no
+    attendance penalty of its own (`NONE`, `LATE`, `EARLY_DEPARTURE`)."""
+    return minutes > 0 and classification in ("NONE", "LATE", "EARLY_DEPARTURE")
+
+
+def _overtime_forfeited(
+    inputs: AttendanceCalculationInput,
+    status: str,
+    *,
+    not_expected: bool,
+    penalised_by_rule: bool,
+    worked_minutes: int,
+    net_scheduled_minutes: int | None,
+) -> bool:
+    """P-B — a day already penalised as a half day or an absence does not also pay overtime.
+    Not applied on a day off or a half-day weekly off (P-A governs it).
+
+    AR-12 — nor when the only reason for the status is the hour band and the employee worked
+    the whole of the day's own net schedule: a 4-hour shift judged by 8-hour bands is a half day
+    by configuration (P-05), not by anything the employee did, so the hours beyond the shift are
+    still overtime."""
+    if status not in ("HALF_DAY", "ABSENT") or not_expected or _is_half_weekly_off(inputs):
+        return False
+    if penalised_by_rule or status == "ABSENT":
+        return True  # an absent day never also pays overtime (AC-04's principle)
+    return net_scheduled_minutes is None or worked_minutes < net_scheduled_minutes
+
+
+class BandCredit(NamedTuple):
+    """What goes to the hour-band lookup, and how it was made up (minutes, before any half-day
+    scaling). `credit_in` / `credit_out` are plain grace plus the allocated share of the
+    beyond-grace credit; the allocation (late end first) is for the snapshot only - only their sum
+    reaches the lookup."""
+
+    credit_in: int
+    credit_out: int
+    band_minutes: int
+    #: the qualifying beyond-grace minutes exceeded the ceiling
+    capped: bool
+    plain_grace_in: int = 0
+    plain_grace_out: int = 0
+    qualifying_in: int = 0
+    qualifying_out: int = 0
+    beyond_grace_credit: int = 0
+    ceiling: int = DEFAULT_MARK_CREDIT_CEILING_MINUTES
+
+
+def grace_band_credit_detail(
+    *,
+    first_in: datetime | None,
+    last_out: datetime | None,
+    start_anchor: datetime | None,
+    end_anchor: datetime | None,
+    grace_in_minutes: int,
+    grace_out_minutes: int,
+    worked_minutes: int,
+    net_scheduled_minutes: int | None,
+    late_judged: bool = False,
+    early_judged: bool = False,
+    ceiling_minutes: int = DEFAULT_MARK_CREDIT_CEILING_MINUTES,
+) -> BandCredit:
+    """N-02 - the minutes that go to the hour-band lookup, and how they were made up.
+
+    Grace forgives lateness (late = raw - grace) but, before engine 14, added nothing to worked
+    time, so on a shift whose net schedule equals the full-day band (8 h) an arrival inside grace
+    fell under the band and cost a half day. The forgiven minutes - at most the grace, and no more
+    than the minutes actually missed at that end - are credited **to the band lookup only**
+    ("plain grace", independent of everything below). `worked_minutes`, overtime, `late_minutes`
+    and `early_departure_minutes` are untouched. The credit never lifts the figure above the net
+    scheduled minutes and never below the real worked minutes.
+
+    H-05 - the plain grace credit applies only to a miss WITHIN the grace: a miss of at most the
+    grace credits its whole duration, a miss beyond the grace credits nothing at that end (exactly
+    the grace allowance still qualifies; a grace of 0 credits nothing). Each end is judged on its
+    own. The one exception is a miss that a mark band judges (below): its grace portion is credited
+    with the mark.
+
+    D-01 / D-01b / R-2 - when the policy's late (or early) bands classify the minutes beyond grace
+    as a mark (`late_judged` / `early_judged`), those minutes *qualify* for further credit, so the
+    hour band does not penalise them a second time. The credit for them is bounded by **one
+    combined ceiling per day and policy version**::
+
+        beyond_grace_credit = min(qualifying_in + qualifying_out, ceiling_minutes)
+
+    Plain grace is added on top and never consumes the ceiling; a ceiling of 0 means no
+    beyond-grace credit. The result is allocated to the late end first, then the early end - for
+    the snapshot and reporting only: the lookup sees only the sum."""
+    ceiling = max(ceiling_minutes, 0)
+    plain_in = plain_out = qualifying_in = qualifying_out = 0
+    if first_in is not None and start_anchor is not None:
+        raw = max(int((first_in - start_anchor).total_seconds() // 60), 0)
+        plain_in = min(raw, grace_in_minutes)
+        if raw > grace_in_minutes and not late_judged:
+            plain_in = 0  # H-05: a miss beyond the grace earns no grace credit
+        if late_judged:
+            qualifying_in = max(raw - grace_in_minutes, 0)
+    if last_out is not None and end_anchor is not None:
+        raw = max(int((end_anchor - last_out).total_seconds() // 60), 0)
+        plain_out = min(raw, grace_out_minutes)
+        if raw > grace_out_minutes and not early_judged:
+            plain_out = 0  # H-05: a miss beyond the grace earns no grace credit
+        if early_judged:
+            qualifying_out = max(raw - grace_out_minutes, 0)
+    qualifying = qualifying_in + qualifying_out
+    beyond = min(qualifying, ceiling)
+    allocated_in = min(qualifying_in, beyond)
+    allocated_out = beyond - allocated_in
+    credit_in = plain_in + allocated_in
+    credit_out = plain_out + allocated_out
+    band = worked_minutes + credit_in + credit_out
+    if net_scheduled_minutes is not None:
+        band = min(band, max(worked_minutes, net_scheduled_minutes))
+    return BandCredit(
+        credit_in,
+        credit_out,
+        band,
+        qualifying > ceiling,
+        plain_in,
+        plain_out,
+        qualifying_in,
+        qualifying_out,
+        beyond,
+        ceiling,
+    )
+
+
+def grace_band_credit(**kwargs: Any) -> tuple[int, int, int]:
+    """`(credit_in, credit_out, band_minutes)` - see `grace_band_credit_detail`."""
+    detail = grace_band_credit_detail(**kwargs)
+    return detail.credit_in, detail.credit_out, detail.band_minutes
+
+
+def mark_credit_snapshot(
+    detail: BandCredit,
+    *,
+    band_minutes: int,
+    worked_minutes: int,
+    net_scheduled_minutes: int | None,
+) -> dict[str, Any]:
+    """The `grace_band_credit` snapshot object: the complete credit calculation of one day.
+    `in` / `out` / `band_minutes` / `worked_minutes` / `capped` / `ceiling` keep the keys engine 16
+    already wrote; the rest explains the figures (R-2). `ceiling` is the policy version's value."""
+    return {
+        "in": detail.credit_in,
+        "out": detail.credit_out,
+        "band_minutes": band_minutes,
+        "worked_minutes": worked_minutes,
+        "capped": detail.capped,
+        "ceiling": detail.ceiling,
+        "plain_grace": {"in": detail.plain_grace_in, "out": detail.plain_grace_out},
+        "qualifying_beyond_grace": {
+            "in": detail.qualifying_in,
+            "out": detail.qualifying_out,
+            "total": detail.qualifying_in + detail.qualifying_out,
+        },
+        "beyond_grace_credit": {
+            "total": detail.beyond_grace_credit,
+            # reporting only: late end first, then the early end; the lookup sees only the sum
+            "allocated_in": detail.credit_in - detail.plain_grace_in,
+            "allocated_out": detail.credit_out - detail.plain_grace_out,
+        },
+        "net_scheduled_minutes": net_scheduled_minutes,
+    }
 
 
 def _core_hours_breached(
@@ -2234,18 +3025,24 @@ def _evaluate_fixed_or_flex(
     # Half-day leave covers one half, so only the worked half can be late or left early. A flexible
     # shift has no fixed split between the halves, so nothing is measured.
     leave_half = _half_day_leave_half(inputs)
+    plan = half_day_plan(inputs)
     if leave_half is not None:
-        split = _half_day_split(inputs) if shift.shift_type == "FIXED" else None
         if leave_half == "FIRST":
-            late_from = split[1] if split else None
+            late_from = plan.late_from if plan else None
         else:
-            early_until = split[0] if split else None
+            early_until = plan.early_until if plan else None
     # No work was expected on a day off the shift does not operate, so nothing is late or early.
-    off_day_work = not_expected and not _shift_operates(inputs, day_type)
-    if off_day_work:
+    off_day_work = not_expected
+    # AR-13 — a half-day weekly off does not say which half is off, so neither arriving for the
+    # afternoon nor leaving after the morning can be called late or early.
+    if off_day_work or _is_half_weekly_off(inputs):
         late_from = early_until = None
-    if first_in is not None and late_from is not None:
-        late_raw = int((first_in - late_from).total_seconds() // 60)
+    # F2 - lateness, grace and mark credit run from the first CREDITED in-shift presence: a separate
+    # session wholly before the start cannot stand in for arriving on time, and a session that
+    # straddles the start counts from the start (on time). `actual_first_in` keeps the real punch.
+    arrival = presence.credited_first_in
+    if arrival is not None and late_from is not None:
+        late_raw = int((arrival - late_from).total_seconds() // 60)
         late_minutes = max(0, late_raw - policy.grace_in_minutes)
         if late_minutes > 0:
             late_classification = lookup_band(late_minutes, inputs.late_bands)
@@ -2317,34 +3114,6 @@ def _evaluate_fixed_or_flex(
     ):
         cumulative_status_override = "HALF_DAY"
 
-    # Hour bands describe a full day, so the worked half is judged in proportion: 4.5 hours worked
-    # around a half-day leave counts as a full 9-hour day would.
-    band_minutes = worked_minutes * 2 if leave_half is not None else worked_minutes
-    hour_band_status = lookup_band(band_minutes, inputs.hour_bands) if worked_minutes else None
-
-    status = _resolve_primary_status(
-        day_type=day_type,
-        not_expected=not_expected,
-        worked_minutes=worked_minutes,
-        missing_punch=missing_punch,
-        missing_punch_behaviour=policy.missing_punch_behaviour,
-        hour_band_status=hour_band_status,
-        late_classification=late_classification,
-        early_classification=early_classification,
-        core_hours_status_override=core_hours_status_override,
-        cumulative_status_override=cumulative_status_override,
-    )
-    if off_day_work and worked_minutes > 0:
-        status = "PRESENT"
-    if totals.unresolved_count and not not_expected:
-        # An unresolved break is never silently turned into half-day/absent: the day waits for
-        # an authorised correction. INCOMPLETE is the existing "needs review" status — not paid,
-        # not LOP, and handled at period close by `incomplete_at_lock_behaviour`.
-        status = "INCOMPLETE"
-
-    worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
-    worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
-
     # FLEXIBLE: `scheduled_start`/`scheduled_end` are the *start-time window* (e.g. 09:00-10:00),
     # not the working span, so the amount of work expected is `required_minutes` (net of unpaid
     # breaks, like `worked_minutes`). Measuring against the window length made a normal 8-hour
@@ -2377,6 +3146,107 @@ def _evaluate_fixed_or_flex(
         else None
     )
 
+    # Hour bands describe a full day, so the worked half is judged in proportion: 4.5 hours worked
+    # around a half-day leave counts as a full 9-hour day would.
+    # N-02: grace minutes are credited to this lookup only (see `grace_band_credit`); the real
+    # worked, overtime, late and early figures are unchanged.
+    # The worked half's own net schedule on a half-day-leave day (halves can be unequal); a
+    # flexible shift has no fixed halves, so half its required minutes.
+    half_net = (
+        None
+        if leave_half is None or ot_scheduled_minutes is None
+        else plan.worked_net_minutes
+        if plan is not None
+        else ot_scheduled_minutes // 2
+    )
+    band_net = half_net if leave_half is not None else ot_scheduled_minutes
+
+    # P-04 - a fixed-shift day with NO credited work but sessions wholly before the start is judged
+    # on those minutes (capped at the shift's net schedule). Classification only: `worked_minutes`,
+    # overtime, comp-off and lateness are untouched.
+    class_minutes = worked_minutes
+    if worked_minutes == 0 and presence.pre_start_minutes > 0:
+        class_minutes = presence.pre_start_minutes
+        if ot_scheduled_minutes is not None:
+            class_minutes = min(class_minutes, ot_scheduled_minutes)
+        snapshot["worked_outside_shift"]["credited_for_classification"] = class_minutes
+
+    def _band_minutes(*, judged: bool) -> tuple[BandCredit, int]:
+        detail = grace_band_credit_detail(
+            first_in=arrival,
+            last_out=last_out,
+            start_anchor=late_from,
+            end_anchor=early_until,
+            grace_in_minutes=policy.grace_in_minutes,
+            grace_out_minutes=policy.grace_out_minutes,
+            worked_minutes=class_minutes,
+            net_scheduled_minutes=band_net,
+            late_judged=judged and _is_late_mark(late_minutes, late_classification),
+            early_judged=judged and _is_late_mark(early_minutes, early_classification),
+            ceiling_minutes=policy.mark_credit_ceiling_minutes,
+        )
+        credited = detail.band_minutes
+        if leave_half is not None and ot_scheduled_minutes and half_net:
+            # Scale the worked half up to a full day for the (full-day) hour bands.
+            credited = credited * ot_scheduled_minutes // half_net
+        elif leave_half is not None:
+            credited = credited * 2
+        return detail, credited
+
+    base_detail, base_band_minutes = _band_minutes(judged=False)
+    credit_detail, band_minutes = _band_minutes(judged=True)
+    # P-05: the hour bands, scaled to this day's net schedule when it is shorter than a full day
+    day_bands = scale_hour_bands(inputs.hour_bands, ot_scheduled_minutes)
+    base_hour_status = lookup_band(base_band_minutes, day_bands) if class_minutes else None
+    hour_band_status = lookup_band(band_minutes, day_bands) if class_minutes else None
+    if base_hour_status == "ABSENT":
+        # D-01 — a late mark can spare the day the hour band's half-day verdict, never an
+        # absence: too little was worked for lateness to be what the day is about.
+        hour_band_status, band_minutes = base_hour_status, base_band_minutes
+        credit_detail = base_detail
+    snapshot["grace_band_credit"] = mark_credit_snapshot(
+        credit_detail,
+        band_minutes=band_minutes,
+        worked_minutes=class_minutes,
+        net_scheduled_minutes=band_net,
+    )
+
+    status = _resolve_primary_status(
+        day_type=day_type,
+        not_expected=not_expected,
+        worked_minutes=class_minutes,
+        missing_punch=missing_punch,
+        missing_punch_behaviour=policy.missing_punch_behaviour,
+        hour_band_status=hour_band_status,
+        late_classification=late_classification,
+        early_classification=early_classification,
+        core_hours_status_override=core_hours_status_override,
+        cumulative_status_override=cumulative_status_override,
+    )
+    if status == "CONFIG_ERROR":
+        return _hour_band_gap_result(inputs, snapshot, band_minutes)
+    if off_day_work and worked_minutes > 0:
+        status = "PRESENT"
+    if totals.unresolved_count and not not_expected:
+        # An unresolved break is never silently turned into half-day/absent: the day waits for
+        # an authorised correction. INCOMPLETE is the existing "needs review" status — not paid,
+        # not LOP, and handled at period close by `incomplete_at_lock_behaviour`.
+        status = "INCOMPLETE"
+
+    worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
+    worked_on_weekly_off = _worked_on_weekly_off(inputs, day_type, worked_minutes)
+
+    # AC-05 / P-A — with one half of the day on leave, or off, overtime starts after the net
+    # schedule of the half that is worked, not after the whole shift.
+    flexible_half = flexible_required is not None and (
+        leave_half is not None or _is_half_weekly_off(inputs)
+    )
+    if flexible_half:
+        ot_scheduled_minutes = None if ot_scheduled_minutes is None else ot_scheduled_minutes // 2
+    elif leave_half is not None:
+        ot_scheduled_minutes = half_net
+    else:
+        ot_scheduled_minutes = _half_day_overtime_basis(inputs, None, ot_scheduled_minutes)
     ot_scheduled_minutes = _off_day_overtime_basis(
         inputs, day_type, not_expected, ot_scheduled_minutes
     )
@@ -2398,11 +3268,55 @@ def _evaluate_fixed_or_flex(
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
-        is_holiday=worked_on_holiday,
-        is_weekly_off=worked_on_weekly_off,
+        # P-02: work on an off day the shift operates is ordinary work (NORMAL class).
+        is_holiday=worked_on_holiday and not_expected,
+        is_weekly_off=worked_on_weekly_off and not_expected,
         is_night=is_night,
         policy=inputs.ot_policy,
     )
+    penalised_by_rule = any(
+        verdict in ("HALF_DAY", "ABSENT")
+        for verdict in (
+            late_classification,
+            early_classification,
+            core_hours_status_override,
+            cumulative_status_override,
+        )
+    )
+    if _overtime_forfeited(
+        inputs,
+        status,
+        not_expected=not_expected,
+        penalised_by_rule=penalised_by_rule,
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=ot_scheduled_minutes,
+    ):
+        # P-B (owner-recommended default): a day already penalised as a half day or an absence
+        # does not also pay overtime.
+        ot_minutes, ot_classification, ot_eligible = 0, None, False
+    leave_overlap = leave_half_overlap_minutes(plan, pairing.pairs)
+    work_in_leave_half = _work_in_leave_half(plan, leave_overlap)
+    if (
+        leave_half is not None
+        and plan is None
+        and flexible_required is not None
+        and worked_minutes >= flexible_required
+    ):
+        # AR-06 — a flexible shift has no fixed halves, so work in the leave half cannot be
+        # located. A full day's required minutes worked on a half-day-leave day is the conflict:
+        # the leave half was worked.
+        work_in_leave_half = True
+    if leave_half is not None:
+        snapshot["half_day_leave"] = {
+            "leave_half": leave_half,
+            "leave_half_presence_minutes": leave_overlap,
+            "worked_half_net_minutes": half_net,
+        }
+    if work_in_leave_half:
+        # AC-05 — time worked inside the half that is on leave is paid as leave already; it
+        # cannot also earn overtime. HR resolves the day like a full leave day with punches.
+        ot_minutes, ot_classification, ot_eligible = 0, None, False
+        snapshot["work_in_leave_half"] = leave_half
     ot_approved = 0
     ot_pending = False
     comp_off_minutes = 0
@@ -2415,7 +3329,9 @@ def _evaluate_fixed_or_flex(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
+            is_holiday=worked_on_holiday and not_expected,
+            is_weekly_off=worked_on_weekly_off and not_expected,
+            is_night=is_night,
         )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
@@ -2452,6 +3368,7 @@ def _evaluate_fixed_or_flex(
         is_overtime=ot_minutes > 0,
         worked_on_holiday=worked_on_holiday,
         worked_on_weekly_off=worked_on_weekly_off,
+        work_on_leave_flagged=work_in_leave_half,
         paid_day_fraction=paid_fraction,
         lop_fraction=lop_fraction,
         ot_minutes_detected=ot_minutes,
@@ -2493,16 +3410,16 @@ def _evaluate_split(
     paid_minutes = totals.paid_minutes
     worked_minutes = presence.worked_minutes
 
-    tz = ZoneInfo(inputs.timezone)
+    placed = place_duty_blocks(
+        attendance_date=inputs.attendance_date, tz_name=inputs.timezone, blocks=shift.duty_blocks
+    )
+    split_minutes = split_scheduled_minutes(placed)
+    # AR-06 — on a half-day-leave day only the worked half's blocks are expected.
+    leave_half = _half_day_leave_half(inputs)
+    plan = half_day_plan(inputs)
+    expected_blocks = plan.worked_blocks if plan is not None else placed
     missed_blocks = 0
-    for block in shift.duty_blocks:
-        block_start = _local_to_utc(inputs.attendance_date, block.start_time, tz)
-        block_end_date = (
-            inputs.attendance_date + timedelta(days=1)
-            if block.crosses_midnight
-            else inputs.attendance_date
-        )
-        block_end = _local_to_utc(block_end_date, block.end_time, tz)
+    for block_start, block_end in expected_blocks:
         overlapped = any(
             in_p.punch_time < block_end and out_p.punch_time > block_start
             for in_p, out_p in pairing.pairs
@@ -2512,15 +3429,75 @@ def _evaluate_split(
     snapshot["split_missed_blocks"] = missed_blocks
 
     missing_punch = bool(pairing.orphans) or first_in is None
-    hour_band_status = lookup_band(worked_minutes, inputs.hour_bands) if worked_minutes else None
+    # SH-04 - the schedule is the sum of the duty blocks (a SPLIT version carries no
+    # `required_minutes`; before engine 13 this left the schedule unknown and OT always zero).
+    net_scheduled_minutes = max(
+        0,
+        split_minutes
+        - scheduled_unpaid_break_minutes(
+            shift,
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+            scheduled_start=inputs.scheduled_start,
+        ),
+    )
+    # N-02: grace minutes at the first block's start and the last block's end are credited to the
+    # band lookup only. Lateness itself is still not computed for split shifts (P-11).
+    half_net = (
+        None
+        if leave_half is None
+        else plan.worked_net_minutes
+        if plan is not None
+        else net_scheduled_minutes // 2
+    )
+    off_or_half_off = not_expected or _is_half_weekly_off(inputs)
+    start_anchor = plan.late_from if plan is not None else inputs.scheduled_start
+    end_anchor = plan.early_until if plan is not None else inputs.scheduled_end
+    split_net = half_net if leave_half is not None else net_scheduled_minutes
+    split_detail = grace_band_credit_detail(
+        first_in=first_in,
+        last_out=last_out,
+        start_anchor=None if off_or_half_off else start_anchor,
+        end_anchor=None if off_or_half_off else end_anchor,
+        grace_in_minutes=policy.grace_in_minutes,
+        grace_out_minutes=policy.grace_out_minutes,
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=split_net,
+        ceiling_minutes=policy.mark_credit_ceiling_minutes,
+    )
+    credited = split_detail.band_minutes
+    if leave_half is not None:
+        # Scale the worked half up to a full day for the (full-day) hour bands.
+        credited = credited * net_scheduled_minutes // half_net if half_net else credited * 2
+    # No late/early mark judgement on a split shift (P-11): plain grace only, nothing qualifies.
+    snapshot["grace_band_credit"] = mark_credit_snapshot(
+        split_detail,
+        band_minutes=credited,
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=split_net,
+    )
+    hour_band_status = (
+        lookup_band(credited, scale_hour_bands(inputs.hour_bands, net_scheduled_minutes))
+        if worked_minutes
+        else None
+    )
 
     # `split_shift_missed_block_behaviour` (W3) is one of IGNORE/HALF_DAY/ABSENT/
     # REQUIRE_REGULARIZATION. IGNORE falls through to the ordinary status resolution below (the
     # missed block carries no special weight); the other three map directly.
     behaviour = policy.split_shift_missed_block_behaviour
-    off_day_work = not_expected and not _shift_operates(inputs, day_type)
+    off_day_work = not_expected
     if off_day_work and worked_minutes > 0:
         status = "PRESENT"
+    elif (
+        missing_punch
+        and worked_minutes > 0
+        and policy.missing_punch_behaviour not in ("ABSENT", "AUTO_CLOSE")
+    ):
+        # AR-14 — an orphan punch means the worked time is not established yet. The day waits
+        # for a correction, as it does on a FIXED shift, before a missed block can cost half a
+        # day: the "missed" block may simply be the one whose OUT was forgotten.
+        status = "INCOMPLETE"
     elif missed_blocks > 0 and behaviour in ("HALF_DAY", "ABSENT"):
         status = behaviour
     elif missed_blocks > 0 and behaviour == "REQUIRE_REGULARIZATION":
@@ -2536,30 +3513,15 @@ def _evaluate_split(
             late_classification=None,
             early_classification=None,
         )
+    if status == "CONFIG_ERROR":
+        return _hour_band_gap_result(inputs, snapshot, credited)
     if totals.unresolved_count and not not_expected:
         status = "INCOMPLETE"
 
     worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
-    worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
+    worked_on_weekly_off = _worked_on_weekly_off(inputs, day_type, worked_minutes)
 
-    # W7 (WD-29 decision 5) — SPLIT shifts previously never detected overtime at all. No input
-    # is actually missing here: `scheduled_minutes=shift.required_minutes` is the same fallback
-    # `_evaluate_fixed_or_flex` uses whenever no `scheduled_start`/`scheduled_end` is set, so the
-    # detection call is wired in identically to that path.
-    ot_scheduled_minutes = (
-        max(
-            0,
-            shift.required_minutes
-            - scheduled_unpaid_break_minutes(
-                shift,
-                attendance_date=inputs.attendance_date,
-                tz_name=inputs.timezone,
-                scheduled_start=inputs.scheduled_start,
-            ),
-        )
-        if shift.required_minutes is not None
-        else None
-    )
+    ot_scheduled_minutes: int | None = half_net if leave_half is not None else net_scheduled_minutes
     ot_scheduled_minutes = _off_day_overtime_basis(
         inputs, day_type, not_expected, ot_scheduled_minutes
     )
@@ -2577,11 +3539,35 @@ def _evaluate_split(
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
-        is_holiday=worked_on_holiday,
-        is_weekly_off=worked_on_weekly_off,
+        # P-02: work on an off day the shift operates is ordinary work (NORMAL class).
+        is_holiday=worked_on_holiday and not_expected,
+        is_weekly_off=worked_on_weekly_off and not_expected,
         is_night=is_night,
         policy=inputs.ot_policy,
     )
+    if _overtime_forfeited(
+        inputs,
+        status,
+        not_expected=not_expected,
+        penalised_by_rule=missed_blocks > 0 and behaviour in ("HALF_DAY", "ABSENT"),
+        worked_minutes=worked_minutes,
+        net_scheduled_minutes=ot_scheduled_minutes,
+    ):
+        # P-B (owner-recommended default): a day already penalised as a half day or an absence
+        # does not also pay overtime.
+        ot_minutes, ot_classification, ot_eligible = 0, None, False
+    leave_overlap = leave_half_overlap_minutes(plan, pairing.pairs)
+    work_in_leave_half = _work_in_leave_half(plan, leave_overlap)
+    if leave_half is not None:
+        snapshot["half_day_leave"] = {
+            "leave_half": leave_half,
+            "leave_half_presence_minutes": leave_overlap,
+            "worked_half_net_minutes": half_net,
+        }
+    if work_in_leave_half:
+        # AC-05 / AR-06 — the leave half was worked: flagged for HR, and no overtime.
+        ot_minutes, ot_classification, ot_eligible = 0, None, False
+        snapshot["work_in_leave_half"] = leave_half
     ot_approved = 0
     ot_pending = False
     comp_off_minutes = 0
@@ -2594,7 +3580,9 @@ def _evaluate_split(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
+            is_holiday=worked_on_holiday and not_expected,
+            is_weekly_off=worked_on_weekly_off and not_expected,
+            is_night=is_night,
         )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
@@ -2611,7 +3599,7 @@ def _evaluate_split(
         holiday_on_weekly_off=inputs.holiday_on_weekly_off,
         scheduled_start=inputs.scheduled_start,
         scheduled_end=inputs.scheduled_end,
-        scheduled_minutes=shift.required_minutes,
+        scheduled_minutes=split_minutes,
         unpaid_off_fraction=unpaid_off_fraction,
         actual_first_in=presence.recorded_first_in,
         actual_last_out=last_out,
@@ -2631,6 +3619,7 @@ def _evaluate_split(
         is_overtime=ot_minutes > 0,
         worked_on_holiday=worked_on_holiday,
         worked_on_weekly_off=worked_on_weekly_off,
+        work_on_leave_flagged=work_in_leave_half,
         paid_day_fraction=paid_fraction,
         lop_fraction=lop_fraction,
         ot_minutes_detected=ot_minutes,
@@ -2693,23 +3682,25 @@ def _resolve_primary_status(
 
     if hour_band_status in ("ABSENT", "HALF_DAY", "PRESENT"):
         status = hour_band_status
+    elif hour_band_status is None and not not_expected:
+        # H-01 - worked minutes that NO hour band covers are a configuration error, never a
+        # silent PRESENT. (Day-off work, `not_expected`, never consults the bands.) Publishing
+        # now rejects such bands; this guards versions published before that rule.
+        return "CONFIG_ERROR"
     else:
         status = "PRESENT"
 
-    if (
-        late_classification == "ABSENT"
-        or early_classification == "ABSENT"
-        or core_hours_status_override == "ABSENT"
+    # AR-05 — the harshest verdict wins. Before engine 16 a HALF_DAY late or early band replaced
+    # an ABSENT hour band, so adding a penalty band paid more than having none.
+    severity = {"PRESENT": 0, "HALF_DAY": 1, "ABSENT": 2}
+    for verdict in (
+        late_classification,
+        early_classification,
+        core_hours_status_override,
+        cumulative_status_override,
     ):
-        return "ABSENT"
-    if (
-        late_classification == "HALF_DAY"
-        or early_classification == "HALF_DAY"
-        or core_hours_status_override == "HALF_DAY"
-        or cumulative_status_override == "HALF_DAY"
-    ):
-        return "HALF_DAY"
-
+        if verdict in ("HALF_DAY", "ABSENT") and severity[verdict] > severity[status]:
+            status = verdict
     return status
 
 

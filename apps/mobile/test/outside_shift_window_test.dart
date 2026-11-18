@@ -11,10 +11,14 @@ import 'punch_controller_test.dart' show outsideShiftWindowError;
 
 void main() {
   group('OutsideShiftWindow', () {
-    test('is read from the error details, converted to local time', () {
+    test("is read from the error details, in the company's zone whatever the device's", () {
       final w = OutsideShiftWindow.fromError(outsideShiftWindowError())!;
-      expect(w.shiftStart, DateTime.utc(2026, 10, 30, 9, 30).toLocal());
-      expect(w.earliestPunchIn, DateTime.utc(2026, 10, 30, 8, 30).toLocal());
+      expect(w.shiftStart.isAtSameMomentAs(DateTime.utc(2026, 10, 30, 9, 30)), isTrue);
+      expect(w.earliestPunchIn.isAtSameMomentAs(DateTime.utc(2026, 10, 30, 8, 30)), isTrue);
+      // 09:30 UTC is 15:00 IST (SH-17: before, the device's own zone).
+      expect((w.shiftStart.hour, w.shiftStart.minute), (15, 0));
+      final utc = OutsideShiftWindow.fromError(outsideShiftWindowError(), zone: 'UTC')!;
+      expect((utc.shiftStart.hour, utc.shiftStart.minute), (9, 30));
       expect((w.graceInMinutes, w.graceOutMinutes, w.earlyInAllowanceMinutes), (10, 15, 60));
     });
 

@@ -153,7 +153,9 @@ def test_rejection_error_never_echoes_the_rejected_secret_value() -> None:
 
 
 def test_development_has_no_explicit_origins_but_a_valid_fallback() -> None:
-    settings = Settings(environment="development")
+    # `_env_file=None`: a developer's local `.env` may set CORS_ALLOWED_ORIGINS. This test is about
+    # the code default, so it must not read that file (as the face-gate tests already do).
+    settings = Settings(environment="development", _env_file=None)
     assert settings.cors_allowed_origins == ()
     origins = settings.effective_cors_origins
     assert origins
@@ -299,3 +301,9 @@ def test_s3_public_endpoint_url_defaults_to_none_and_is_independent_of_the_guard
     `s3_endpoint_url` when it is unset, so the boot guard must not require it separately."""
     settings = _non_dev_settings()
     assert settings.s3_public_endpoint_url is None
+
+
+def test_allowed_company_timezones_defaults_to_india_only() -> None:
+    """DEC-TZ-02 / SH-06: the production default. The test env widens it (`tests/conftest.py`
+    adds `UTC`), so this reads the field default rather than an env-built `Settings`."""
+    assert Settings.model_fields["allowed_company_timezones"].default == ("Asia/Kolkata",)

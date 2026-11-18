@@ -95,7 +95,7 @@ async def test_new_assignment_rejects_inactive_master_record(
             "department": await _create_department(client, headers),
             "designation": await _create_designation(client, headers),
             "grade": await _create_grade(client, headers),
-            "shift": await _create_shift(client, headers),
+            "shift": await _create_shift(client, headers, published_from=JOINING),
         }
         plural = {
             "branch": "branches",
@@ -182,7 +182,7 @@ async def test_in_use_master_record_cannot_be_deactivated_until_reassigned(
         used = (
             org[kind]
             if kind in org
-            else await _create_shift(client, headers)
+            else await _create_shift(client, headers, published_from=JOINING)
             if kind == "shift"
             else None
         )
@@ -191,7 +191,9 @@ async def test_in_use_master_record_cannot_be_deactivated_until_reassigned(
             "department": lambda: _create_department(client, headers),
             "designation": lambda: _create_designation(client, headers),
             "grade": lambda: _create_grade(client, headers),
-            "shift": lambda: _create_shift(client, headers),
+            "shift": lambda: _create_shift(
+                client, headers, name="Spare shift", published_from=JOINING
+            ),
         }[kind]
         unused = await spare()
 
@@ -285,7 +287,7 @@ async def _make_replacement(client, headers, kind: str) -> dict:
         return await _create_designation(client, headers, title="Replacement Desig")
     if kind == "grade":
         return await _create_grade(client, headers)
-    return await _create_shift(client, headers)
+    return await _create_shift(client, headers, name="Replacement shift", published_from=JOINING)
 
 
 async def test_deactivated_employees_do_not_block_deactivation(client: AsyncClient) -> None:

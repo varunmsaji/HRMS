@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from hrms.modules.organisation.models import PolicyAssignment, WorkCalendar
 
 # WD-09 — most specific wins. Shift is "the shift resolved for that date, including roster"
-# per §16; W1 has no roster yet, so this reads `EmployeeAssignment.shift_id` only.
+# per §16 — `attendance.work_schedule.resolved_shift_id` (SH-07).
 _PRECEDENCE_SCOPES: tuple[str, ...] = (
     "EMPLOYEE",
     "SHIFT",
@@ -420,8 +420,19 @@ class CalendarResolutionService:
             candidates.append(("COMPANY", None))
             return candidates
 
-        if assignment.shift_id is not None:
-            candidates.append(("SHIFT", assignment.shift_id))
+        # SH-07 — the shift *of this date* (published roster row first, then the assignment's),
+        # through the one shared resolution, so a rostered night shift brings its own
+        # SHIFT-scoped attendance/overtime/regularization policy and calendar with it.
+        from hrms.modules.attendance.repository import ShiftRosterRepository
+        from hrms.modules.attendance.work_schedule import scope_shift_id_for
+
+        roster_entry = await ShiftRosterRepository().get_published_for_date(
+            self._session, company_id=company_id, employee_id=employee_id, roster_date=target_date
+        )
+        # H-04: a rostered day off carries no shift, so its SHIFT scope is the assigned shift
+        shift_id = scope_shift_id_for(assignment, roster_entry)
+        if shift_id is not None:
+            candidates.append(("SHIFT", shift_id))
         if assignment.designation_id is not None:
             candidates.append(("DESIGNATION", assignment.designation_id))
         if assignment.grade_id is not None:

@@ -54,6 +54,7 @@ from hrms.modules.organisation.schemas import (
     WorkCalendarCreate,
 )
 from hrms.modules.organisation.service import OrganisationService
+from hrms.shared.business_time import business_today
 
 # Monday=0 .. Sunday=6 - the resolver's convention (`date.weekday()`).
 _WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -322,7 +323,10 @@ class WorkCalendarSetupService:
             warnings.append("No weekly off is selected: every weekday will be a working day.")
         if len(request.weekly_off_weekdays) >= 7:
             warnings.append("Every weekday is a weekly off: no working days remain.")
-        if request.effective_from < datetime.now(UTC).date():
+        # AC-09 - "today" is the company's business date, not the UTC date: between 00:00 and
+        # 05:30 IST the two differ, and a date that is yesterday for the company would pass.
+        company_profile = await self._org.get_company_profile(company_id)
+        if request.effective_from < business_today(company_profile.timezone):
             warnings.append(
                 "The effective date is in the past. Locked attendance periods and closed "
                 "payroll are not recalculated; unlocked attendance follows the existing "

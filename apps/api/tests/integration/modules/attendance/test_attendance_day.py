@@ -228,6 +228,8 @@ async def _cleanup_attendance_day(*, company_id: UUID) -> None:
             "attendance_day",
             "shift_swap_request",
             "shift_roster",
+            "attendance_recalc_request",
+            "punch_dismissal",
             "punch",
             "policy_assignment",
             "attendance_policy_version",

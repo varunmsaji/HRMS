@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.session import get_session
 from hrms.modules.leave.policy_setup import LeavePolicySetupService
+from hrms.modules.leave.reconciliation import LeaveCalendarReconciliationService
 from hrms.modules.leave.service import (
     LeaveApplicationService,
     LeaveCombinationRuleService,
@@ -64,3 +65,9 @@ def get_statutory_leave_minimum_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> StatutoryLeaveMinimumService:
     return StatutoryLeaveMinimumService(session)
+
+
+def get_leave_reconciliation_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+) -> LeaveCalendarReconciliationService:
+    return LeaveCalendarReconciliationService(session)

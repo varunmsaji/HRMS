@@ -2,11 +2,12 @@
 
 import { CalendarClock } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
 import { FaceEnrollmentCard } from "@/components/attendance/face-enrollment-card";
+import { MarkDayDialog } from "@/components/attendance/mark-day-dialog";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
@@ -73,6 +74,10 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [punchOpen, setPunchOpen] = useState(false);
+  const [markDayOpen, setMarkDayOpen] = useState(false);
+  // Never offered on your own record: the server refuses self-entry on this path.
+  const canMarkDay = can("ATTENDANCE.PUNCH_ON_BEHALF") && employeeId !== user?.employee_id;
+  const markDayEmployees = useMemo(() => [{ id: employeeId, label: employeeLabel }], [employeeId, employeeLabel]);
   const [calculating, setCalculating] = useState(false);
 
   const load = useCallback(async () => {
@@ -162,8 +167,13 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
             </Button>
           ) : null}
           {can("ATTENDANCE.PUNCH") || can("ATTENDANCE.PUNCH_ON_BEHALF") ? (
-            <Button type="button" onClick={() => setPunchOpen(true)}>
+            <Button type="button" variant={canMarkDay ? "outline" : "default"} onClick={() => setPunchOpen(true)}>
               Record punch
+            </Button>
+          ) : null}
+          {canMarkDay ? (
+            <Button type="button" onClick={() => setMarkDayOpen(true)}>
+              Mark attendance
             </Button>
           ) : null}
         </div>
@@ -258,6 +268,13 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
         employeeId={employeeId}
         employeeLabel={employeeLabel}
         onRecorded={onPunchRecorded}
+      />
+      <MarkDayDialog
+        open={markDayOpen}
+        onOpenChange={setMarkDayOpen}
+        initialEmployees={markDayEmployees}
+        lockEmployees
+        onRecorded={() => void load()}
       />
     </div>
   );

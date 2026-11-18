@@ -305,3 +305,175 @@ async def _drop_link_users(user_ids: list[UUID]) -> None:
                     text(f"DELETE FROM {table} WHERE user_id = :u"), {"u": str(uid)}
                 )
         await session.commit()
+
+
+# --- SH-18 / SH-20: roster and swap integrity ---------------------------------------------------
+
+
+async def _two_on_different_shifts(
+    client: AsyncClient, headers: dict[str, str], day: str
+) -> tuple[str, str]:
+    wired = await _build_wired_employee(client, headers)
+    a_id = wired["employee"]["id"]
+    b_id = await _second_employee(client, headers, wired)
+    night = await _create_night_shift(client, headers)
+    await _publish_roster(client, headers, a_id, day, wired["shift"]["id"])
+    await _publish_roster(client, headers, b_id, day, night["id"])
+    return a_id, b_id
+
+
+async def _sql(company_id: UUID, query: str, **params: Any) -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(text(query), {"cid": str(company_id), **params})
+        await session.commit()
+
+
+async def test_a_swap_for_a_past_date_is_refused_on_the_hr_path_too(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SH-20: the past-date rule was only on the self-service path, and used the server date."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        day = (date.today() - timedelta(days=3)).isoformat()
+        a_id, b_id = await _two_on_different_shifts(client, headers, day)
+        refused = await client.post(
+            "/v1/rosters/swap-requests",
+            headers=headers,
+            json={
+                "requester_employee_id": a_id,
+                "counterpart_employee_id": b_id,
+                "swap_date": day,
+                "counterpart_consented": True,
+            },
+        )
+        assert refused.status_code == 422, refused.text
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_a_pending_swap_whose_date_has_passed_expires_and_cannot_be_approved(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        day = (date.today() + timedelta(days=20)).isoformat()
+        a_id, b_id = await _two_on_different_shifts(client, headers, day)
+        first = await client.post(
+            "/v1/rosters/swap-requests",
+            headers=headers,
+            json={
+                "requester_employee_id": a_id,
+                "counterpart_employee_id": b_id,
+                "swap_date": day,
+                "counterpart_consented": True,
+            },
+        )
+        assert first.status_code == 201, first.text
+        swap = first.json()["data"]
+        # The date passes while the request is still pending.
+        await _sql(
+            company_id,
+            "UPDATE shift_swap_request SET swap_date = :d WHERE id = :sid",
+            d=date.today() - timedelta(days=2),
+            sid=swap["id"],
+        )
+        approve = await client.post(
+            f"/v1/rosters/swap-requests/{swap['id']}/approve", headers=headers, json={}
+        )
+        assert approve.status_code == 409, approve.text
+        listed = await client.get("/v1/rosters/swap-requests", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert [s["status"] for s in listed.json()["data"] if s["id"] == swap["id"]] == ["EXPIRED"]
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_swap_references_are_unique_per_company(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        a_id = wired["employee"]["id"]
+        b_id = await _second_employee(client, headers, wired)
+        night = await _create_night_shift(client, headers)
+        references = []
+        for offset in (21, 22):
+            day = (date.today() + timedelta(days=offset)).isoformat()
+            await _publish_roster(client, headers, a_id, day, wired["shift"]["id"])
+            await _publish_roster(client, headers, b_id, day, night["id"])
+            created = await client.post(
+                "/v1/rosters/swap-requests",
+                headers=headers,
+                json={
+                    "requester_employee_id": a_id,
+                    "counterpart_employee_id": b_id,
+                    "swap_date": day,
+                },
+            )
+            assert created.status_code == 201, created.text
+            references.append(created.json()["data"]["reference"])
+        assert len(set(references)) == 2
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_a_roster_row_needs_an_active_shift_scheduled_on_that_date(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SH-18: an inactive shift, or one with no published version that day, was accepted and the
+    day calculated as a configuration error."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        day = (date.today() + timedelta(days=5)).isoformat()
+
+        draft_only = (
+            await client.post("/v1/shifts", headers=headers, json={"name": "Draft only"})
+        ).json()["data"]
+        unscheduled = await client.post(
+            "/v1/rosters",
+            headers=headers,
+            json={"employee_id": employee_id, "roster_date": day, "shift_id": draft_only["id"]},
+        )
+        assert unscheduled.status_code == 422, unscheduled.text
+        assert unscheduled.json()["error"]["code"] == "SHIFT_NOT_SCHEDULED_ON_DATE"
+
+        night = await _create_night_shift(client, headers)
+        retired = await client.get(f"/v1/shifts/{night['id']}", headers=headers)
+        deactivated = await client.delete(
+            f"/v1/shifts/{night['id']}",
+            headers={**headers, "If-Match": str(retired.json()["data"]["version"])},
+        )
+        assert deactivated.status_code == 200, deactivated.text
+        inactive = await client.post(
+            "/v1/rosters",
+            headers=headers,
+            json={"employee_id": employee_id, "roster_date": day, "shift_id": night["id"]},
+        )
+        assert inactive.status_code == 422, inactive.text
+        assert inactive.json()["error"]["code"] == "INACTIVE_SHIFT"
+
+        # Moving an existing row onto such a shift is refused the same way.
+        await _publish_roster(client, headers, employee_id, day, wired["shift"]["id"])
+        rows = (
+            await client.get(
+                "/v1/rosters",
+                headers=headers,
+                params={"employee_id": employee_id, "date_from": day, "date_to": day},
+            )
+        ).json()["data"]
+        moved = await client.patch(
+            f"/v1/rosters/{rows[0]['id']}",
+            headers={**headers, "If-Match": str(rows[0]["version"])},
+            json={"shift_id": draft_only["id"]},
+        )
+        assert moved.status_code == 422, moved.text
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
