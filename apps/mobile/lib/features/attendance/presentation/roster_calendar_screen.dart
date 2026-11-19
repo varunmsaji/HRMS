@@ -17,7 +17,7 @@ typedef Rec = Map<String, dynamic>;
 
 String _iso(int y, int m, int d) => '${y.toString().padLeft(4, '0')}-${m.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}';
 
-/// Month grid of roster entries for one employee — mirrors `apps/web/src/app/app/rosters/calendar/page.tsx`.
+/// Month grid of roster entries for one employee — the Month view of Shift Rosters, as web's `app/app/rosters/schedule/month/page.tsx` (`/app/rosters/calendar` redirects there).
 /// One cell per day; with `ATTENDANCE.ROSTER_MANAGE`, tapping a cell creates (or edits) that day's entry.
 class RosterCalendarScreen extends ConsumerStatefulWidget {
   const RosterCalendarScreen({super.key});

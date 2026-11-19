@@ -11,7 +11,7 @@ import '../data/roster_repository.dart';
 import '../domain/roster_views.dart';
 import 'roster_view_switcher.dart';
 
-/// Who is on which shift for one day — mirrors `apps/web/src/app/app/rosters/board/page.tsx`. Web
+/// Who is on which shift for one day — the Day view of Shift Rosters, as web's `app/app/rosters/schedule/day/page.tsx` (`/app/rosters/board` redirects there). Web
 /// drags cards between columns; here the columns are stacked and tapping a person offers where to
 /// move them. A move writes the roster entry and publishes it, so it takes effect immediately.
 class ShiftBoardScreen extends ConsumerStatefulWidget {

@@ -15,7 +15,7 @@ import '../data/schedule_repository.dart';
 import '../domain/weekly_schedule.dart';
 import 'roster_view_switcher.dart';
 
-/// Weekly shift coverage — mirrors `apps/web/src/app/app/rosters/schedule/page.tsx`. A phone shows
+/// Weekly shift coverage — the Coverage view of Shift Rosters, as web's `app/app/rosters/coverage/page.tsx`. A phone shows
 /// one day at a time: pick a day in the strip, see each shift's headcount against its target.
 /// Department and branch narrow the week, as on web; the four figures are web's KPI cards.
 class WeeklyScheduleScreen extends ConsumerStatefulWidget {

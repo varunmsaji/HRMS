@@ -42,7 +42,7 @@ Future<bool> openRosterForm(BuildContext context, WidgetRef ref, {Rec? roster, S
   );
 }
 
-/// Shift roster entries — mirrors `apps/web/src/app/app/rosters/page.tsx`: filter by date range,
+/// Shift roster entries — the List view of Shift Rosters, as web's `app/app/rosters/schedule/list/page.tsx` (web's `/app/rosters` landing links to it): filter by date range,
 /// employee and status; add, edit, publish (DRAFT → PUBLISHED) and remove entries.
 class RostersScreen extends ConsumerStatefulWidget {
   const RostersScreen({super.key});

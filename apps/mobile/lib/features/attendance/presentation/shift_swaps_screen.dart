@@ -10,7 +10,7 @@ import '../../shell/more_action.dart';
 import '../data/schedule_repository.dart';
 import '../domain/weekly_schedule.dart';
 
-/// Shift swaps — mirrors the swap queue on the web Schedule page. An employee asks a colleague to
+/// Shift swaps — mirrors the swap queue on web's Shift Rosters Coverage page (`app/app/rosters/coverage/page.tsx`). An employee asks a colleague to
 /// swap shifts for a day, the colleague agrees (or turns it down), and a roster manager approves.
 class ShiftSwapsScreen extends ConsumerStatefulWidget {
   const ShiftSwapsScreen({super.key});
