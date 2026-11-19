@@ -436,7 +436,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
           onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: cell.id, initial: cell))),
         ),
       if (withCell.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('No attendance records for this day.')),
-      if (none > 0 && withCell.isNotEmpty) _muted('$none more ${none == 1 ? 'employee has' : 'employees have'} no record this day.'),
+      if (none > 0 && withCell.isNotEmpty) _muted('$none other ${none == 1 ? 'employee' : 'employees'} with records in these days ${none == 1 ? 'has' : 'have'} none on this day. Anyone with no record at all in this period is not listed here.'),
     ]);
   }
 

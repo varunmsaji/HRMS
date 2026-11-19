@@ -328,7 +328,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Ravi Iyer'), findsOneWidget);
     expect(find.textContaining('Asha Rao'), findsNothing);
-    expect(find.textContaining('1 more employee has no record this day.'), findsOneWidget);
+    expect(find.textContaining('1 other employee with records in these days has none on this day. Anyone with no record at all'), findsOneWidget);
 
     // The grid is still there as an option: no day chips, one column per day.
     await tester.tap(find.descendant(of: find.byKey(const ValueKey('muster_switch')), matching: find.text('Grid')));
