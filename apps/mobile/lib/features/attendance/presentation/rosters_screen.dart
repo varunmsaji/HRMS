@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
@@ -15,7 +14,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/roster_form.dart';
-import 'shift_board_screen.dart';
+import 'roster_view_switcher.dart';
 import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
@@ -161,20 +160,11 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canManage = permissions.contains(attendanceRosterManage);
-    // Every view below reads GET /rosters (ATTENDANCE.VIEW); the board and grid also list
-    // employees (EMPLOYEE.VIEW_ALL), and the board's columns are the shift list (ORG.SHIFT.MANAGE).
-    final canReadRosters = permissions.contains(attendanceView);
-    final canSeeTeamViews = canReadRosters && permissions.contains(employeeViewAll);
-    final canSeeBoard = ShiftBoardScreen.requiredPermissions.every(permissions.contains);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Shift Rosters'),
-        actions: [
-          if (canSeeBoard) IconButton(tooltip: 'Shift board', icon: const Icon(Icons.view_column_outlined), onPressed: () => context.push('/app/rosters/board')),
-          if (canSeeTeamViews) IconButton(tooltip: 'Workforce roster', icon: const Icon(Icons.grid_on_outlined), onPressed: () => context.push('/app/rosters/grid')),
-          if (canReadRosters) IconButton(tooltip: 'Roster calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/roster-calendar')),
-          const MoreAction(),
-        ],
+        bottom: const RosterViewSwitcher(current: RosterView.list),
+        actions: const [MoreAction()],
       ),
       floatingActionButton: canManage
           ? FloatingActionButton.extended(

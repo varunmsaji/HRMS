@@ -679,7 +679,7 @@ class _QuickActions extends StatelessWidget {
     _QuickAction('Attendance', Icons.fact_check_outlined, '/app/team-attendance', Color(0xFF16A34A)),
     _QuickAction('Balances', Icons.beach_access_outlined, '/app/leave-balances', Color(0xFF8B5CF6)),
     _QuickAction('Payroll', Icons.payments_outlined, '/app/payroll/pay-runs', Color(0xFFF59E0B)),
-    _QuickAction('Rosters', Icons.event_available_outlined, '/app/rosters', Color(0xFF0EA5E9)),
+    _QuickAction('Rosters', Icons.event_available_outlined, '/app/schedule', Color(0xFF0EA5E9)),
     _QuickAction('Corrections', Icons.edit_note_rounded, '/app/regularizations', Color(0xFFEF4444)),
     _QuickAction('Company', Icons.apartment_outlined, '/app/company', Color(0xFF64748B)),
   ];

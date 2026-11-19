@@ -21,7 +21,7 @@ const kPayrollInRelease = true;
 bool isPayrollRoute(String route) => route == '/app/payroll' || route.startsWith('/app/payroll/') || route == '/app/me/payslips' || route.startsWith('/app/me/payslips/');
 
 class NavEntry {
-  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.allOf = const [], this.employeeLabel, this.guarded = true, this.requiresEmployee = false});
+  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.allOf = const [], this.employeeLabel, this.guarded = true, this.requiresEmployee = false, this.inMenu = true});
 
   final String label;
   final IconData icon;
@@ -43,6 +43,10 @@ class NavEntry {
 
   /// A personal view: hidden from an account with no linked employee record.
   final bool requiresEmployee;
+
+  /// False for a destination reached from another screen (the Shift Rosters views are chosen with
+  /// the switcher there) that still needs its route guard: it is not listed in the menu.
+  final bool inMenu;
 
   bool allowedFor(Iterable<String> permissions) =>
       (anyOf.isEmpty || anyOf.any(permissions.contains)) && allOf.every(permissions.contains);
@@ -86,8 +90,12 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Attendance Calendar', Icons.calendar_view_month_outlined, '/app/attendance/calendar', anyOf: [attendanceViewAll], allOf: attendanceCalendarReads),
   NavEntry('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights', anyOf: _teamView),
   // Roster reads (/rosters, /rosters/weekly-schedule) check ATTENDANCE.VIEW, not ROSTER_MANAGE.
-  NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
-  NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
+  // One entry, as on web: it opens on Coverage, and the other views (Week, Month, Day, List) are
+  // chosen with the switcher on every Shift Rosters screen. Those routes stay in the table, out of
+  // the menu, so the route guard still covers them.
+  NavEntry('Shift Rosters', Icons.event_available, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
+  NavEntry('Shift Rosters list', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView], inMenu: false),
+  NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView], inMenu: false),
   NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('Attendance Corrections', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
@@ -115,8 +123,6 @@ const navSettingsGroups = [
     NavEntry('Work Calendars', Icons.date_range_outlined, '/app/work-calendars', anyOf: [orgCalendarManage]),
     NavEntry('Holiday Calendars', Icons.calendar_month_outlined, '/app/holiday-calendars', anyOf: [orgHolidayManage]),
     NavEntry('Weekly-Off Patterns', Icons.event_busy_outlined, '/app/weekly-off-patterns', anyOf: [orgCalendarManage]),
-    // Mobile only: web shows the roster calendar as a tab of Shift Rosters.
-    NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
   ]),
   NavGroup('Where people punch', [
     NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
@@ -152,7 +158,7 @@ const navSettingsGroups = [
 ];
 
 List<NavEntry> _visible(List<NavEntry> items, Iterable<String> permissions, bool payroll, {bool hasEmployee = true}) =>
-    [for (final e in items) if (e.allowedFor(permissions) && (payroll || !isPayrollRoute(e.route)) && (hasEmployee || !e.requiresEmployee)) e];
+    [for (final e in items) if (e.inMenu && e.allowedFor(permissions) && (payroll || !isPayrollRoute(e.route)) && (hasEmployee || !e.requiresEmployee)) e];
 
 /// The administrator/manager menu filtered to what [permissions] allow; groups with no visible
 /// entry are dropped.
