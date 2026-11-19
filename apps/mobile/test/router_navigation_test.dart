@@ -105,7 +105,7 @@ void main() {
 
     final adminOnly = [
       '/app/users', '/app/setup', '/app/employees', '/app/onboarding', '/app/team-attendance', '/app/attendance-insights', '/app/rosters',
-      '/app/roster-calendar', '/app/attendance-periods', '/app/payroll/pay-runs', '/app/payroll/salary-components', '/app/payroll/salary-structures',
+      '/app/schedule', '/app/roster-calendar', '/app/attendance-periods', '/app/payroll/pay-runs', '/app/payroll/salary-components', '/app/payroll/salary-structures',
       '/app/payroll/statutory-rates', '/app/company', '/app/branches', '/app/departments', '/app/designations', '/app/grades', '/app/legal-entities',
       '/app/attendance-geofences', '/app/attendance/calendar', '/app/shifts', '/app/work-calendars', '/app/weekly-off-patterns', '/app/holiday-calendars', '/app/attendance-policies', '/app/overtime-policies',
       '/app/regularization-policies', '/app/policy-assignments', '/app/policy-resolution', '/app/leave-types', '/app/leave-policies',

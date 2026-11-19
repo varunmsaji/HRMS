@@ -11,6 +11,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../domain/roster_form.dart';
 import 'rosters_screen.dart' show openRosterForm;
+import 'roster_view_switcher.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -108,7 +109,7 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
     final daysInMonth = DateTime(_year, _month + 1, 0).day;
     final leadingBlanks = (DateTime(_year, _month, 1).weekday - 1) % 7;
     return Scaffold(
-      appBar: AppBar(title: const Text('Roster Calendar')),
+      appBar: AppBar(title: const Text('Shift Rosters'), bottom: const RosterViewSwitcher(current: RosterView.month)),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.all(12),

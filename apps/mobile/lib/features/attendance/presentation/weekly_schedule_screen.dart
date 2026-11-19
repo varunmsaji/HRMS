@@ -13,6 +13,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/schedule_repository.dart';
 import '../domain/weekly_schedule.dart';
+import 'roster_view_switcher.dart';
 
 /// Weekly shift coverage — mirrors `apps/web/src/app/app/rosters/schedule/page.tsx`. A phone shows
 /// one day at a time: pick a day in the strip, see each shift's headcount against its target.
@@ -104,7 +105,8 @@ class _WeeklyScheduleScreenState extends ConsumerState<WeeklyScheduleScreen> {
     final pending = schedule?.totals.pendingSwaps ?? 0;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Schedule coverage'),
+        title: const Text('Shift Rosters'),
+        bottom: const RosterViewSwitcher(current: RosterView.coverage),
         actions: [
           IconButton(
             tooltip: pending > 0 ? 'Shift swaps, $pending pending' : 'Shift swaps',

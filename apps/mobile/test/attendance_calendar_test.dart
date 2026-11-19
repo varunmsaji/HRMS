@@ -221,11 +221,20 @@ void main() {
     expect(routes(const [attendanceView, employeeViewAll]), isNot(contains('/app/attendance/calendar')));
   });
 
-  test('roster views need the roster read grant', () {
+  test('Shift Rosters is one menu entry, for those who can read rosters', () {
     List<String> routes(List<String> p) => [for (final g in visibleNavGroups(p)) for (final e in g.items) e.route];
     // ROSTER_MANAGE alone: GET /rosters checks ATTENDANCE.VIEW.
-    expect(routes(const [attendanceRosterManage]), isNot(contains('/app/rosters')));
-    expect(routes(const [attendanceRosterManage]), isNot(contains('/app/roster-calendar')));
-    expect(routes(const [attendanceRosterManage, attendanceView]), containsAll(['/app/rosters', '/app/roster-calendar', '/app/schedule']));
+    expect(routes(const [attendanceRosterManage]), isNot(contains('/app/schedule')));
+    final menu = routes(const [attendanceRosterManage, attendanceView]);
+    expect(menu, contains('/app/schedule'));
+    // The other views are chosen with the switcher on that screen, not listed in the menu.
+    expect(menu, isNot(contains('/app/rosters')));
+    expect(menu, isNot(contains('/app/roster-calendar')));
+  });
+
+  test('the roster views are still guarded even though the menu does not list them', () {
+    for (final path in ['/app/schedule', '/app/rosters', '/app/rosters/grid', '/app/rosters/board', '/app/roster-calendar']) {
+      expect(isGuardedRoute(path), isTrue, reason: path);
+    }
   });
 }

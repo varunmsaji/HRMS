@@ -41,7 +41,13 @@ AuthState _auth(List<String> permissions, {String? employeeId = 'e-1'}) => AuthS
       user: UserProfile(id: 'u', email: 'a@b.c', companyId: 'c', employeeId: employeeId, permissions: permissions, companyTimezone: 'Asia/Kolkata'),
     );
 
-Set<String> _menu(List<String> permissions) => {for (final g in visibleNavGroups(permissions)) for (final e in g.items) e.route};
+/// The destinations a persona is offered: the menu, plus the guarded screens reached from another
+/// screen instead of the menu (the Shift Rosters views, chosen with the switcher there). Either way
+/// the route guard must open them for exactly the people whose entry allows them.
+Set<String> _menu(List<String> permissions) => {
+      for (final g in visibleNavGroups(permissions)) for (final e in g.items) e.route,
+      for (final g in [navQuickLinks, ...navSettingsGroups]) for (final e in g.items) if (!e.inMenu && e.allowedFor(permissions)) e.route,
+    };
 
 /// Routes that `appRedirect` lets this persona open, out of [candidates].
 Set<String> _reachable(List<String> permissions, Iterable<String> candidates, {String? employeeId = 'e-1'}) {

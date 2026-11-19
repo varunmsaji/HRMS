@@ -13,6 +13,7 @@ import '../../profile/presentation/profile_screen.dart' show employeeRepositoryP
 import '../data/roster_repository.dart';
 import '../domain/roster_views.dart';
 import 'rosters_screen.dart' show openRosterForm;
+import 'roster_view_switcher.dart';
 
 /// Who is on which shift, by date — mirrors `apps/web/src/app/app/rosters/grid/page.tsx`: employees
 /// as rows, dates as columns, each cell the rostered shift. The names stay put while the dates
@@ -174,7 +175,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
     final truncated = range != null && range.total > range.entries.length;
     final used = (range?.entries ?? const <RosterEntry>[]).map((r) => r.shiftId).whereType<String>().toSet();
     return Scaffold(
-      appBar: AppBar(title: const Text('Workforce roster')),
+      appBar: AppBar(title: const Text('Shift Rosters'), bottom: const RosterViewSwitcher(current: RosterView.week)),
       body: RefreshIndicator(
         onRefresh: () => Future.wait([_loadEmployees(), _loadRange()]),
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [

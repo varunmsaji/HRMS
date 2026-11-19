@@ -9,6 +9,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../profile/data/employee_repository.dart';
 import '../data/roster_repository.dart';
 import '../domain/roster_views.dart';
+import 'roster_view_switcher.dart';
 
 /// Who is on which shift for one day — mirrors `apps/web/src/app/app/rosters/board/page.tsx`. Web
 /// drags cards between columns; here the columns are stacked and tapping a person offers where to
@@ -192,7 +193,7 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
   Widget build(BuildContext context) {
     if (!_allowed) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Shift board')),
+        appBar: AppBar(title: const Text('Shift Rosters'), bottom: const RosterViewSwitcher(current: RosterView.day)),
         body: const StateMessage(icon: Icons.lock_outline_rounded, title: 'No access', message: 'The shift board needs access to rosters, the employee directory and the shift list.'),
       );
     }
@@ -210,7 +211,7 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
     }
     final last = _lastMove;
     return Scaffold(
-      appBar: AppBar(title: const Text('Shift board')),
+      appBar: AppBar(title: const Text('Shift Rosters'), bottom: const RosterViewSwitcher(current: RosterView.day)),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [
