@@ -11,6 +11,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/attendance_insights.dart';
+import '../domain/attendance_mismatch.dart' show attentionRank;
 import '../domain/attendance_pulse.dart';
 import '../domain/attendance_totals.dart';
 import 'attendance_period_detail_screen.dart';
@@ -58,6 +59,9 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   InsightsRange _range = InsightsRange.month;
   TrendMetric _metric = TrendMetric.presentPct;
   bool _weekly = false;
+  /// The muster as the employee × day grid (wide) rather than a list for one day (the phone default).
+  bool _musterGrid = false;
+  String? _musterDay;
 
   bool _loading = true;
   String? _error;
@@ -360,10 +364,20 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         };
     return _card(
       'Attendance heatmap',
-      subtitle: 'Employee × day (the last ${dates.length} days). Tap a cell for the day.',
+      subtitle: _musterGrid ? 'Employee × day (the last ${dates.length} days). Tap a cell for the day.' : 'Who was where on one day. Pick a day; tap a person for the day.',
       rows.isEmpty
           ? const Text('No attendance days to show.')
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SegmentedButton<bool>(
+                key: const ValueKey('muster_switch'),
+                showSelectedIcon: false,
+                segments: const [ButtonSegment(value: false, label: Text('List')), ButtonSegment(value: true, label: Text('Grid'))],
+                selected: {_musterGrid},
+                onSelectionChanged: (v) => setState(() => _musterGrid = v.first),
+              ),
+              const SizedBox(height: 10),
+              if (!_musterGrid) _musterList(dates, rows, colorFor),
+              if (_musterGrid) ...[
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -386,12 +400,44 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
                 ]),
               ),
               const SizedBox(height: 8),
+              ],
               Wrap(spacing: 10, runSpacing: 4, children: [
                 for (final e in const [('Present', Colors.green), ('Remote', Colors.teal), ('On duty', Colors.blue), ('Half day', Colors.amber), ('Absent', Colors.red), ('Leave', Colors.purple), ('Incomplete', Colors.orange), ('Off/holiday', Colors.blueGrey)])
                   Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 10, height: 10, color: e.$2), const SizedBox(width: 4), Text(e.$1, style: const TextStyle(fontSize: 11))]),
               ]),
             ]),
     );
+  }
+
+  /// The muster for one day: a chip per day, then everyone with their status, worst first.
+  Widget _musterList(List<String> dates, List<MusterRow> rows, Color Function(AttendanceDay) colorFor) {
+    final scheme = Theme.of(context).colorScheme;
+    final day = dates.contains(_musterDay) ? _musterDay! : dates.last;
+    final withCell = [for (final r in rows) if (r.cells[day] != null) (r, r.cells[day]!)]..sort((a, b) => attentionRank(a.$2).compareTo(attentionRank(b.$2)));
+    final none = rows.length - withCell.length;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(
+        height: 44,
+        child: ListView(scrollDirection: Axis.horizontal, children: [
+          for (final d in dates.reversed) // newest first, so the day shown is the first chip
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(key: ValueKey('muster_day:$d'), label: Text(shortDate(d)), selected: d == day, onSelected: (_) => setState(() => _musterDay = d)),
+            ),
+        ]),
+      ),
+      for (final (r, cell) in withCell)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: colorFor(cell), shape: BoxShape.circle)),
+          title: Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: Text(attendanceBucketLabels[attendanceBucketOf(cell)] ?? cell.attendanceStatus, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: cell.id, initial: cell))),
+        ),
+      if (withCell.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('No attendance records for this day.')),
+      if (none > 0 && withCell.isNotEmpty) _muted('$none other ${none == 1 ? 'employee' : 'employees'} with records in these days ${none == 1 ? 'has' : 'have'} none on this day. Anyone with no record at all in this period is not listed here.'),
+    ]);
   }
 
   String get _rangeLabel {

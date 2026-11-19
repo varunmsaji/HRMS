@@ -289,6 +289,53 @@ void main() {
     expect(api.rowRequests, 0);
     expect(find.text('Payroll readiness'), findsNothing, reason: 'no open period');
   });
+
+  testWidgets('the muster is a list for one day first, with the grid a tap away', (tester) async {
+    tester.view.physicalSize = const Size(800, 12000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final today = businessToday('Asia/Kolkata');
+    final yesterday = addDaysIso(today, -1);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        attendanceRepositoryProvider.overrideWithValue(_Repo([
+          day('e1', today, 'PRESENT', firstIn: 't'),
+          day('e2', today, 'ABSENT'),
+          day('e2', yesterday, 'PRESENT', firstIn: 't'),
+        ], totals: null)),
+        apiClientProvider.overrideWithValue(_Api(lists: const {
+          '/employees': [
+            {'id': 'e1', 'first_name': 'Asha', 'last_name': 'Rao', 'employee_code': 'E-1'},
+            {'id': 'e2', 'first_name': 'Ravi', 'last_name': 'Iyer', 'employee_code': 'E-2'},
+          ],
+          '/attendance-periods': [],
+        })),
+        fakeAuth(const [employeeViewAll, attendanceViewAll]),
+      ],
+      child: const MaterialApp(home: AttendanceInsightsScreen()),
+    ));
+    await tester.pumpAndSettle();
+
+    // List first, on the latest day: each person with their status, the absent one before the present one.
+    expect(find.byKey(ValueKey('muster_day:$today')), findsOneWidget);
+    final absent = tester.getTopLeft(find.textContaining('Ravi Iyer')).dy;
+    final present = tester.getTopLeft(find.textContaining('Asha Rao')).dy;
+    expect(absent, lessThan(present), reason: 'what needs a look comes first');
+    expect(find.text('Absent'), findsWidgets);
+
+    // Another day lists that day.
+    await tester.tap(find.byKey(ValueKey('muster_day:$yesterday')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Ravi Iyer'), findsOneWidget);
+    expect(find.textContaining('Asha Rao'), findsNothing);
+    expect(find.textContaining('1 other employee with records in these days has none on this day. Anyone with no record at all'), findsOneWidget);
+
+    // The grid is still there as an option: no day chips, one column per day.
+    await tester.tap(find.descendant(of: find.byKey(const ValueKey('muster_switch')), matching: find.text('Grid')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('muster_day:$today')), findsNothing);
+    expect(find.textContaining('Employee × day'), findsOneWidget);
+  });
 }
 
 /// Serves `/employees/directory/rows` (a list, which the base fake cannot) for e1 → Sales, e2 → Ops.
