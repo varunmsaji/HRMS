@@ -154,7 +154,7 @@ void main() {
   });
 
   group('team attendance', () {
-    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions, {String? bucket, String? flag, int? missing}) async {
+    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions, {String? bucket, String? flag, int? missing, bool directory = true}) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -166,10 +166,12 @@ void main() {
         ],
       );
       final api = FakeApiClient(lists: {
-        '/employees': [
-          {'id': 'e1', 'first_name': 'Asha', 'last_name': 'Rao', 'employee_code': 'E-1'},
-          {'id': 'e2', 'first_name': 'Ravi', 'last_name': 'Iyer', 'employee_code': 'E-2'},
-        ],
+        '/employees': directory
+            ? [
+                {'id': 'e1', 'first_name': 'Asha', 'last_name': 'Rao', 'employee_code': 'E-1'},
+                {'id': 'e2', 'first_name': 'Ravi', 'last_name': 'Iyer', 'employee_code': 'E-2'},
+              ]
+            : [],
       });
       await tester.pumpWidget(ProviderScope(
         overrides: [attendanceRepositoryProvider.overrideWithValue(repo), apiClientProvider.overrideWithValue(api), fakeAuth(permissions)],
@@ -238,6 +240,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
       expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+    });
+
+    testWidgets('no find box without the employee directory, since rows would have no names to match', (tester) async {
+      await pump(tester, const [], directory: false);
+      expect(find.byKey(const ValueKey('team_find')), findsNothing);
     });
 
     testWidgets('lists the day for everyone, labelled by employee', (tester) async {

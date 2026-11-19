@@ -207,7 +207,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
     final matching = _days
-        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || matchesBucket(d, _bucket!)) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)) && (_query.isEmpty || _name(d.employeeId).toLowerCase().contains(_query)))
+        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || matchesBucket(d, _bucket!)) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)) && (_query.isEmpty || _employees.isEmpty || _name(d.employeeId).toLowerCase().contains(_query)))
         .toList();
     final fixer = MismatchFixer(
       context: context,
@@ -271,15 +271,18 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
             ),
           ]),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: AppSearchField(
-            key: const ValueKey('team_find'),
-            controller: _find,
-            hint: 'Find an employee by name or code',
-            onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+        // Names and codes come from the employee directory; without that grant the rows carry only
+        // ids, so a typed query could match nobody. Offer the box only when the lookup worked.
+        if (_employees.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: AppSearchField(
+              key: const ValueKey('team_find'),
+              controller: _find,
+              hint: 'Find an employee by name or code',
+              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+            ),
           ),
-        ),
         Expanded(
           child: _loading
               ? const ListSkeleton()
