@@ -55,6 +55,16 @@ bool isNotCheckedIn(AttendanceDay d) {
   return (b == 'ABSENT' || b == 'INCOMPLETE') && d.actualFirstIn == null;
 }
 
+/// The Present figure on Insights counts everyone attending (present, remote, on duty), so its
+/// drill is this group of buckets, not `PRESENT` alone. Web's `isAttending`.
+const attendingBucketKey = 'ATTENDING';
+const attendingBuckets = {'PRESENT', 'REMOTE', 'ON_DUTY'};
+const attendingBucketLabel = 'Present, remote and on duty';
+
+/// Whether [d] is in [bucket]: a status bucket, or [attendingBucketKey].
+bool matchesBucket(AttendanceDay d, String bucket) =>
+    bucket == attendingBucketKey ? attendingBuckets.contains(attendanceBucketOf(d)) : attendanceBucketOf(d) == bucket;
+
 /// Arrived late: late minutes on the day, or the server's late flag (web `isLate`).
 bool isLateDay(AttendanceDay d) => (d.lateMinutes ?? 0) > 0 || d.raw['is_late'] == true;
 

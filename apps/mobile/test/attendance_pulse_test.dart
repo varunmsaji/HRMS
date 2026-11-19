@@ -214,11 +214,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened.last, '/app/team-attendance?date=$today&bucket=ABSENT');
 
+    // Present counts present, remote and on duty, so its list is all three, not PRESENT alone.
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(tile('Present'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&bucket=ATTENDING');
+
     router.go('/');
     await tester.pumpAndSettle();
     await tester.tap(tile('Late'));
     await tester.pumpAndSettle();
     expect(opened.last, '/app/team-attendance?date=$today&flag=late');
+
+    // Not checked in counts employees with no record yet (the fixture has one); the list says so.
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(tile('Not checked in'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&flag=not_checked_in&missing=1');
 
     router.go('/');
     await tester.pumpAndSettle();

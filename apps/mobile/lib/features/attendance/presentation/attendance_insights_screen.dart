@@ -448,20 +448,20 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   }
 
   /// Opens Team attendance on the focus day, narrowed to a status bucket or a flag.
-  void _openTeam({String? bucket, String? flag}) {
+  void _openTeam({String? bucket, String? flag, int? missing}) {
     final t = _t;
-    final query = {if (t != null) 'date': t.focusDate, if (bucket != null) 'bucket': bucket, if (flag != null) 'flag': flag};
+    final query = {if (t != null) 'date': t.focusDate, if (bucket != null) 'bucket': bucket, if (flag != null) 'flag': flag, if (missing != null && missing > 0) 'missing': '$missing'};
     context.push(Uri(path: '/app/team-attendance', queryParameters: query.isEmpty ? null : query).toString());
   }
 
   /// One tappable figure: opens the list of the people behind it.
-  Widget _tile(String label, String value, String hint, {String? bucket, String? flag, double width = 150}) => Semantics(
+  Widget _tile(String label, String value, String hint, {String? bucket, String? flag, int? missing, double width = 150}) => Semantics(
         key: ValueKey('tile:$label'),
         button: true,
         label: '$label: $value. $hint. Show these employees.',
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: () => _openTeam(bucket: bucket, flag: flag),
+          onTap: () => _openTeam(bucket: bucket, flag: flag, missing: missing),
           child: ExcludeSemantics(child: _stat(label, value, hint, width)),
         ),
       );
@@ -504,11 +504,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         LayoutBuilder(builder: (context, box) {
           final w = (box.maxWidth - 8) / 2;
           return Wrap(spacing: 8, runSpacing: 8, children: [
-            _tile('Present', '$present', hint(ofWorkforce(present), present, before?.presentTotal), bucket: 'PRESENT', width: w),
+            _tile('Present', '$present', hint(ofWorkforce(present), present, before?.presentTotal), bucket: attendingBucketKey, width: w),
             _tile('Absent', '${k.absent}', hint(ofWorkforce(k.absent), k.absent, before?.absent), bucket: 'ABSENT', width: w),
             _tile('On leave', '${k.leave}', hint(ofWorkforce(k.leave), k.leave, before?.leave), bucket: 'LEAVE', width: w),
             _tile('Late', '${k.late}', hint(k.checkedIn > 0 ? '${formatPct(pct(k.late, k.checkedIn))} of checked-in employees' : 'Nobody checked in yet', k.late, before?.late), flag: 'late', width: w),
-            _tile('Not checked in', '${k.notCheckedIn}', k.noRecord > 0 ? 'No IN punch, or no record yet' : 'Expected to work, no IN punch', flag: 'not_checked_in', width: w),
+            _tile('Not checked in', '${k.notCheckedIn}', k.noRecord > 0 ? 'No IN punch, or no record yet' : 'Expected to work, no IN punch', flag: 'not_checked_in', missing: k.noRecord, width: w),
           ]);
         }),
         const SizedBox(height: 4),

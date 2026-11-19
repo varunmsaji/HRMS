@@ -54,11 +54,16 @@ class _MonthlySummaryCardState extends ConsumerState<MonthlySummaryCard> {
   @override
   void didUpdateWidget(MonthlySummaryCard old) {
     super.didUpdateWidget(old);
-    // The list changed (reloaded, or the entity filter moved): reload only if the shown period did.
+    // The list changed (reloaded after finalizing or reopening, or the entity filter moved):
+    // reload when the shown period is another one, or has changed state (a closed period's rows
+    // are a frozen snapshot, an open one's are live).
     final before = _periodOf(old.periods);
     final now = _period;
-    if (before?['id'] != now?['id']) _load();
+    if (before?['id'] != now?['id'] || _stateOf(before) != _stateOf(now)) _load();
   }
+
+  /// What makes the summary's rows change for the same period.
+  static String _stateOf(Map<String, dynamic>? p) => p == null ? '' : '${p['status']}|${p['version']}|${p['closed_at']}|${p['reopened_at']}|${p['last_validation_status']}';
 
   _Rec? _periodOf(List<_Rec> periods) {
     if (_periodId != null) {

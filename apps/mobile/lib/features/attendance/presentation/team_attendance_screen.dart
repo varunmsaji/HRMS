@@ -71,11 +71,15 @@ class TeamAttendanceScreen extends ConsumerStatefulWidget {
   /// [date] (`YYYY-MM-DD`), [bucket] (a status bucket such as `PRESENT`) and [flag] (one of
   /// [attendanceDayFlags]) open the list already narrowed, as the Insights summary tiles do.
   /// Unknown values are ignored.
-  const TeamAttendanceScreen({super.key, this.date, this.bucket, this.flag});
+  const TeamAttendanceScreen({super.key, this.date, this.bucket, this.flag, this.missing});
 
   final String? date;
   final String? bucket;
   final String? flag;
+
+  /// How many employees the figure that sent the user here counted but this list cannot show,
+  /// because they have no attendance row for the day yet (the "not checked in" figure counts them).
+  final int? missing;
 
   @override
   ConsumerState<TeamAttendanceScreen> createState() => _TeamAttendanceScreenState();
@@ -103,7 +107,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     super.initState();
     final given = widget.date;
     _date = given != null && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(given) ? given : businessToday(_zone);
-    if (widget.bucket != null && attendanceBucketLabels.containsKey(widget.bucket)) _bucket = widget.bucket;
+    if (widget.bucket != null && (attendanceBucketLabels.containsKey(widget.bucket) || widget.bucket == attendingBucketKey)) _bucket = widget.bucket;
     if (widget.flag != null && attendanceDayFlags.containsKey(widget.flag)) _flag = widget.flag;
     _loadEmployees();
     _loadPending();
@@ -192,7 +196,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
     final matching = _days
-        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || attendanceBucketOf(d) == _bucket) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)))
+        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || matchesBucket(d, _bucket!)) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)))
         .toList();
     final fixer = MismatchFixer(
       context: context,
@@ -272,12 +276,20 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                               child: Align(
                                 alignment: Alignment.centerLeft,
                                 child: InputChip(
-                                  label: Text('Showing: ${_flag != null ? attendanceDayFlags[_flag] : attendanceBucketLabels[_bucket]}'),
+                                  label: Text('Showing: ${_flag != null ? attendanceDayFlags[_flag] : (_bucket == attendingBucketKey ? attendingBucketLabel : attendanceBucketLabels[_bucket])}'),
                                   onDeleted: () => setState(() {
                                     _bucket = null;
                                     _flag = null;
                                   }),
                                 ),
+                              ),
+                            ),
+                          if (_flag == 'not_checked_in' && (widget.missing ?? 0) > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                '${widget.missing} more ${widget.missing == 1 ? 'employee has' : 'employees have'} no attendance record for this day yet. They are counted on Insights but cannot be listed here until the day is worked out.',
+                                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                             ),
                           if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() {

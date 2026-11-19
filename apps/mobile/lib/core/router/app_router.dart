@@ -215,6 +215,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           date: state.uri.queryParameters['date'],
           bucket: state.uri.queryParameters['bucket'],
           flag: state.uri.queryParameters['flag'],
+          missing: int.tryParse(state.uri.queryParameters['missing'] ?? ''),
         ),
       ),
       GoRoute(path: '/app/attendance-geofences', builder: (context, state) => const GeofencesScreen()),
