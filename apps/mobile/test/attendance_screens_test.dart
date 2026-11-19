@@ -220,6 +220,26 @@ void main() {
       expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
     });
 
+    testWidgets('typing part of a name finds the person on the page, without opening the filter', (tester) async {
+      await pump(tester, const []);
+      await tester.enterText(find.byKey(const ValueKey('team_find')), 'rav');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsNothing);
+    });
+
+    testWidgets('typing an employee code finds the person, and clearing the box brings everyone back', (tester) async {
+      await pump(tester, const []);
+      await tester.enterText(find.byKey(const ValueKey('team_find')), 'e-1');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsNothing);
+      await tester.enterText(find.byKey(const ValueKey('team_find')), '');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+    });
+
     testWidgets('lists the day for everyone, labelled by employee', (tester) async {
       await pump(tester, const []);
       expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
