@@ -19,6 +19,7 @@ import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { nowInZoneForDatetimeLocal, wallTimeToUtcIso, zoneLabel } from "@/lib/attendance/format";
+import { describeWebPunchRefusal } from "@/lib/attendance/punch-errors";
 import type { Punch, PunchDirection } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
 
@@ -120,6 +121,11 @@ export function PunchEntryDialog({
       onOpenChange(false);
       toast({ title: `${direction === "IN" ? "Punch in" : "Punch out"} recorded`, variant: "success" });
     } catch (err) {
+      const refusal = isSelf ? describeWebPunchRefusal(err) : null;
+      if (refusal) {
+        setError(refusal);
+        return;
+      }
       if (err instanceof ApiError && err.status === 403) {
         setError("You don't have permission to record this punch.");
         return;
