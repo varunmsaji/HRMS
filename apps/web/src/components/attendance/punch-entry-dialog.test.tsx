@@ -22,6 +22,7 @@ vi.mock("@/lib/auth/auth-context", () => ({
 }));
 
 import { apiClient } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 
 const mockedPost = vi.mocked(apiClient.post);
@@ -136,5 +137,43 @@ describe("PunchEntryDialog — on-behalf punch time (D1)", () => {
     await waitFor(() => expect(mockedPost).toHaveBeenCalledWith("/attendance/punches/me", expect.anything()));
     const [, body] = mockedPost.mock.calls[0];
     expect(body as object).not.toHaveProperty("punch_time");
+  });
+
+  it("tells a face-enrolled employee to use the mobile app instead of claiming they lack permission", async () => {
+    mockUser.mockReturnValue({ employee_id: "self-emp", company_timezone: "Asia/Kolkata" });
+    mockedPost.mockRejectedValueOnce(
+      new ApiError({ status: 403, code: "FACE_VERIFICATION_REQUIRED", message: "Face verification is required to punch." }),
+    );
+
+    const user = userEvent.setup();
+    render(<PunchEntryDialog open onOpenChange={vi.fn()} employeeId="self-emp" onRecorded={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /record punch/i }));
+
+    expect(await screen.findByText(/face check to punch.*mobile app/i)).toBeInTheDocument();
+    expect(screen.queryByText(/don't have permission/i)).not.toBeInTheDocument();
+  });
+
+  it("tells the employee to use the mobile app when the company requires a location", async () => {
+    mockUser.mockReturnValue({ employee_id: "self-emp", company_timezone: "Asia/Kolkata" });
+    mockedPost.mockRejectedValueOnce(
+      new ApiError({ status: 422, code: "PUNCH_LOCATION_REQUIRED", message: "Your company requires your location to record attendance." }),
+    );
+
+    const user = userEvent.setup();
+    render(<PunchEntryDialog open onOpenChange={vi.fn()} employeeId="self-emp" onRecorded={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /record punch/i }));
+
+    expect(await screen.findByText(/requires your location.*mobile app/i)).toBeInTheDocument();
+  });
+
+  it("still says permission is missing for an ordinary 403", async () => {
+    mockUser.mockReturnValue({ employee_id: "self-emp", company_timezone: "Asia/Kolkata" });
+    mockedPost.mockRejectedValueOnce(new ApiError({ status: 403, code: "FORBIDDEN", message: "Forbidden" }));
+
+    const user = userEvent.setup();
+    render(<PunchEntryDialog open onOpenChange={vi.fn()} employeeId="self-emp" onRecorded={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /record punch/i }));
+
+    expect(await screen.findByText(/don't have permission/i)).toBeInTheDocument();
   });
 });
