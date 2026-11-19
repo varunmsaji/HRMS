@@ -175,6 +175,20 @@ void main() {
       expect(find.byType(EmployeeAttendanceProfileScreen), findsOneWidget);
     });
 
+    testWidgets('a person opened from an earlier month shows that month, not the current one', (tester) async {
+      final api = _api();
+      await _pump(tester, api);
+      await tester.tap(find.byTooltip('Previous month'));
+      await tester.pumpAndSettle();
+      api.listCalls.clear();
+      await tester.tap(find.text('Asha Test'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EmployeeAttendanceProfileScreen), findsOneWidget);
+      final asked = api.listCalls.where((c) => c.path == '/attendance/days').map((c) => c.filters?['date_from']).toSet();
+      expect(asked, contains('2026-10-01'), reason: "the person's month card opens on the month HR was looking at");
+      expect(asked, isNot(contains('2026-11-01')));
+    });
+
     testWidgets('the grid is still there behind the switch, in the directory order', (tester) async {
       await _pump(tester, _api());
       await toGrid(tester);

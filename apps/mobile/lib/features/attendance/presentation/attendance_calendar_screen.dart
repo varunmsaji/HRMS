@@ -120,7 +120,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
   void _openDay(AttendanceDay day) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day)));
 
   void _openEmployee(HrCalendarRow row) => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => EmployeeAttendanceProfileScreen(employeeId: row.employeeId, employeeLabel: row.name),
+        builder: (_) => EmployeeAttendanceProfileScreen(employeeId: row.employeeId, employeeLabel: row.name, initialMonth: _month),
       ));
 
   @override
