@@ -275,9 +275,16 @@ void main() {
   group('workforce roster', () {
     Widget screen() => WorkforceRosterScreen(now: _now);
 
+    /// The grid is the option; the list is what opens.
+    Future<void> toGrid(WidgetTester tester) async {
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('roster_switch')), matching: find.text('Grid')));
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('opens on this week, with people as rows and the shift in each cell', (tester) async {
       final api = _api(entries: [_entry('r-1', 'e-1'), _entry('r-2', 'e-2', off: true, shift: null), _entry('r-3', 'e-3', shift: 'sh-2', status: 'DRAFT', holiday: true)]);
       await _pump(tester, api, screen());
+      await toGrid(tester);
       expect(find.text('2 Nov 2026 – 15 Nov 2026'), findsOneWidget);
       expect(find.text('Person 1'), findsOneWidget);
       expect(find.text('OFF'), findsOneWidget);
@@ -287,6 +294,7 @@ void main() {
 
     testWidgets('counts everyone rostered per day below the grid', (tester) async {
       await _pump(tester, _api(entries: [_entry('r-1', 'e-1'), _entry('r-2', 'e-2')]), screen());
+      await toGrid(tester);
       expect(find.text('Rostered per day (all employees)'), findsOneWidget);
       expect(find.text('General (2)'), findsOneWidget);
       expect(find.text('2'), findsOneWidget, reason: 'two on the day, in the visible columns');
@@ -304,6 +312,54 @@ void main() {
       await tester.tap(find.text('Today'));
       await tester.pumpAndSettle();
       expect(api.listCalls.last.filters, {'date_from': '2026-11-02', 'date_to': '2026-11-08'});
+    });
+
+    testWidgets('opens as a list for one day, with each person and their shift', (tester) async {
+      await _pump(tester, _api(entries: [_entry('r-1', 'e-1'), _entry('r-2', 'e-2', off: true, shift: null), _entry('r-4', 'e-1', date: '2026-11-06')]), screen());
+      expect(find.widgetWithText(ChoiceChip, 'Thu 5/11'), findsOneWidget);
+      expect(find.text('GEN'), findsOneWidget);
+      expect(find.text('OFF'), findsOneWidget);
+      expect(find.textContaining('2 of'), findsOneWidget, reason: 'two listed people have an entry today');
+      expect(find.text('Rostered per day (all employees)'), findsNothing, reason: 'that is the grid');
+      // Another day lists that day.
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Fri 6/11'));
+      await tester.pumpAndSettle();
+      expect(find.text('OFF'), findsNothing);
+      expect(find.text('GEN'), findsOneWidget);
+    });
+
+    testWidgets('in the list a manager taps a person with no entry to add one, and one with an entry to edit it', (tester) async {
+      await _pump(tester, _api(entries: [_entry('r-1', 'e-1')]), screen());
+      await tester.tap(find.text('GEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit roster entry'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('No entry').first);
+      await tester.pumpAndSettle();
+      expect(find.text('New roster entry'), findsOneWidget);
+    });
+
+    testWidgets('coming back to the list from the grid keeps the chosen day in view', (tester) async {
+      await _pump(tester, _api(), screen());
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Sun 15/11'), warnIfMissed: false);
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      await tester.pumpAndSettle();
+      await toGrid(tester);
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('roster_switch')), matching: find.text('List')));
+      await tester.pumpAndSettle();
+      final chip = tester.getRect(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      expect(chip.left, greaterThanOrEqualTo(0));
+      expect(chip.right, lessThanOrEqualTo(390), reason: 'on screen, not left past the edge of the strip');
+    });
+
+    testWidgets('without roster permission the list is read-only', (tester) async {
+      await _pump(tester, _api(entries: [_entry('r-1', 'e-1')]), screen(), permissions: const [attendanceViewAll, attendanceView, employeeViewAll, orgShiftManage]);
+      expect(find.textContaining('No entry  +'), findsNothing);
+      await tester.tap(find.text('GEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit roster entry'), findsNothing);
     });
 
     testWidgets('search goes to the server', (tester) async {
@@ -325,6 +381,7 @@ void main() {
 
     testWidgets('a manager taps a blank cell to add an entry for that person and day', (tester) async {
       await _pump(tester, _api(), screen());
+      await toGrid(tester);
       await tester.tap(find.bySemanticsLabel('Add roster entry for Person 1 on 2026-11-02'));
       await tester.pumpAndSettle();
       expect(find.text('New roster entry'), findsOneWidget);
@@ -333,6 +390,7 @@ void main() {
 
     testWidgets('a manager taps a filled cell to edit it', (tester) async {
       await _pump(tester, _api(entries: [_entry('r-1', 'e-1', date: '2026-11-02')]), screen());
+      await toGrid(tester);
       await tester.tap(find.text('GEN'));
       await tester.pumpAndSettle();
       expect(find.text('Edit roster entry'), findsOneWidget);
@@ -340,6 +398,7 @@ void main() {
 
     testWidgets('without roster permission cells are read-only', (tester) async {
       await _pump(tester, _api(entries: [_entry('r-1', 'e-1', date: '2026-11-02')]), screen(), permissions: const [attendanceViewAll, attendanceView, employeeViewAll, orgShiftManage]);
+      await toGrid(tester);
       expect(find.text('+'), findsNothing);
       await tester.tap(find.text('GEN'));
       await tester.pumpAndSettle();

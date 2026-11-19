@@ -41,6 +41,11 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
   final _searchController = TextEditingController();
   Timer? _debounce;
   bool _onlyRostered = false;
+  /// The employee × date grid (wide) rather than one day's list (the phone default, MOB-UX-048).
+  bool _gridView = false;
+  String? _listDay;
+  final _selectedDayKey = GlobalKey();
+  String? _scrolledTo;
 
   List<Employee>? _employees;
   bool _hasNext = false;
@@ -148,6 +153,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
     setState(() {
       if (start != null) _start = start;
       if (days != null) _days = days;
+      _scrolledTo = null;
     });
     _loadRange();
   }
@@ -189,6 +195,17 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
             TextButton(onPressed: thisWeek ? null : () => _setRange(start: mondayOfIso(_today)), child: const Text('Today')),
           ]),
           const SizedBox(height: 8),
+          SegmentedButton<bool>(
+            key: const ValueKey('roster_switch'),
+            showSelectedIcon: false,
+            segments: const [ButtonSegment(value: false, label: Text('List')), ButtonSegment(value: true, label: Text('Grid'))],
+            selected: {_gridView},
+            onSelectionChanged: (v) => setState(() {
+              _gridView = v.first;
+              _scrolledTo = null; // the day strip is rebuilt at the start when the list comes back
+            }),
+          ),
+          const SizedBox(height: 8),
           AppSearchField(
             controller: _searchController,
             hint: 'Search name or code',
@@ -227,7 +244,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
             StateMessage(icon: Icons.people_outline, title: 'No employees to show.', message: _onlyRostered || _searchController.text.isNotEmpty ? 'No one matches. Clear the filter or load more.' : null)
           else ...[
             if (_loadingEmployees || _loadingRange) const LinearProgressIndicator(),
-            _grid(context, rows, dates, range.entries, canManage),
+            if (_gridView) _grid(context, rows, dates, range.entries, canManage) else _dayList(context, rows, dates, range.entries, canManage),
           ],
           if (_hasNext && error == null) Center(child: TextButton(onPressed: _loadingMore ? null : _moreEmployees, child: Text(_loadingMore ? 'Loading…' : 'Load more employees'))),
           const SizedBox(height: 8),
@@ -241,10 +258,72 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
                 ),
           ]),
           const SizedBox(height: 8),
-          Text('${canManage ? 'Tap a cell to edit it, or the + on a blank cell to add an entry. ' : ''}OFF = week off. * = working holiday. An outlined cell is a draft, not yet live. A blank cell means the default shift applies.', style: muted),
+          Text('${canManage ? (_gridView ? 'Tap a cell to edit it, or the + on a blank cell to add an entry. ' : 'Tap a person to edit their entry, or to add one where there is none. ') : ''}OFF = week off. * = working holiday. An outlined cell is a draft, not yet live. A blank cell means the default shift applies.', style: muted),
         ]),
       ),
     );
+  }
+
+  /// One day at a time: a chip per date, then everyone with their shift that day. Tapping a row
+  /// edits the entry, or adds one where there is none (with the manage grant).
+  Widget _dayList(BuildContext context, List<Employee> rows, List<String> dates, List<RosterEntry> entries, bool canManage) {
+    final scheme = Theme.of(context).colorScheme;
+    final day = dates.contains(_listDay) ? _listDay! : (dates.contains(_today) ? _today : dates.first);
+    final byEmployee = {for (final r in entries) if (r.date == day) r.employeeId: r};
+    final rostered = rows.where((e) => byEmployee.containsKey(e.id)).length;
+    if (_scrolledTo != day) {
+      _scrolledTo = day;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _selectedDayKey.currentContext;
+        if (ctx != null && ctx.mounted) Scrollable.ensureVisible(ctx, alignment: 0.5);
+      });
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(
+        height: 52,
+        // Every chip is built (at most 31), so the chosen day can be scrolled into view.
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            for (final d in dates)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  key: d == day ? _selectedDayKey : ValueKey('roster_day:$d'),
+                  label: Text('${gridDayHeading(d).weekday} ${gridDayHeading(d).date}'),
+                  selected: d == day,
+                  onSelected: (_) => setState(() => _listDay = d),
+                ),
+              ),
+          ]),
+        ),
+      ),
+      Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Text('$rostered of ${rows.length} listed ${rows.length == 1 ? 'has' : 'have'} an entry on ${formatShortDate(day)}.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
+      for (final e in rows)
+        Builder(builder: (context) {
+          final entry = byEmployee[e.id];
+          final name = e.fullName.isEmpty ? e.employeeCode : e.fullName;
+          final shift = entry == null || entry.shiftId == null || entry.isWeekOff ? null : _shifts[entry.shiftId];
+          final label = entry == null ? null : rosterCellLabel(entry, _shifts);
+          return ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: entry == null
+                ? Text(canManage ? 'No entry  +' : 'No entry', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))
+                : Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _toneBg(context, shift),
+                      borderRadius: BorderRadius.circular(6),
+                      border: entry.isDraft ? Border.all(color: scheme.primary, width: 2, strokeAlign: BorderSide.strokeAlignInside) : null,
+                    ),
+                    child: Text('$label${entry.isDraft ? ' · draft' : ''}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _toneFg(context, shift))),
+                  ),
+            onTap: canManage ? () => _openCell(e, day, entry) : null,
+          );
+        }),
+    ]);
   }
 
   Widget _grid(BuildContext context, List<Employee> rows, List<String> dates, List<RosterEntry> entries, bool canManage) {
