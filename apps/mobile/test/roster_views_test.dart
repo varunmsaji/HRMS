@@ -340,6 +340,20 @@ void main() {
       expect(find.text('New roster entry'), findsOneWidget);
     });
 
+    testWidgets('coming back to the list from the grid keeps the chosen day in view', (tester) async {
+      await _pump(tester, _api(), screen());
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Sun 15/11'), warnIfMissed: false);
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      await tester.pumpAndSettle();
+      await toGrid(tester);
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('roster_switch')), matching: find.text('List')));
+      await tester.pumpAndSettle();
+      final chip = tester.getRect(find.widgetWithText(ChoiceChip, 'Sun 15/11'));
+      expect(chip.left, greaterThanOrEqualTo(0));
+      expect(chip.right, lessThanOrEqualTo(390), reason: 'on screen, not left past the edge of the strip');
+    });
+
     testWidgets('without roster permission the list is read-only', (tester) async {
       await _pump(tester, _api(entries: [_entry('r-1', 'e-1')]), screen(), permissions: const [attendanceViewAll, attendanceView, employeeViewAll, orgShiftManage]);
       expect(find.textContaining('No entry  +'), findsNothing);

@@ -153,6 +153,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
     setState(() {
       if (start != null) _start = start;
       if (days != null) _days = days;
+      _scrolledTo = null;
     });
     _loadRange();
   }
@@ -199,7 +200,10 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
             showSelectedIcon: false,
             segments: const [ButtonSegment(value: false, label: Text('List')), ButtonSegment(value: true, label: Text('Grid'))],
             selected: {_gridView},
-            onSelectionChanged: (v) => setState(() => _gridView = v.first),
+            onSelectionChanged: (v) => setState(() {
+              _gridView = v.first;
+              _scrolledTo = null; // the day strip is rebuilt at the start when the list comes back
+            }),
           ),
           const SizedBox(height: 8),
           AppSearchField(
