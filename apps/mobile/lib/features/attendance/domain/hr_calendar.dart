@@ -58,3 +58,13 @@ List<HrCalendarRow> filterHrRows(List<HrCalendarRow> rows, String query) {
 
 /// 6, or 2.5 for a half day.
 String formatHrCount(double value) => value == value.roundToDouble() ? value.toInt().toString() : value.toString();
+
+/// The rows with whoever needs a look first: most absent days, then most late arrivals, then by
+/// name (the list view; [rows] is not changed).
+List<HrCalendarRow> sortByAttention(List<HrCalendarRow> rows) => [...rows]
+  ..sort((a, b) {
+    final absent = b.absent.compareTo(a.absent);
+    if (absent != 0) return absent;
+    final late = b.late.compareTo(a.late);
+    return late != 0 ? late : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
