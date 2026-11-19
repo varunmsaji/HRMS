@@ -8,6 +8,7 @@ import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_period_detail_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_periods_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/monthly_summary_card.dart';
 
 import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';
@@ -74,6 +75,48 @@ void main() {
       expect(find.textContaining('Acme Pvt Ltd'), findsOneWidget);
       expect(find.text('Open'), findsOneWidget);
       expect(find.text('Open period'), findsNothing);
+    });
+
+    testWidgets('shows the monthly summary above the periods, as on web, and says so when the period has none', (tester) async {
+      await _pump(tester, _api(summary: [
+        {'employee_id': 'e1', 'present_days': '4', 'payable_days': '6', 'late_count': 1, 'frozen': false},
+      ]), const [], const AttendancePeriodsScreen());
+      expect(find.text('Monthly attendance summary'), findsOneWidget);
+      expect(find.text('Live preview'), findsOneWidget);
+      expect(find.text('Payable days'), findsOneWidget);
+      expect(find.textContaining('Acme Pvt Ltd'), findsOneWidget, reason: 'the periods are still listed below it');
+    });
+
+    testWidgets('the summary reloads when the period it shows is finalized or reopened, not only when another is chosen', (tester) async {
+      final api = _api(summary: [
+        {'employee_id': 'e1', 'present_days': '4', 'payable_days': '6', 'late_count': 1, 'frozen': false},
+      ]);
+      Widget card(Map<String, dynamic> period) => ProviderScope(
+            overrides: [apiClientProvider.overrideWithValue(api), fakeAuth(const [])],
+            child: MaterialApp(home: Scaffold(body: MonthlySummaryCard(periods: [period], today: '2026-09-15'))),
+          );
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(card(_period()));
+      await tester.pumpAndSettle();
+      int summaryReads() => api.listCalls.where((c) => c.path.startsWith('/attendance-periods/p1/summary')).length;
+      expect(summaryReads(), 1);
+      // The same period, re-read from the server: nothing changed, so no second read.
+      await tester.pumpWidget(card(_period()));
+      await tester.pumpAndSettle();
+      expect(summaryReads(), 1);
+      // The same period after it was finalized.
+      await tester.pumpWidget(card(_period(status: 'CLOSED', version: 4)));
+      await tester.pumpAndSettle();
+      expect(summaryReads(), 2);
+    });
+
+    testWidgets('no periods, no summary card', (tester) async {
+      final api = FakeApiClient(lists: {'/attendance-periods': const [], '/legal-entities': const []});
+      await _pump(tester, api, const [], const AttendancePeriodsScreen());
+      expect(find.text('Monthly attendance summary'), findsNothing);
+      expect(find.text('No attendance periods yet'), findsOneWidget);
     });
 
     testWidgets('opening a period posts the month, entity and no UI-only fields', (tester) async {

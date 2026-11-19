@@ -9,6 +9,7 @@ import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/attendance_summary.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_enrollment_admin_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/team_attendance_screen.dart';
 import 'package:hrms_mobile/features/payroll/presentation/employee_salary_panel.dart';
@@ -153,7 +154,7 @@ void main() {
   });
 
   group('team attendance', () {
-    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions) async {
+    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions, {String? bucket, String? flag, int? missing}) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -172,11 +173,52 @@ void main() {
       });
       await tester.pumpWidget(ProviderScope(
         overrides: [attendanceRepositoryProvider.overrideWithValue(repo), apiClientProvider.overrideWithValue(api), fakeAuth(permissions)],
-        child: const MaterialApp(home: TeamAttendanceScreen()),
+        child: MaterialApp(home: TeamAttendanceScreen(bucket: bucket, flag: flag, missing: missing)),
       ));
       await tester.pumpAndSettle();
       return repo;
     }
+
+    testWidgets('opens already narrowed to a status when a summary figure sent it there, and the chip clears it', (tester) async {
+      await pump(tester, const [], bucket: 'PRESENT');
+      expect(find.text('Showing: Present'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsNothing);
+      await tester.tap(find.descendant(of: find.byType(InputChip), matching: find.byType(Icon)));
+      await tester.pumpAndSettle();
+      expect(find.text('Showing: Present'), findsNothing);
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+    });
+
+    test('Present, remote and on duty all count as attending; the others do not', () {
+      bool attending(String status) => matchesBucket(AttendanceDay.fromJson(_dayJson(over: {'attendance_status': status})), attendingBucketKey);
+      expect([for (final s in ['PRESENT', 'WFH', 'ON_DUTY']) attending(s)], [true, true, true]);
+      expect([for (final s in ['ABSENT', 'LEAVE', 'HALF_DAY', 'INCOMPLETE']) attending(s)], [false, false, false, false]);
+    });
+
+    testWidgets('the attending drill lists everyone the Present figure counts, under its own name', (tester) async {
+      await pump(tester, const [], bucket: attendingBucketKey);
+      expect(find.text('Showing: Present, remote and on duty'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsNothing, reason: 'incomplete, not attending');
+    });
+
+    testWidgets('say how many counted employees have no row and cannot be listed, for the not-checked-in drill', (tester) async {
+      await pump(tester, const [], flag: 'not_checked_in', missing: 2);
+      expect(find.textContaining('2 more employees have no attendance record for this day yet'), findsOneWidget);
+    });
+
+    testWidgets('no such note on any other drill', (tester) async {
+      await pump(tester, const [], bucket: 'PRESENT', missing: 2);
+      expect(find.textContaining('no attendance record for this day yet'), findsNothing);
+    });
+
+    testWidgets('a status or flag it does not know is ignored, so a stale link still shows everyone', (tester) async {
+      await pump(tester, const [], bucket: 'NOPE', flag: 'nope');
+      expect(find.textContaining('Showing:'), findsNothing);
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+    });
 
     testWidgets('lists the day for everyone, labelled by employee', (tester) async {
       await pump(tester, const []);

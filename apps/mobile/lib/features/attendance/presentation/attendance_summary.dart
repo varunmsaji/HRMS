@@ -55,6 +55,37 @@ bool isNotCheckedIn(AttendanceDay d) {
   return (b == 'ABSENT' || b == 'INCOMPLETE') && d.actualFirstIn == null;
 }
 
+/// The Present figure on Insights counts everyone attending (present, remote, on duty), so its
+/// drill is this group of buckets, not `PRESENT` alone. Web's `isAttending`.
+const attendingBucketKey = 'ATTENDING';
+const attendingBuckets = {'PRESENT', 'REMOTE', 'ON_DUTY'};
+const attendingBucketLabel = 'Present, remote and on duty';
+
+/// Whether [d] is in [bucket]: a status bucket, or [attendingBucketKey].
+bool matchesBucket(AttendanceDay d, String bucket) =>
+    bucket == attendingBucketKey ? attendingBuckets.contains(attendanceBucketOf(d)) : attendanceBucketOf(d) == bucket;
+
+/// Arrived late: late minutes on the day, or the server's late flag (web `isLate`).
+bool isLateDay(AttendanceDay d) => (d.lateMinutes ?? 0) > 0 || d.raw['is_late'] == true;
+
+/// Overtime detected on the day.
+bool hasOvertimeDay(AttendanceDay d) => ((d.raw['ot_minutes_detected'] as num?)?.toInt() ?? 0) > 0;
+
+/// The day-list drills a summary figure can open on Team attendance, besides a status bucket
+/// (web's `DayFlag`): [key] is the route's `flag` value.
+const attendanceDayFlags = {
+  'late': 'Late',
+  'not_checked_in': 'Not checked in',
+  'overtime': 'Overtime',
+};
+
+bool matchesDayFlag(AttendanceDay d, String flag) => switch (flag) {
+      'late' => isLateDay(d),
+      'not_checked_in' => isNotCheckedIn(d),
+      'overtime' => hasOvertimeDay(d),
+      _ => true,
+    };
+
 /// Web `hasException`: missing punch, config error, pending approval or unresolved work-on-leave.
 bool hasAttendanceException(AttendanceDay d) =>
     d.raw['missing_punch'] == true ||
@@ -72,7 +103,7 @@ class AttendanceSummary {
       if (b == 'NOT_EMPLOYED') continue;
       employed++;
       if (d.actualFirstIn != null) checkedIn++;
-      if ((d.lateMinutes ?? 0) > 0 || d.raw['is_late'] == true) late++;
+      if (isLateDay(d)) late++;
       if (isNotCheckedIn(d)) notCheckedIn++;
       if (hasAttendanceException(d)) exceptions++;
       final ot = (d.raw['ot_minutes_detected'] as num?)?.toInt() ?? 0;

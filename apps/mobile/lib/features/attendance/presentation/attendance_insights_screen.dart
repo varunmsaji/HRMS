@@ -15,7 +15,6 @@ import '../domain/attendance_pulse.dart';
 import '../domain/attendance_totals.dart';
 import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
-import '../domain/attendance_reports.dart' show reportLabels;
 import 'attendance_day_detail_screen.dart';
 import 'attendance_mismatches_screen.dart';
 import 'employee_attendance_profile_screen.dart';
@@ -36,14 +35,18 @@ class _Loaded<T> {
 
 String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : e.message) : 'Something went wrong.';
 
-/// Mirrors `apps/web/src/app/app/attendance/page.tsx` (the organisation view) in its order: today's
-/// rate and KPIs, needs attention, payroll readiness, the department / branch breakdown, trend,
-/// punctuality, weekday pattern, work hours, overtime, leave & absence, the muster heatmap, period
-/// status and the monthly summary. As on web, everything covers the range widened to at least 14
-/// days ([windowRangeIso]); range panels read only the range, trends read the window. The totals
-/// (rate, KPIs, distribution, trend, punctuality, weekday pattern, department / branch breakdown)
-/// are the backend's (`GET /v1/attendance/summary`); the per-person panels read the attendance
-/// days. Web's "who's in" list is the Team attendance screen here, so the pulse links to it.
+/// Mirrors the organisation view of `apps/web/src/app/app/attendance/page.tsx`, which has three
+/// tabs. **Today**: the attendance rate beside five tappable figures (each opens Team attendance
+/// narrowed to them), needs attention, payroll readiness when the period needs a look, and the
+/// attendance grid. **Trends**: departments and branches, the trend, punctuality, absence and
+/// leave, work hours, overtime. **Reports**: the six reports. The attendance periods and the
+/// monthly summary are on the Attendance Periods screen, as on web.
+///
+/// As on web, everything covers the range widened to at least 14 days ([windowRangeIso]); range
+/// panels read only the range, trends read the window. The totals (rate, figures, trend,
+/// punctuality, weekday pattern, department / branch breakdown) are the backend's
+/// (`GET /v1/attendance/summary`); the per-person panels read the attendance days. Web's "who's in"
+/// list is the Team attendance screen here.
 class AttendanceInsightsScreen extends ConsumerStatefulWidget {
   const AttendanceInsightsScreen({super.key});
 
@@ -68,11 +71,6 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   /// The window's totals, counted by the backend; null until loaded.
   _Loaded<AttendanceTotals>? _totals;
   bool _byBranch = false;
-
-  /// The period the monthly summary shows (null = the default one) and its summary rows.
-  String? _periodId;
-  _Loaded<List<_Rec>>? _summary;
-  int _summaryRequest = 0;
 
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
   String get _today => businessToday(_zone);
@@ -136,35 +134,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         _periods = periods;
         _totals = totals;
       });
-      _loadSummary();
     } catch (e) {
       if (mounted) setState(() => _error = _msg(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Map<String, dynamic>? get _summaryPeriod {
-    final list = _periods.data ?? const <_Rec>[];
-    if (_periodId != null) {
-      for (final p in list) {
-        if (p['id'] == _periodId) return p;
-      }
-    }
-    return pickDefaultPeriod(list, _today);
-  }
-
-  /// The chosen period's per-employee summary (live while OPEN, frozen once CLOSED).
-  Future<void> _loadSummary() async {
-    final period = _summaryPeriod;
-    final mine = ++_summaryRequest;
-    if (period == null) {
-      setState(() => _summary = null);
-      return;
-    }
-    setState(() => _summary = null);
-    final loaded = await _section(() => _all('/attendance-periods/${period['id']}/summary'));
-    if (mounted && mine == _summaryRequest) setState(() => _summary = loaded);
   }
 
   /// The employee's attendance profile, as web links each name to `/app/attendance/employee/[id]`.
@@ -186,8 +160,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         ),
       );
 
-  Widget _stat(String label, String value, [String? hint]) => Container(
-        width: 150,
+  Widget _stat(String label, String value, [String? hint, double width = 150]) => Container(
+        width: width,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerLow, borderRadius: BorderRadius.circular(14)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -276,13 +250,15 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     );
   }
 
-  Widget _leaveAbsence() {
+  /// Absence and leave over the range, with the weekday pattern (web "Absence & leave").
+  Widget _absenceLeave() {
     final rows = _rangeDays;
     final absent = rows.where((d) => attendanceBucketOf(d) == 'ABSENT').length;
     final leave = rows.where((d) => attendanceBucketOf(d) == 'LEAVE').length;
     final repeat = repeatAbsences(rows);
     return _card(
-      'Leave & absence',
+      'Absence & leave',
+      subtitle: '$_rangeLabel — operational view; Leave stays the system of record.',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 8, runSpacing: 8, children: [_stat('Absent days', '$absent'), _stat('Leave days', '$leave')]),
         const SizedBox(height: 8),
@@ -290,6 +266,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         if (repeat.isEmpty) const Padding(padding: EdgeInsets.only(top: 4), child: Text('None in this range.')),
         for (final r in repeat.take(10))
           ListTile(dense: true, contentPadding: EdgeInsets.zero, onTap: () => _openEmployee(r.employeeId), title: Text(_name(r.employeeId)), subtitle: Text('${r.leaveDays} leave day${r.leaveDays == 1 ? '' : 's'}'), trailing: Text('${r.absentDays} absent')),
+        const SizedBox(height: 12),
+        Text('By weekday', style: Theme.of(context).textTheme.labelLarge),
+        _muted('$_windowLabel — share of expected days missed.'),
+        const SizedBox(height: 6),
+        _weekdayPattern(),
       ]),
     );
   }
@@ -441,14 +422,13 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
 
   // ---- today ---------------------------------------------------------------------------------
 
-  Widget _pulse() {
+  /// The attendance rate for the focus day, beside what it is compared with and the last two weeks.
+  Widget _ratePulse() {
     final t = _t;
     if (t == null) return _totalsUnavailable('Attendance at a glance');
     final focus = t.focusDay;
     final spark = t.daily.where((p) => p.date.compareTo(t.focusDate) <= 0).toList();
     final recent = spark.sublist(spark.length > minContextDays ? spark.length - minContextDays : 0);
-    final distribution = [for (final e in t.distribution) (label: dayBucketLabels[e.bucket] ?? e.bucket, count: e.count)];
-    final total = distribution.fold<int>(0, (a, e) => a + e.count);
     final delta = _delta(t.rateDelta, unit: ' pts', decimals: 1);
     final theme = Theme.of(context);
     return _card(
@@ -463,31 +443,35 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         const SizedBox(height: 10),
         MiniColumnChart(bars: [for (final p in recent) ChartBar(shortDate(p.date), p.rate)], format: (v) => '${v.round()}%', maxValue: 100, height: 70),
         _muted('Last ${recent.length} days'),
-        const SizedBox(height: 14),
-        Row(children: [
-          Expanded(child: Text("WHO'S WHO", style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.6))),
-          _muted('$total records'),
-        ]),
-        const SizedBox(height: 6),
-        if (distribution.isEmpty)
-          const Text('No attendance records for this date.')
-        else
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final e in distribution)
-              Chip(
-                visualDensity: VisualDensity.compact,
-                label: Text('${e.label}  ${e.count} · ${formatPct(pct(e.count, total))}'),
-              ),
-          ]),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(onPressed: () => context.push('/app/team-attendance'), child: const Text("See who's in →")),
-        ),
       ]),
     );
   }
 
-  Widget _kpis() {
+  /// Opens Team attendance on the focus day, narrowed to a status bucket or a flag.
+  void _openTeam({String? bucket, String? flag, int? missing}) {
+    final t = _t;
+    final query = {if (t != null) 'date': t.focusDate, if (bucket != null) 'bucket': bucket, if (flag != null) 'flag': flag, if (missing != null && missing > 0) 'missing': '$missing'};
+    context.push(Uri(path: '/app/team-attendance', queryParameters: query.isEmpty ? null : query).toString());
+  }
+
+  /// One tappable figure: opens the list of the people behind it.
+  Widget _tile(String label, String value, String hint, {String? bucket, String? flag, int? missing, double width = 150}) => Semantics(
+        key: ValueKey('tile:$label'),
+        button: true,
+        label: '$label: $value. $hint. Show these employees.',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openTeam(bucket: bucket, flag: flag, missing: missing),
+          child: ExcludeSemantics(child: _stat(label, value, hint, width)),
+        ),
+      );
+
+  static const _moreStatusesKey = 'more_statuses';
+  bool _moreStatuses = false;
+
+  /// The headcount as a line, five everyday figures, and the rarer ones behind "More statuses"
+  /// (web `KpiGrid`). Each figure opens Team attendance narrowed to those employees.
+  Widget _summaryBlock() {
     final t = _t;
     if (t == null) return _totalsUnavailable('Today');
     final k = t.focus;
@@ -496,91 +480,86 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     String ofWorkforce(int n) => total > 0 ? '${formatPct(pct(n, total))} of workforce' : 'No employees in scope';
     String hint(String base, int now, int? then) => [base, if (then != null) _delta(now - then)].whereType<String>().join(' · ');
     final present = k.presentTotal;
+    final more = <(String, String, String, String?, String?)>[
+      ('Remote (WFH)', '${k.remote}', present > 0 ? '${formatPct(pct(k.remote, present))} of those present' : 'Nobody present', 'REMOTE', null),
+      (
+        'Overtime',
+        k.overtimeMinutesDetected > 0 ? formatMinutes(k.overtimeMinutesDetected) : 'None',
+        k.overtimeEmployees > 0 ? '${k.overtimeEmployees} employee${k.overtimeEmployees == 1 ? '' : 's'} · ${formatMinutes(k.overtimeMinutesApproved)} approved' : 'No overtime detected',
+        null,
+        'overtime'
+      ),
+      ('On duty', '${k.onDuty}', ofWorkforce(k.onDuty), 'ON_DUTY', null),
+      ('Half day', '${k.halfDay}', ofWorkforce(k.halfDay), 'HALF_DAY', null),
+      ('Holiday', '${k.holiday}', ofWorkforce(k.holiday), 'HOLIDAY', null),
+      ('Weekly off', '${k.weeklyOff}', ofWorkforce(k.weeklyOff), 'WEEKLY_OFF', null),
+      ('Incomplete', '${k.incomplete}', 'Needs manual resolution', 'INCOMPLETE', null),
+    ];
+    final moreWithData = [k.remote, k.overtimeEmployees, k.onDuty, k.halfDay, k.holiday, k.weeklyOff, k.incomplete, k.exceptions].where((n) => n > 0).length;
     return _card(
       'Today',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          _stat('Total employees', '$total', k.noRecord > 0 ? '${k.noRecord} with no record yet' : 'Employed on today'),
-          _stat('Present', '$present', hint(ofWorkforce(present), present, before?.presentTotal)),
-          _stat('Absent', '${k.absent}', hint(ofWorkforce(k.absent), k.absent, before?.absent)),
-          _stat('On leave', '${k.leave}', hint(ofWorkforce(k.leave), k.leave, before?.leave)),
-          _stat('Late', '${k.late}', hint(k.checkedIn > 0 ? '${formatPct(pct(k.late, k.checkedIn))} of checked-in employees' : 'Nobody checked in yet', k.late, before?.late)),
-          _stat('Not checked in', '${k.notCheckedIn}', k.noRecord > 0 ? 'No IN punch, or no record yet' : 'Expected to work, no IN punch'),
-          _stat('Remote (WFH)', '${k.remote}', present > 0 ? '${formatPct(pct(k.remote, present))} of those present' : 'Nobody present'),
-          _stat(
-            'Overtime',
-            k.overtimeMinutesDetected > 0 ? formatMinutes(k.overtimeMinutesDetected) : 'None',
-            k.overtimeEmployees > 0 ? '${k.overtimeEmployees} employee${k.overtimeEmployees == 1 ? '' : 's'} · ${formatMinutes(k.overtimeMinutesApproved)} approved' : 'No overtime detected',
-          ),
-        ]),
-        Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: EdgeInsets.zero,
-            title: const Text('More statuses', style: TextStyle(fontSize: 13)),
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(spacing: 8, runSpacing: 8, children: [
-                  _stat('On duty', '${k.onDuty}', ofWorkforce(k.onDuty)),
-                  _stat('Half day', '${k.halfDay}', ofWorkforce(k.halfDay)),
-                  _stat('Holiday', '${k.holiday}', ofWorkforce(k.holiday)),
-                  _stat('Weekly off', '${k.weeklyOff}', ofWorkforce(k.weeklyOff)),
-                  _stat('Incomplete', '${k.incomplete}', 'Needs manual resolution'),
-                  _stat('Exceptions', '${k.exceptions}', 'See Needs attention for the breakdown'),
-                ]),
-              ),
-            ],
-          ),
+        _muted('$total ${total == 1 ? 'employee' : 'employees'} · ${k.noRecord > 0 ? '${k.noRecord} with no record yet for today' : 'employed today'}'),
+        const SizedBox(height: 10),
+        LayoutBuilder(builder: (context, box) {
+          final w = (box.maxWidth - 8) / 2;
+          return Wrap(spacing: 8, runSpacing: 8, children: [
+            _tile('Present', '$present', hint(ofWorkforce(present), present, before?.presentTotal), bucket: attendingBucketKey, width: w),
+            _tile('Absent', '${k.absent}', hint(ofWorkforce(k.absent), k.absent, before?.absent), bucket: 'ABSENT', width: w),
+            _tile('On leave', '${k.leave}', hint(ofWorkforce(k.leave), k.leave, before?.leave), bucket: 'LEAVE', width: w),
+            _tile('Late', '${k.late}', hint(k.checkedIn > 0 ? '${formatPct(pct(k.late, k.checkedIn))} of checked-in employees' : 'Nobody checked in yet', k.late, before?.late), flag: 'late', width: w),
+            _tile('Not checked in', '${k.notCheckedIn}', k.noRecord > 0 ? 'No IN punch, or no record yet' : 'Expected to work, no IN punch', flag: 'not_checked_in', missing: k.noRecord, width: w),
+          ]);
+        }),
+        const SizedBox(height: 4),
+        TextButton.icon(
+          key: const ValueKey(_moreStatusesKey),
+          onPressed: () => setState(() => _moreStatuses = !_moreStatuses),
+          icon: Icon(_moreStatuses ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+          label: Text(_moreStatuses ? 'Fewer statuses' : 'More statuses${moreWithData > 0 ? ' ($moreWithData with data)' : ''}'),
         ),
+        if (_moreStatuses)
+          LayoutBuilder(builder: (context, box) {
+            final w = (box.maxWidth - 8) / 2;
+            return Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final (label, value, context, bucket, flag) in more) _tile(label, value, context, bucket: bucket, flag: flag, width: w),
+              // Exceptions have no list of their own: the breakdown is in Needs attention.
+              _stat('Exceptions', '${k.exceptions}', 'See Needs attention for the breakdown', w),
+            ]);
+          }),
+        Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: () => _openTeam(), child: const Text("See who's in →"))),
       ]),
     );
   }
 
   // ---- month end -----------------------------------------------------------------------------
 
-  /// Web shows this card only when there is an open period.
+  /// Month-end at a glance, as one compact card. Web shows it only when the open period needs a
+  /// look: something is in the way of closing it, validation is blocked, or it ends within three
+  /// days (`payrollNeedsAttention`).
   Widget _readiness() {
     if (_periods.error != null) return const SizedBox.shrink();
     final open = [for (final p in _periods.data ?? const <_Rec>[]) if (p['status'] == 'OPEN') p];
     final period = pickDefaultPeriod(open, _today);
     if (period == null) return const SizedBox.shrink();
     final progress = periodProgress(period, _today);
+    final blockers = _attentionItems.where((i) => i.severity == Severity.critical || i.severity == Severity.high).toList();
+    final blocked = period['last_validation_status'] == 'BLOCKED';
+    if (blockers.isEmpty && !blocked && progress.daysLeft > 3) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final tone = progress.daysLeft < 0 ? scheme.error : (progress.daysLeft <= 3 ? toneColors(context, Tone.warning).fg : scheme.primary);
-    final blockers = _attentionItems.where((i) => i.severity == Severity.critical || i.severity == Severity.high).toList();
     final total = blockers.fold<int>(0, (a, b) => a + b.count);
     return _card(
       'Payroll readiness',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(child: Text(periodTitle(period), style: const TextStyle(fontWeight: FontWeight.w600))),
-          StatusChip.status('${period['status']}'),
+          Text(periodCountdown(progress.daysLeft), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: tone)),
         ]),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(child: Text(periodCountdown(progress.daysLeft), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: progress.daysLeft <= 3 ? tone : null))),
-          _muted('Day ${progress.elapsedDays} of ${progress.totalDays}'),
-        ]),
-        const SizedBox(height: 6),
-        Semantics(
-          label: 'Period progress',
-          child: LinearProgressIndicator(value: progress.fraction, minHeight: 8, color: tone, borderRadius: BorderRadius.circular(4)),
-        ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Wrap(spacing: 6, runSpacing: 6, children: _periodBadges(period, yet: true)),
-        const SizedBox(height: 10),
-        Text('Still to clear before close', style: Theme.of(context).textTheme.labelLarge),
-        if (blockers.isEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Nothing urgent in $_rangeLabel.')),
-        for (final b in blockers.take(4))
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Row(children: [Expanded(child: Text(b.label)), Text('${b.count}', style: const TextStyle(fontWeight: FontWeight.w600))]),
-          ),
-        if (blockers.length > 4) _muted('+${blockers.length - 4} more · $total items in total'),
-        const SizedBox(height: 6),
-        _muted('Counts cover $_rangeLabel, not the whole period.'),
+        const SizedBox(height: 8),
+        _muted(blockers.isEmpty ? 'Nothing urgent in $_rangeLabel.' : '$total item${total == 1 ? '' : 's'} to clear before close: ${blockers.take(3).map((b) => b.label).join(', ')}${blockers.length > 3 ? ' and ${blockers.length - 3} more' : ''}. Counts cover $_rangeLabel.'),
         Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: () => _openPeriod(period), child: const Text('Open period →'))),
       ]),
     );
@@ -683,127 +662,22 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     );
   }
 
-  Widget _weekdays() {
-    const title = 'Absence by weekday';
+  Widget _weekdayPattern() {
     final t = _t;
-    if (t == null) return _totalsUnavailable(title);
+    if (t == null) return _sectionError(_totals?.error ?? 'Attendance totals could not be loaded.');
     final stats = t.weekdayAbsence;
-    final subtitle = '$_windowLabel — share of expected days missed, per weekday.';
-    if (stats.every((s) => s.expected == 0)) return _card(title, subtitle: subtitle, const Text('No expected working days in this range.'));
+    if (stats.every((s) => s.expected == 0)) return const Text('No expected working days in this range.');
     final worst = worstWeekday(stats);
-    return _card(
-      title,
-      subtitle: subtitle,
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (worst != null) Text('${worst.label}s have the highest absence — ${formatPct(worst.rate)} of expected days.'),
-        const SizedBox(height: 8),
-        MiniColumnChart(bars: [for (final s in stats) ChartBar(s.label, s.rate)], format: (v) => formatPct(v), color: toneColors(context, Tone.danger).fg),
-      ]),
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (worst != null) Text('${worst.label}s have the highest absence — ${formatPct(worst.rate)} of expected days.'),
+      const SizedBox(height: 8),
+      MiniColumnChart(bars: [for (final s in stats) ChartBar(s.label, s.rate)], format: (v) => formatPct(v), color: toneColors(context, Tone.danger).fg),
+    ]);
   }
 
-  // ---- periods -------------------------------------------------------------------------------
+ // ---- tabs ----------------------------------------------------------------------------------
 
-  Widget _periodStatus() {
-    const title = 'Attendance periods';
-    const subtitle = 'Payroll-facing cycles, one per company.';
-    if (_periods.error != null) return _card(title, subtitle: subtitle, _sectionError(_periods.error!));
-    final list = [...?_periods.data]..sort((a, b) => '${b['period_start']}'.compareTo('${a['period_start']}'));
-    return _card(
-      title,
-      subtitle: subtitle,
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (list.isEmpty) const Text('No attendance periods yet. Periods are opened per company.'),
-        for (final p in list.take(6))
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(periodTitle(p)),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Wrap(spacing: 6, runSpacing: 6, children: [StatusChip.status('${p['status']}'), ..._periodBadges(p)]),
-            ),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _openPeriod(p),
-          ),
-        _muted('As of ${shortDate(_today)}.'),
-        Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: () => context.push('/app/attendance-periods'), child: const Text('All periods →'))),
-      ]),
-    );
-  }
-
-  Widget _monthlySummary() {
-    const title = 'Monthly attendance summary';
-    const subtitle = 'Employee-days across the period, as Payroll will read them.';
-    if (_periods.error != null) return _card(title, subtitle: subtitle, _sectionError(_periods.error!));
-    final period = _summaryPeriod;
-    if (period == null) return _card(title, subtitle: subtitle, const Text('No attendance period to summarise. Open a period for a company first.'));
-    final list = [...?_periods.data]..sort((a, b) => '${b['period_start']}'.compareTo('${a['period_start']}'));
-    final summary = _summary;
-    Widget body;
-    if (summary == null) {
-      body = const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator()));
-    } else if (summary.error != null) {
-      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_sectionError(summary.error!), TextButton(onPressed: _loadSummary, child: const Text('Try again'))]);
-    } else {
-      final t = sumPeriodSummary(summary.data ?? const []);
-      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          _badge(t.frozen ? 'Frozen snapshot' : 'Live preview', t.frozen ? Tone.neutral : Tone.info),
-          _muted('${t.employees} employee${t.employees == 1 ? '' : 's'}'),
-        ]),
-        const SizedBox(height: 10),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final (label, field) in periodDayFields) _stat(label, formatDays(t.values[field])),
-          _stat('Overtime', formatMinutes(t.otMinutes)),
-          _stat('Late count', '${t.lateCount}'),
-        ]),
-      ]);
-    }
-    return _card(
-      title,
-      subtitle: subtitle,
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (list.length > 1)
-          DropdownButton<String>(
-            isExpanded: true,
-            value: period['id'] as String,
-            items: [for (final p in list) DropdownMenuItem(value: p['id'] as String, child: Text(periodTitle(p), overflow: TextOverflow.ellipsis))],
-            onChanged: (id) {
-              setState(() => _periodId = id);
-              _loadSummary();
-            },
-          ),
-        body,
-      ]),
-    );
-  }
-
-  /// Web's Reports panel lives on its own screen here; it reuses what this screen loaded.
-  Widget _reportsCard() => _card(
-        'Reports',
-        subtitle: '$_rangeLabel. Read-only views of existing attendance data.',
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _muted(reportLabels.values.join(' · ')),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => AttendanceReportsScreen(
-                  days: _rangeDays,
-                  overtime: _rangeOvertime,
-                  overtimeError: _overtime.error,
-                  periods: _periods.data,
-                  name: _name,
-                  zone: _zone,
-                  today: _today,
-                  rangeLabel: _rangeLabel,
-                ),
-              )),
-              child: const Text('Open reports →'),
-            ),
-          ),
-        ]),
-      );
+  Widget _tab(List<Widget> children) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: children));
 
   @override
   Widget build(BuildContext context) {
@@ -813,50 +687,42 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     } else if (_error != null) {
       body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load insights", message: _error!, actionLabel: 'Try again', onAction: _load);
     } else {
-      body = RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          _pulse(),
-          _kpis(),
-          _needsAttention(),
-          _readiness(),
-          _breakdown(),
-          _trend(),
-          _punctuality(),
-          _weekdays(),
-          _workHours(),
-          _overtimeCard(),
-          _leaveAbsence(),
-          _heatmap(),
-          _periodStatus(),
-          _monthlySummary(),
-          _reportsCard(),
-        ]),
-      );
+      // Swiping is off: the attendance grid and the charts scroll sideways, and a swipe there must not change tab.
+      body = TabBarView(physics: const NeverScrollableScrollPhysics(), children: [
+        _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _readiness(), _heatmap()]),
+        _tab([_breakdown(), _trend(), _punctuality(), _absenceLeave(), _workHours(), _overtimeCard()]),
+        AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel),
+      ]);
     }
-    return Scaffold(
-      appBar: AppBar(title: const Text('Attendance insights')),
-      body: Column(children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Row(children: [
-            for (final r in InsightsRange.values)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(insightsRangeLabels[r]!),
-                  selected: _range == r,
-                  onSelected: (_) {
-                    setState(() => _range = r);
-                    _load();
-                  },
-                ),
-              ),
-          ]),
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Attendance insights'),
+          bottom: const TabBar(tabs: [Tab(text: 'Today'), Tab(text: 'Trends'), Tab(text: 'Reports')]),
         ),
-        Expanded(child: body),
-      ]),
+        body: Column(children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(children: [
+              for (final r in InsightsRange.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text(insightsRangeLabels[r]!),
+                    selected: _range == r,
+                    onSelected: (_) {
+                      setState(() => _range = r);
+                      _load();
+                    },
+                  ),
+                ),
+            ]),
+          ),
+          Expanded(child: body),
+        ]),
+      ),
     );
   }
 }

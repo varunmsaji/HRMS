@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
@@ -27,6 +28,9 @@ AttendanceDay day(String emp, String date, String status, {String? firstIn, int?
       isLocked: false,
       raw: {if (late != null) 'is_late': late > 0, ...extra},
     );
+
+/// A tappable figure on Today (the plain word is also in the heatmap legend).
+Finder tile(String label) => find.byKey(ValueKey('tile:$label'));
 
 void main() {
   group('insights helpers and the summary response', () {
@@ -135,39 +139,131 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Every total is the summary's, not a count of the two rows above.
+    // Today. Every total is the summary's, not a count of the two rows above.
     expect(find.text('Attendance at a glance'), findsOneWidget);
     expect(find.text('66.7%'), findsWidgets);
     expect(find.text('2 of 3 expected employees attended.'), findsOneWidget);
     expect(find.textContaining('+16.7 pts vs last'), findsOneWidget);
-    expect(find.text('1 with no record yet'), findsOneWidget);
+    expect(find.textContaining('1 with no record yet for today'), findsWidgets, reason: 'the headcount line, and the Not checked in hint');
     expect(find.text("See who's in →"), findsOneWidget);
+    expect(find.text("WHO'S WHO"), findsNothing, reason: 'the repeated status chips are gone');
 
-    expect(find.text('Not checked in'), findsOneWidget);
+    // The five everyday figures; the rest sit behind "More statuses".
+    for (final label in ['Present', 'Absent', 'On leave', 'Late', 'Not checked in']) {
+      expect(tile(label), findsOneWidget, reason: label);
+    }
+    expect(tile('Remote (WFH)'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('more_statuses')));
+    await tester.pumpAndSettle();
+    expect(tile('Remote (WFH)'), findsOneWidget);
+    expect(tile('Half day'), findsOneWidget);
+    expect(find.text('Exceptions'), findsOneWidget);
+
     expect(find.text('Payroll readiness'), findsOneWidget);
     expect(find.text('2 days left'), findsOneWidget);
     expect(find.text('Validation blocked'), findsWidgets);
 
+    // Trends.
+    await tester.tap(find.widgetWithText(Tab, 'Trends'));
+    await tester.pumpAndSettle();
     expect(find.text('Departments & branches'), findsOneWidget);
     expect(find.text('Ops'), findsOneWidget);
     expect(find.text('Sales'), findsOneWidget);
     expect(api.rowRequests, 0, reason: 'the breakdown comes with the summary');
     expect(find.text('Weds have the highest absence — 40.0% of expected days.'), findsNothing, reason: 'one weekday is nothing to compare');
-
     expect(find.text('Punctuality'), findsOneWidget);
-    expect(find.text('Absence by weekday'), findsOneWidget);
-    expect(find.text('Attendance periods'), findsOneWidget);
-    expect(find.text('Monthly attendance summary'), findsOneWidget);
-    expect(find.text('Live preview'), findsOneWidget);
-    expect(find.text('Payable days'), findsOneWidget);
-    expect(find.textContaining('Not available yet'), findsNothing);
+    expect(find.text('Absence & leave'), findsOneWidget);
+    expect(find.text('Attendance periods'), findsNothing, reason: 'the periods live on their own screen, as on web');
+    expect(find.text('Monthly attendance summary'), findsNothing);
 
-    await tester.tap(find.text('Open reports →'));
+    // Reports.
+    await tester.tap(find.widgetWithText(Tab, 'Reports'));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, 'Reports'), findsOneWidget);
     // The screen opens on "This month": last week's two days count only once the month is 8 days old.
     final inRange = lastWeek.compareTo('${today.substring(0, 7)}-01') >= 0 ? 4 : 2;
     expect(find.text('$inRange rows'), findsOneWidget);
+  });
+
+  testWidgets('a figure on Today opens Team attendance narrowed to it, on the focus day', (tester) async {
+    tester.view.physicalSize = const Size(800, 12000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final today = businessToday('Asia/Kolkata');
+    final opened = <String>[];
+    final router = GoRouter(routes: [
+      GoRoute(path: '/', builder: (_, __) => const AttendanceInsightsScreen()),
+      GoRoute(
+        path: '/app/team-attendance',
+        builder: (_, state) {
+          opened.add(state.uri.toString());
+          return const Scaffold(body: Text('team'));
+        },
+      ),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        attendanceRepositoryProvider.overrideWithValue(_Repo([day('e1', today, 'PRESENT', firstIn: 't')], totals: totalsJson(today, addDaysIso(today, -7)))),
+        apiClientProvider.overrideWithValue(_Api(lists: const {'/employees': [], '/regularizations': [], '/overtime': [], '/attendance-periods': []})),
+        fakeAuth(const [employeeViewAll, attendanceViewAll]),
+      ],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(tile('Absent'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&bucket=ABSENT');
+
+    // Present counts present, remote and on duty, so its list is all three, not PRESENT alone.
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(tile('Present'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&bucket=ATTENDING');
+
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(tile('Late'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&flag=late');
+
+    // Not checked in counts employees with no record yet (the fixture has one); the list says so.
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(tile('Not checked in'));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today&flag=not_checked_in&missing=1');
+
+    router.go('/');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("See who's in →"));
+    await tester.pumpAndSettle();
+    expect(opened.last, '/app/team-attendance?date=$today');
+  });
+
+  testWidgets('payroll readiness stays out of the way while the open period is fine', (tester) async {
+    tester.view.physicalSize = const Size(800, 12000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final today = businessToday('Asia/Kolkata');
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        attendanceRepositoryProvider.overrideWithValue(_Repo([day('e1', today, 'PRESENT', firstIn: 't')], totals: totalsJson(today, addDaysIso(today, -7)))),
+        apiClientProvider.overrideWithValue(_Api(lists: {
+          '/employees': const [],
+          '/regularizations': const [],
+          '/overtime': const [],
+          // Ends in 20 days, validated and ready, nothing in the way.
+          '/attendance-periods': [
+            {'id': 'p1', 'status': 'OPEN', 'period_start': addDaysIso(today, -9), 'period_end': addDaysIso(today, 20), 'last_validation_status': 'READY', 'legal_entity_id': 'le'},
+          ],
+        })),
+        fakeAuth(const [employeeViewAll, attendanceViewAll]),
+      ],
+      child: const MaterialApp(home: AttendanceInsightsScreen()),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Payroll readiness'), findsNothing);
   });
 
   testWidgets('the department panel needs no directory grant, and a failed summary blanks only the totals', (tester) async {
@@ -184,12 +280,14 @@ void main() {
       child: const MaterialApp(home: AttendanceInsightsScreen()),
     ));
     await tester.pumpAndSettle();
+    expect(find.text('The summary is down.'), findsNWidgets(2), reason: 'Today: the rate and the figures');
+    await tester.tap(find.widgetWithText(Tab, 'Trends'));
+    await tester.pumpAndSettle();
     expect(find.text('Departments & branches'), findsOneWidget);
-    expect(find.text('The summary is down.'), findsNWidgets(6), reason: 'pulse, KPIs, breakdown, trend, punctuality and weekdays');
+    expect(find.text('The summary is down.'), findsNWidgets(4), reason: 'Trends: breakdown, trend, punctuality and the weekday pattern');
     expect(find.text('Work hours'), findsOneWidget, reason: 'the per-person panels still render');
     expect(api.rowRequests, 0);
     expect(find.text('Payroll readiness'), findsNothing, reason: 'no open period');
-    expect(find.text('No attendance period to summarise. Open a period for a company first.'), findsOneWidget);
   });
 }
 
