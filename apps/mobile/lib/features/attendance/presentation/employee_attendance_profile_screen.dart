@@ -31,9 +31,12 @@ String _short(String iso) => iso.length < 10 ? iso : '${int.parse(iso.substring(
 /// regularization requests. Every list is data-scoped by the server, so a manager only ever sees
 /// their own reportees here.
 class EmployeeAttendanceProfileScreen extends ConsumerStatefulWidget {
-  const EmployeeAttendanceProfileScreen({super.key, required this.employeeId, required this.employeeLabel, this.now});
+  const EmployeeAttendanceProfileScreen({super.key, required this.employeeId, required this.employeeLabel, this.now, this.initialMonth});
   final String employeeId;
   final String employeeLabel;
+
+  /// The month to open on (`YYYY-MM`); null = the current one.
+  final String? initialMonth;
 
   /// Overrides the clock in tests. Null = now.
   final DateTime? now;
@@ -242,6 +245,7 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
                 employeeId: widget.employeeId,
                 zone: _zone,
                 now: widget.now,
+                initialMonth: widget.initialMonth,
                 // The month grid just below already has late arrivals, hours and the rest.
                 showFigures: false,
                 onLoaded: (month, days) => setState(() {

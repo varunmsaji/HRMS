@@ -61,6 +61,9 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
   late String _month;
   String _query = '';
   int _shown = _batch;
+  /// The employee × day grid (wide) rather than one row per person with the month's totals (the
+  /// phone default, MOB-UX-048).
+  bool _gridView = false;
 
   ({List<AttendanceDay> items, int total})? _days;
   ({List<Employee> rows, bool more})? _employees;
@@ -117,7 +120,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
   void _openDay(AttendanceDay day) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day)));
 
   void _openEmployee(HrCalendarRow row) => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => EmployeeAttendanceProfileScreen(employeeId: row.employeeId, employeeLabel: row.name),
+        builder: (_) => EmployeeAttendanceProfileScreen(employeeId: row.employeeId, employeeLabel: row.name, initialMonth: _month),
       ));
 
   @override
@@ -134,7 +137,9 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
     final days = _days;
     final people = _employees;
     final dates = hrMonthDates(_month);
-    final rows = days == null || people == null ? null : filterHrRows(buildHrCalendar(days.items, people.rows, dates), _query);
+    var rows = days == null || people == null ? null : filterHrRows(buildHrCalendar(days.items, people.rows, dates), _query);
+    // The list puts whoever needs a look first; the grid keeps the directory's order.
+    if (rows != null && !_gridView) rows = sortByAttention(rows);
     final used = <String>{for (final d in days?.items ?? const <AttendanceDay>[]) attendanceBucketOf(d)};
     return Scaffold(
       appBar: AppBar(title: const Text('Attendance calendar')),
@@ -147,7 +152,14 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
             IconButton(tooltip: 'Next month', onPressed: _month.compareTo(thisMonth) >= 0 ? null : () => _goTo(shiftMonthKey(_month, 1)), icon: const Icon(Icons.chevron_right)),
           ]),
           if (_month != thisMonth) Center(child: TextButton(onPressed: () => _goTo(thisMonth), child: const Text('This month'))),
-          const SizedBox(height: 4),
+          SegmentedButton<bool>(
+            key: const ValueKey('calendar_switch'),
+            showSelectedIcon: false,
+            segments: const [ButtonSegment(value: false, label: Text('List')), ButtonSegment(value: true, label: Text('Grid'))],
+            selected: {_gridView},
+            onSelectionChanged: (v) => setState(() => _gridView = v.first),
+          ),
+          const SizedBox(height: 8),
           AppSearchField(
             hint: 'Search name or code',
             onChanged: (v) => setState(() {
@@ -170,19 +182,51 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
             const StateMessage(icon: Icons.people_outline, title: 'No employees match.')
           else ...[
             if (_loading) const LinearProgressIndicator(),
-            Wrap(spacing: 12, runSpacing: 4, children: [
-              for (final bucket in attendanceBucketLabels.keys)
-                if (used.contains(bucket)) _LegendItem(bucket: bucket),
-            ]),
-            const SizedBox(height: 10),
-            _grid(context, rows.take(_shown).toList(), dates),
+            if (_gridView) ...[
+              Wrap(spacing: 12, runSpacing: 4, children: [
+                for (final bucket in attendanceBucketLabels.keys)
+                  if (used.contains(bucket)) _LegendItem(bucket: bucket),
+              ]),
+              const SizedBox(height: 10),
+              _grid(context, rows.take(_shown).toList(), dates),
+            ] else
+              _list(context, rows.take(_shown).toList()),
             if (rows.length > _shown) Center(child: TextButton(onPressed: () => setState(() => _shown += _batch), child: Text('Show more (${rows.length - _shown} left)'))),
             const SizedBox(height: 8),
-            Text('P = days present, A = absent, L = on leave, Late = late arrivals. A dot means no attendance record for that day.', style: muted),
+            Text(_gridView ? 'P = days present, A = absent, L = on leave, Late = late arrivals. A dot means no attendance record for that day.' : "Present counts a half day as half. Most absent, then most late, first. Tap a person for their month.", style: muted),
           ],
         ]),
       ),
     );
+  }
+
+  /// One row per person with the month's totals, so nothing scrolls sideways.
+  Widget _list(BuildContext context, List<HrCalendarRow> rows) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = EmployeeTokens.of(context);
+    Widget stat(String label, String value, Color color) => Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Text.rich(TextSpan(children: [
+            TextSpan(text: '$label ', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+            TextSpan(text: value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+          ])),
+        );
+    return Column(children: [
+      for (final row in rows)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(row.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Wrap(children: [
+            stat('Present', formatHrCount(row.present), t.successText),
+            stat('Absent', '${row.absent}', t.dangerText),
+            stat('Leave', '${row.leave}', t.onLeaveText),
+            stat('Late', '${row.late}', t.warningText),
+          ]),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _openEmployee(row),
+        ),
+    ]);
   }
 
   Widget _grid(BuildContext context, List<HrCalendarRow> rows, List<String> dates) {

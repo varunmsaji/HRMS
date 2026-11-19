@@ -12,6 +12,7 @@ import 'package:hrms_mobile/features/attendance/domain/hr_calendar.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
 import 'package:hrms_mobile/features/profile/data/employee_repository.dart';
+import 'package:hrms_mobile/features/attendance/presentation/employee_attendance_profile_screen.dart';
 
 import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';
@@ -107,6 +108,12 @@ void main() {
       expect(ben.present, 0, reason: 'a weekly off is not presence');
     });
 
+    test('the attention order is most absent, then most late, then name, without touching the input', () {
+      final sorted = sortByAttention(rows);
+      expect(sorted.map((r) => r.name), ['Ben Test', 'Asha Test', 'Cy Test']);
+      expect(rows.map((r) => r.name), ['Asha Test', 'Ben Test', 'Cy Test']);
+    });
+
     test('someone outside the loaded directory still appears', () {
       final extra = buildHrCalendar([AttendanceDay.fromJson(_day('x', 'e-9', '2026-11-02', 'PRESENT'))], const [], dates);
       expect(extra.single.name, 'Employee');
@@ -133,9 +140,16 @@ void main() {
   });
 
   group('screen', () {
+    /// The grid is the option; the list is what opens.
+    Future<void> toGrid(WidgetTester tester) async {
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('calendar_switch')), matching: find.text('Grid')));
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('opens on this month with a box per recorded day and totals', (tester) async {
       final api = _api();
       await _pump(tester, api);
+      await toGrid(tester);
       expect(find.text('November 2026'), findsOneWidget);
       expect(api.listCalls.firstWhere((c) => c.path == '/attendance/days').filters, {'date_from': '2026-11-01', 'date_to': '2026-11-30'});
       expect(find.text('Asha Test'), findsOneWidget);
@@ -143,8 +157,48 @@ void main() {
       expect(find.bySemanticsLabel(RegExp(r'^Ben Test, 2026-11-02: Absent')), findsOneWidget);
     });
 
+    testWidgets('opens as a list: one row per person with the month totals, most absent first', (tester) async {
+      await _pump(tester, _api());
+      expect(find.byKey(const ValueKey('calendar_switch')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'^Ben Test, 2026-11-02')), findsNothing, reason: 'the boxes are the grid');
+      final ben = tester.getTopLeft(find.text('Ben Test')).dy;
+      final asha = tester.getTopLeft(find.text('Asha Test')).dy;
+      expect(ben, lessThan(asha), reason: 'Ben has an absence');
+      expect(find.textContaining('Present 2.5', findRichText: true), findsOneWidget, reason: "Asha's present days, a half day as half");
+      expect(find.textContaining('Absent 1', findRichText: true), findsOneWidget, reason: "Ben's absence");
+    });
+
+    testWidgets('in the list, tapping a person opens their month', (tester) async {
+      await _pump(tester, _api());
+      await tester.tap(find.text('Asha Test'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EmployeeAttendanceProfileScreen), findsOneWidget);
+    });
+
+    testWidgets('a person opened from an earlier month shows that month, not the current one', (tester) async {
+      final api = _api();
+      await _pump(tester, api);
+      await tester.tap(find.byTooltip('Previous month'));
+      await tester.pumpAndSettle();
+      api.listCalls.clear();
+      await tester.tap(find.text('Asha Test'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EmployeeAttendanceProfileScreen), findsOneWidget);
+      final asked = api.listCalls.where((c) => c.path == '/attendance/days').map((c) => c.filters?['date_from']).toSet();
+      expect(asked, contains('2026-10-01'), reason: "the person's month card opens on the month HR was looking at");
+      expect(asked, isNot(contains('2026-11-01')));
+    });
+
+    testWidgets('the grid is still there behind the switch, in the directory order', (tester) async {
+      await _pump(tester, _api());
+      await toGrid(tester);
+      expect(find.bySemanticsLabel(RegExp(r'^Ben Test, 2026-11-02: Absent')), findsOneWidget);
+      expect(tester.getTopLeft(find.text('Asha Test')).dy, lessThan(tester.getTopLeft(find.text('Ben Test')).dy));
+    });
+
     testWidgets('the legend shows only the statuses in use', (tester) async {
       await _pump(tester, _api());
+      await toGrid(tester);
       expect(find.text('Half day'), findsOneWidget);
       expect(find.text('Config error'), findsNothing);
     });
@@ -164,6 +218,7 @@ void main() {
 
     testWidgets('tapping a box opens that day', (tester) async {
       await _pump(tester, _api());
+      await toGrid(tester);
       await tester.tap(find.bySemanticsLabel(RegExp(r'^Asha Test, 2026-11-02: Present')));
       await tester.pumpAndSettle();
       expect(find.byType(AttendanceDayDetailScreen), findsOneWidget);
@@ -182,7 +237,16 @@ void main() {
 
     testWidgets('a large company shows people in batches', (tester) async {
       await _pump(tester, _api(people: 60));
+      await toGrid(tester);
       expect(find.text('Show more (10 left)'), findsOneWidget);
+      await tester.tap(find.text('Show more (10 left)'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Show more'), findsNothing);
+    });
+
+    testWidgets('the list also shows people in batches', (tester) async {
+      await _pump(tester, _api(people: 60));
+      await tester.scrollUntilVisible(find.text('Show more (10 left)'), 400, scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('Show more (10 left)'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Show more'), findsNothing);
@@ -202,6 +266,7 @@ void main() {
 
     testWidgets('fits a small phone at large text', (tester) async {
       await _pump(tester, _api(), width: 320, scale: 2);
+      await toGrid(tester);
       expect(tester.takeException(), isNull);
     });
   });

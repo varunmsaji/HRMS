@@ -22,7 +22,7 @@ String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toStr
 /// a month grid coloured by each day's attendance bucket, with previous/next month navigation.
 /// Tapping a day opens its detail.
 class AttendanceMonthCard extends ConsumerStatefulWidget {
-  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now, this.onLoaded, this.showFigures = true});
+  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now, this.onLoaded, this.showFigures = true, this.initialMonth});
   final String employeeId;
   final String zone;
 
@@ -33,6 +33,10 @@ class AttendanceMonthCard extends ConsumerStatefulWidget {
   /// Late arrivals, punctuality and hours under the Present / Absent / Leave tiles. Off where the
   /// screen already has its own full month grid (the HR employee profile).
   final bool showFigures;
+
+  /// The month to open on (`YYYY-MM`), e.g. the one HR was looking at in the calendar. Null, or
+  /// not a month, = the current business month.
+  final String? initialMonth;
 
   /// Overrides the clock (tests, so "today" and the opening month are fixed). Null = now.
   final DateTime? now;
@@ -51,7 +55,11 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
   void initState() {
     super.initState();
     final today = DateTime.parse(businessToday(widget.zone, now: widget.now));
-    _month = DateTime(today.year, today.month);
+    final wanted = RegExp(r'^(\d{4})-(\d{2})$').firstMatch(widget.initialMonth ?? '');
+    final asked = wanted == null ? null : DateTime(int.parse(wanted.group(1)!), int.parse(wanted.group(2)!));
+    // Never a future month: the card cannot go forward past the current one.
+    final current = DateTime(today.year, today.month);
+    _month = asked != null && asked.month >= 1 && asked.month <= 12 && !asked.isAfter(current) ? asked : current;
     _load();
   }
 
