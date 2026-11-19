@@ -12,6 +12,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import 'attendance_period_detail_screen.dart';
+import 'monthly_summary_card.dart';
 import '../../../core/widgets/ui.dart';
 import '../../../core/format.dart';
 
@@ -42,8 +43,8 @@ const attendancePeriodSpec = FormSpec(name: 'attendance_period', label: 'Attenda
   FieldSpec('label', 'Label'),
 ]);
 
-/// Attendance periods — mirrors `apps/web/src/app/app/attendance-periods/page.tsx`: each legal
-/// entity's pay-cycle windows; opening one needs `ATTENDANCE.LOCK`.
+/// Attendance periods — mirrors `apps/web/src/app/app/attendance-periods/page.tsx`: the monthly
+/// summary, then each legal entity's pay-cycle windows; opening one needs `ATTENDANCE.LOCK`.
 class AttendancePeriodsScreen extends ConsumerStatefulWidget {
   const AttendancePeriodsScreen({super.key});
 
@@ -152,6 +153,8 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
                           ),
                         ),
                       if (visible.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.event_busy_outlined, title: 'No attendance periods yet')),
+                      // The monthly summary, as on web (it left the attendance page when periods moved under Payroll).
+                      if (visible.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 0), child: MonthlySummaryCard(periods: visible, today: businessToday(ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata'))),
                       for (final p in visible)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),

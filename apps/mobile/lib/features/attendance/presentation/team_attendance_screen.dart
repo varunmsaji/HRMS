@@ -68,7 +68,14 @@ Future<bool> openPunchOnBehalf(BuildContext context, WidgetRef ref, {String? emp
 /// the caller can see (the server scopes it), with employee/status/exception filters and, for HR,
 /// recording a punch on someone's behalf.
 class TeamAttendanceScreen extends ConsumerStatefulWidget {
-  const TeamAttendanceScreen({super.key});
+  /// [date] (`YYYY-MM-DD`), [bucket] (a status bucket such as `PRESENT`) and [flag] (one of
+  /// [attendanceDayFlags]) open the list already narrowed, as the Insights summary tiles do.
+  /// Unknown values are ignored.
+  const TeamAttendanceScreen({super.key, this.date, this.bucket, this.flag});
+
+  final String? date;
+  final String? bucket;
+  final String? flag;
 
   @override
   ConsumerState<TeamAttendanceScreen> createState() => _TeamAttendanceScreenState();
@@ -81,6 +88,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   String get _status => _filter.group('status');
   Set<String> get _exceptions => _filter.multi('exceptions');
   String? _bucket;
+  String? _flag;
   bool _loading = true;
   ApiError? _error;
   List<AttendanceDay> _days = const [];
@@ -93,7 +101,10 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   @override
   void initState() {
     super.initState();
-    _date = businessToday(_zone);
+    final given = widget.date;
+    _date = given != null && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(given) ? given : businessToday(_zone);
+    if (widget.bucket != null && attendanceBucketLabels.containsKey(widget.bucket)) _bucket = widget.bucket;
+    if (widget.flag != null && attendanceDayFlags.containsKey(widget.flag)) _flag = widget.flag;
     _loadEmployees();
     _loadPending();
     _load();
@@ -181,7 +192,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
     final matching = _days
-        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || attendanceBucketOf(d) == _bucket) && _exceptions.every((k) => _matches(d, k)))
+        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || attendanceBucketOf(d) == _bucket) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)))
         .toList();
     final fixer = MismatchFixer(
       context: context,
@@ -255,7 +266,24 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                       child: ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
-                          if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() => _bucket = b)),
+                          if (_bucket != null || _flag != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: InputChip(
+                                  label: Text('Showing: ${_flag != null ? attendanceDayFlags[_flag] : attendanceBucketLabels[_bucket]}'),
+                                  onDeleted: () => setState(() {
+                                    _bucket = null;
+                                    _flag = null;
+                                  }),
+                                ),
+                              ),
+                            ),
+                          if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() {
+                                _bucket = b;
+                                _flag = null;
+                              })),
                           if (mismatchCount > 0)
                             MismatchBanner(count: mismatchCount, narrowed: narrow, onToggle: () => setState(() => _onlyMismatches = !narrow)),
                           const SizedBox(height: 8),

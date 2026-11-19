@@ -209,7 +209,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/work-calendars/setup', builder: (context, state) => const WorkCalendarSetupScreen()),
       GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig, decisionCenter: const RegularizationDecisionCenterPanel())),
       GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
-      GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
+      GoRoute(
+        path: '/app/team-attendance',
+        builder: (context, state) => TeamAttendanceScreen(
+          date: state.uri.queryParameters['date'],
+          bucket: state.uri.queryParameters['bucket'],
+          flag: state.uri.queryParameters['flag'],
+        ),
+      ),
       GoRoute(path: '/app/attendance-geofences', builder: (context, state) => const GeofencesScreen()),
       GoRoute(path: '/app/attendance/calendar', builder: (context, state) => const AttendanceCalendarScreen()),
       GoRoute(path: '/app/attendance-insights', builder: (context, state) => const AttendanceInsightsScreen()),

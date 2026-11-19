@@ -76,6 +76,23 @@ void main() {
       expect(find.text('Open period'), findsNothing);
     });
 
+    testWidgets('shows the monthly summary above the periods, as on web, and says so when the period has none', (tester) async {
+      await _pump(tester, _api(summary: [
+        {'employee_id': 'e1', 'present_days': '4', 'payable_days': '6', 'late_count': 1, 'frozen': false},
+      ]), const [], const AttendancePeriodsScreen());
+      expect(find.text('Monthly attendance summary'), findsOneWidget);
+      expect(find.text('Live preview'), findsOneWidget);
+      expect(find.text('Payable days'), findsOneWidget);
+      expect(find.textContaining('Acme Pvt Ltd'), findsOneWidget, reason: 'the periods are still listed below it');
+    });
+
+    testWidgets('no periods, no summary card', (tester) async {
+      final api = FakeApiClient(lists: {'/attendance-periods': const [], '/legal-entities': const []});
+      await _pump(tester, api, const [], const AttendancePeriodsScreen());
+      expect(find.text('Monthly attendance summary'), findsNothing);
+      expect(find.text('No attendance periods yet'), findsOneWidget);
+    });
+
     testWidgets('opening a period posts the month, entity and no UI-only fields', (tester) async {
       final api = _api();
       await _pump(tester, api, [attendanceLock], const AttendancePeriodsScreen());

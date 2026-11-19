@@ -153,7 +153,7 @@ void main() {
   });
 
   group('team attendance', () {
-    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions) async {
+    Future<_FakeAttendance> pump(WidgetTester tester, List<String> permissions, {String? bucket, String? flag}) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -172,11 +172,29 @@ void main() {
       });
       await tester.pumpWidget(ProviderScope(
         overrides: [attendanceRepositoryProvider.overrideWithValue(repo), apiClientProvider.overrideWithValue(api), fakeAuth(permissions)],
-        child: const MaterialApp(home: TeamAttendanceScreen()),
+        child: MaterialApp(home: TeamAttendanceScreen(bucket: bucket, flag: flag)),
       ));
       await tester.pumpAndSettle();
       return repo;
     }
+
+    testWidgets('opens already narrowed to a status when a summary figure sent it there, and the chip clears it', (tester) async {
+      await pump(tester, const [], bucket: 'PRESENT');
+      expect(find.text('Showing: Present'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsNothing);
+      await tester.tap(find.descendant(of: find.byType(InputChip), matching: find.byType(Icon)));
+      await tester.pumpAndSettle();
+      expect(find.text('Showing: Present'), findsNothing);
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+    });
+
+    testWidgets('a status or flag it does not know is ignored, so a stale link still shows everyone', (tester) async {
+      await pump(tester, const [], bucket: 'NOPE', flag: 'nope');
+      expect(find.textContaining('Showing:'), findsNothing);
+      expect(find.textContaining('Asha Rao (E-1)'), findsOneWidget);
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+    });
 
     testWidgets('lists the day for everyone, labelled by employee', (tester) async {
       await pump(tester, const []);

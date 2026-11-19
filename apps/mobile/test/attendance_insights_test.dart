@@ -116,15 +116,26 @@ void main() {
       child: const MaterialApp(home: AttendanceInsightsScreen()),
     ));
     await tester.pumpAndSettle();
+    // Today.
     expect(find.text('Needs attention'), findsOneWidget);
     expect(find.text('Corrections pending'), findsOneWidget);
+    expect(find.text('Attendance heatmap'), findsOneWidget);
+    // Trends.
+    await tester.tap(find.widgetWithText(Tab, 'Trends'));
+    await tester.pumpAndSettle();
+    expect(find.text('Departments & branches'), findsOneWidget, reason: 'from the summary, no directory grant needed');
     expect(find.text('Attendance trend'), findsOneWidget);
-    expect(find.text('Leave & absence'), findsOneWidget);
+    expect(find.text('Punctuality'), findsOneWidget);
+    expect(find.text('Absence & leave'), findsOneWidget);
+    expect(find.text('By weekday'), findsOneWidget);
     expect(find.text('Work hours'), findsOneWidget);
     expect(find.text('Overtime'), findsWidgets);
     expect(find.text('Something went wrong.'), findsOneWidget); // overtime section only
-    expect(find.text('Attendance heatmap'), findsOneWidget);
-    expect(find.text('Departments & branches'), findsOneWidget, reason: 'from the summary, no directory grant needed');
+    // Six cards, as on web: the duplicates and the period panels are gone.
+    expect(find.text('Leave & absence'), findsNothing);
+    expect(find.text('Absence by weekday'), findsNothing);
+    expect(find.text('Attendance periods'), findsNothing);
+    expect(find.text('Monthly attendance summary'), findsNothing);
   });
 }
 

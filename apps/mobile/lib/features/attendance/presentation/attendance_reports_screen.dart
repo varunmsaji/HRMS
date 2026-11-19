@@ -10,11 +10,12 @@ import '../domain/attendance_pulse.dart';
 import '../domain/attendance_reports.dart';
 import 'attendance_period_detail_screen.dart' show AttendancePeriodDetailScreen;
 
-/// The Reports panel of the web attendance dashboard (`reports-panel.tsx`) as its own phone screen:
-/// six read-only reports with search, sort and 15-row pages. It takes what the insights screen
-/// already loaded for the selected range; only the payroll report fetches (its period summary).
-class AttendanceReportsScreen extends ConsumerStatefulWidget {
-  const AttendanceReportsScreen({
+/// The Reports panel of the web attendance dashboard (`reports-panel.tsx`): six read-only reports
+/// with search, sort and 15-row pages. It takes what the insights screen already loaded for the
+/// selected range; only the payroll report fetches (its period summary). The Insights screen shows
+/// it as its Reports tab; [AttendanceReportsScreen] wraps it for a full screen.
+class AttendanceReportsPanel extends ConsumerStatefulWidget {
+  const AttendanceReportsPanel({
     super.key,
     required this.days,
     required this.overtime,
@@ -41,10 +42,10 @@ class AttendanceReportsScreen extends ConsumerStatefulWidget {
   final String rangeLabel;
 
   @override
-  ConsumerState<AttendanceReportsScreen> createState() => _AttendanceReportsScreenState();
+  ConsumerState<AttendanceReportsPanel> createState() => _AttendanceReportsPanelState();
 }
 
-class _AttendanceReportsScreenState extends ConsumerState<AttendanceReportsScreen> {
+class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel> {
   final _search = TextEditingController();
   String _report = 'daily';
   String? _sortKey;
@@ -147,9 +148,7 @@ class _AttendanceReportsScreenState extends ConsumerState<AttendanceReportsScree
     final def = _def;
     final view = reportView(def, query: _search.text, sortKey: _sortKey, ascending: _ascending, page: _page);
     final sortKey = _sortKey ?? def.columns.first.key;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Reports')),
-      body: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 32), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [
         Text('${widget.rangeLabel}. Read-only views of existing attendance data.', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 10),
         SingleChildScrollView(
@@ -212,7 +211,36 @@ class _AttendanceReportsScreenState extends ConsumerState<AttendanceReportsScree
             ]),
           ],
         ],
-      ]),
-    );
+    ]);
   }
+}
+
+/// [AttendanceReportsPanel] as a screen of its own.
+class AttendanceReportsScreen extends StatelessWidget {
+  const AttendanceReportsScreen({
+    super.key,
+    required this.days,
+    required this.overtime,
+    required this.overtimeError,
+    required this.periods,
+    required this.name,
+    required this.zone,
+    required this.today,
+    required this.rangeLabel,
+  });
+
+  final List<AttendanceDay> days;
+  final List<Rec> overtime;
+  final String? overtimeError;
+  final List<Rec>? periods;
+  final String Function(String employeeId) name;
+  final String zone;
+  final String today;
+  final String rangeLabel;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Reports')),
+        body: AttendanceReportsPanel(days: days, overtime: overtime, overtimeError: overtimeError, periods: periods, name: name, zone: zone, today: today, rangeLabel: rangeLabel),
+      );
 }

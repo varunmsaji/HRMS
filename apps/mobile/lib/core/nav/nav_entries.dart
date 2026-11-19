@@ -101,6 +101,8 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances', anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),
   NavEntry('Payroll', Icons.payments_outlined, '/app/payroll/pay-runs', anyOf: [payrollRunView, payrollRunProcess]),
+  // Under Payroll on web, next to the pay runs it feeds; also listed under Settings > Closing the month.
+  NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
   NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], guarded: false),
 ]);
 
