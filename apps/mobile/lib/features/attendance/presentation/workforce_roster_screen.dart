@@ -15,7 +15,7 @@ import '../domain/roster_views.dart';
 import 'rosters_screen.dart' show openRosterForm;
 import 'roster_view_switcher.dart';
 
-/// Who is on which shift, by date — mirrors `apps/web/src/app/app/rosters/grid/page.tsx`: employees
+/// Who is on which shift, by date — the Week view of Shift Rosters, as web's `app/app/rosters/schedule/week/page.tsx` (`/app/rosters/grid` redirects there): employees
 /// as rows, dates as columns, each cell the rostered shift. The names stay put while the dates
 /// scroll sideways. A blank cell means no entry, so the employee's default shift applies.
 class WorkforceRosterScreen extends ConsumerStatefulWidget {

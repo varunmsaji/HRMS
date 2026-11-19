@@ -89,6 +89,11 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   late String _date;
   ListFilter _filter = const ListFilter();
   String get _employeeId => _filter.employee;
+
+  /// The type-to-find box (web's replaces its employee dropdown): narrows the day's rows by name or
+  /// employee code as the user types. The labels hold both ("Asha Rao (E-104)").
+  final _find = TextEditingController();
+  String _query = '';
   String get _status => _filter.group('status');
   Set<String> get _exceptions => _filter.multi('exceptions');
   String? _bucket;
@@ -117,6 +122,12 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   Future<void> _loadPending() async {
     final pending = await loadPendingCorrections(ref);
     if (mounted) setState(() => _pending = pending);
+  }
+
+  @override
+  void dispose() {
+    _find.dispose();
+    super.dispose();
   }
 
   Future<void> _loadEmployees() async {
@@ -196,7 +207,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
     final matching = _days
-        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || matchesBucket(d, _bucket!)) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)))
+        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || matchesBucket(d, _bucket!)) && (_flag == null || matchesDayFlag(d, _flag!)) && _exceptions.every((k) => _matches(d, k)) && (_query.isEmpty || _employees.isEmpty || _name(d.employeeId).toLowerCase().contains(_query)))
         .toList();
     final fixer = MismatchFixer(
       context: context,
@@ -260,6 +271,18 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
             ),
           ]),
         ),
+        // Names and codes come from the employee directory; without that grant the rows carry only
+        // ids, so a typed query could match nobody. Offer the box only when the lookup worked.
+        if (_employees.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: AppSearchField(
+              key: const ValueKey('team_find'),
+              controller: _find,
+              hint: 'Find an employee by name or code',
+              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+            ),
+          ),
         Expanded(
           child: _loading
               ? const ListSkeleton()
