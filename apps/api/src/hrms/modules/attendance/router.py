@@ -102,6 +102,7 @@ from hrms.modules.attendance.schemas import (
     FACE_LIVENESS_FRAME_MAX_BYTES,
     FACE_LIVENESS_MAX_FRAMES,
     AttendanceDayRead,
+    AttendanceMonthSummaryRead,
     AttendancePeriodCreate,
     AttendancePeriodRead,
     AttendancePeriodReopenInput,
@@ -1910,6 +1911,34 @@ async def get_attendance_period_summary(
         tenant.company_id, period_id, scope=scope, caller_employee_id=user.employee_id
     )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance/month-summary", status_code=status.HTTP_200_OK)
+async def get_attendance_month_summary(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+    month: Annotated[
+        str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="The month, YYYY-MM")
+    ],
+    employee_id: Annotated[
+        list[UUID],
+        Query(min_length=1, max_length=500, description="One or more employees (repeat the key)"),
+    ],
+) -> DataEnvelope[AttendanceMonthSummaryRead]:
+    """R-B03 - paid / LOP / leave / weekly-off / half days and approved overtime for a month,
+    for one employee or a whole grid in a single call. The frozen payroll summary when a closed
+    period covers exactly that month, otherwise the same arithmetic run live on the stored days.
+    Only employees `scope` allows are returned."""
+    data = await service.month_summary(
+        tenant.company_id,
+        date(int(month[:4]), int(month[5:7]), 1),
+        employee_ids=frozenset(employee_id),
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/attendance-periods/{period_id}/validate", status_code=status.HTTP_200_OK)

@@ -1,3 +1,4 @@
+import '../domain/month_payroll.dart';
 import 'package:dio/dio.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -364,6 +365,22 @@ class AttendanceRepository {
       if (!(env.pagination?.hasNext ?? false)) break;
     }
     return (items: items, total: total);
+  }
+
+  /// One month of the payroll arithmetic for [employeeIds] (`YYYY-MM`), a batch of employees per
+  /// request because the ids ride in the URL. Employees with no days that month have no entry.
+  Future<List<MonthPayroll>> monthPayroll({required String month, required List<String> employeeIds}) async {
+    const batch = 80;
+    final out = <MonthPayroll>[];
+    for (var i = 0; i < employeeIds.length; i += batch) {
+      final ids = employeeIds.sublist(i, i + batch > employeeIds.length ? employeeIds.length : i + batch);
+      final rows = await _client.get(
+        '/attendance/month-summary?${Uri(queryParameters: {'month': month, 'employee_id': ids}).query}',
+        parse: (d) => ((d as Map<String, dynamic>)['summaries'] as List).map((e) => MonthPayroll.fromJson(e as Map<String, dynamic>)).toList(),
+      );
+      out.addAll(rows);
+    }
+    return out;
   }
 
   /// The dashboard totals for [dateFrom]…[dateTo] (at most 92 days; [dateTo] is the focus day),

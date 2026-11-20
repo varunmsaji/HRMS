@@ -155,6 +155,7 @@ export function SelfView({ employeeId, today, timezone }: SelfViewProps) {
       >
         <EmployeeMonthView
           month={month}
+          employeeId={employeeId}
           days={days.data ?? []}
           regularizations={regularizations.data ?? []}
           regularizationNote={

@@ -1,3 +1,4 @@
+import type { MonthSummaryRow } from "@/lib/attendance/month-summary";
 import { bucketOf, eachDate, addDays, employeeName, type DayBucket, type EmployeeLite } from "@/lib/attendance/dashboard";
 import type { AttendanceDay } from "@/lib/attendance/types";
 
@@ -73,6 +74,25 @@ export function buildHrCalendar(
     if (day.is_late) row.late += 1;
   }
   return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Replace each row's totals with the payroll month figures from the API (R-B03), so the grid
+ * adds up the way payroll will: a half-day leave with the other half worked is half leave and
+ * half present, a band half day is half a day. Rows without a payroll entry keep their own
+ * totals. The cells (one box per day) are untouched. */
+export function withPayrollTotals(rows: CalendarRow[], summaries: MonthSummaryRow[]): CalendarRow[] {
+  const byId = new Map(summaries.map((s) => [s.employee_id, s]));
+  return rows.map((row) => {
+    const p = byId.get(row.employeeId);
+    if (!p) return row;
+    return {
+      ...row,
+      present: Number(p.present_days) + Number(p.on_duty_days ?? 0) + Number(p.half_days) / 2,
+      absent: Number(p.absent_days),
+      leave: Number(p.leave_days),
+      late: p.late_count,
+    };
+  });
 }
 
 export function filterRows(rows: CalendarRow[], query: string): CalendarRow[] {

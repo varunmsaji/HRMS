@@ -2473,6 +2473,34 @@ class AttendancePeriodSummaryRepository:
         await session.flush()
         return created
 
+    async def list_frozen_for_month(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        period_start: date,
+        period_end: date,
+        employee_ids: frozenset[UUID],
+    ) -> list[AttendancePeriodSummary]:
+        """The frozen summaries of the employees whose `CLOSED` period covers exactly
+        `[period_start, period_end]` (R-B03): the figures Payroll will read, never recomputed."""
+        stmt = (
+            select(AttendancePeriodSummary)
+            .join(
+                AttendancePeriod,
+                AttendancePeriod.id == AttendancePeriodSummary.attendance_period_id,
+            )
+            .where(
+                AttendancePeriodSummary.company_id == company_id,
+                AttendancePeriodSummary.employee_id.in_(employee_ids),
+                AttendancePeriod.company_id == company_id,
+                AttendancePeriod.status == "CLOSED",
+                AttendancePeriod.period_start == period_start,
+                AttendancePeriod.period_end == period_end,
+            )
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def list_for_period(
         self, session: AsyncSession, *, company_id: UUID, attendance_period_id: UUID
     ) -> list[AttendancePeriodSummary]:
