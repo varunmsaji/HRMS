@@ -15,6 +15,7 @@ import '../../profile/data/employee_repository.dart' show Employee;
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
 import '../domain/day_timeline.dart';
+import '../domain/pay_effect.dart';
 import '../domain/roster_views.dart' show addDaysIso;
 import '../domain/request_resources.dart';
 import '../../../core/widgets/employee/attendance_history.dart';
@@ -372,6 +373,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canRecompute = permissions.contains(attendanceRecompute);
+    final canSeeTechnical = canRecompute || permissions.contains(attendanceViewAll);
     final day = _day;
 
     Widget body;
@@ -475,19 +477,23 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
               ('Overtime approved', _nonZero(mins('ot_minutes_approved'))),
               ('OT classification', _pretty(s('ot_classification'))),
               ('Comp-off earned', _nonZero(mins('comp_off_minutes_earned'))),
-              ('Paid day fraction', _fraction(s('paid_day_fraction'))),
-              ('Leave fraction', _fraction(s('leave_fraction'))),
-              ('Weekly-off fraction', _fraction(s('weekly_off_fraction'))),
-              ('Unpaid off fraction', _fraction(s('unpaid_off_fraction'))),
-              ('LOP fraction', _fraction(s('lop_fraction'))),
+              // The pay effect in words for everyone; the raw fractions stay in the HR details below.
+              ('Pay', payEffectLabel(r) ?? '—'),
               if (flag('work_on_leave_flagged')) ('Work-on-leave decision', _pretty(s('work_on_leave_resolution'))),
             ]),
             ..._correctionsSection(day),
             if (_projections.isNotEmpty) ..._leaveOverlay(),
+            // Version ids, raw fractions and timestamps are for HR and support, not the employee.
+            if (canSeeTechnical)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
               child: EmployeeCalculationDetails(
                 rows: [
+                  ('Paid day fraction', _fraction(s('paid_day_fraction'))),
+                  ('Leave fraction', _fraction(s('leave_fraction'))),
+                  ('Weekly-off fraction', _fraction(s('weekly_off_fraction'))),
+                  ('Unpaid off fraction', _fraction(s('unpaid_off_fraction'))),
+                  ('LOP fraction', _fraction(s('lop_fraction'))),
                   ('Calculation version', s('calculation_version')),
                   ('Calculated at', formatDateTime(r['calculated_at'] as String?, tz)),
                   ('Shift version', s('shift_version_id')),

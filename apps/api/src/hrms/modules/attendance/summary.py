@@ -183,6 +183,7 @@ class AttendanceSummaryService:
                 ad.ot_minutes_detected.label("ot_detected"),
                 ad.ot_minutes_approved.label("ot_approved"),
                 ad.worked_minutes.label("worked_minutes"),
+                ad.calculated_at.label("calculated_at"),
                 EmployeeAssignment.department_id.label("department_id"),
                 EmployeeAssignment.branch_id.label("branch_id"),
             )
@@ -347,8 +348,16 @@ class AttendanceSummaryService:
             )
             day += timedelta(days=1)
 
-        no_record = await self._no_record(company_id, filters, focus) if is_today else 0
+        # Counted for any focus date. Today it is "not calculated yet" (rows appear on a punch or
+        # at the 09:30 sweep); on a past date it is a day that was never calculated, which HR must
+        # see rather than have the employee silently drop out of "Total employees".
+        no_record = await self._no_record(company_id, filters, focus)
         focus_kpis = _kpis(by_date.get(focus, []), no_record)
+        calculated_at = (
+            await self._session.execute(
+                select(func.max(rows.c.calculated_at)).where(rows.c.attendance_date == focus)
+            )
+        ).scalar_one()
         if date_from <= compare <= date_to:
             compare_kpis = _kpis(by_date[compare], 0) if by_date.get(compare) else None
         else:
@@ -366,6 +375,7 @@ class AttendanceSummaryService:
             compare_date=compare,
             is_today=is_today,
             row_count=row_count,
+            calculated_at=calculated_at,
             daily=daily,
             focus=focus_kpis,
             compare=compare_kpis,
