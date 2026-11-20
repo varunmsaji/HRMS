@@ -16,13 +16,15 @@ class DailyRate(BaseModel):
     date: date
     #: Employees expected to work (not on a holiday, weekly off, or before joining / after exit).
     expected: int
-    #: Of those, working: present, remote or on duty.
+    #: Of those, working in full: present, remote or on duty. A half day is `half_day`, not here.
     present: int
+    #: Weighted present over `expected` (a half day counts 0.5), 0-100.
     rate: float | None
     #: The rest of the day's tally, for the trend chart's other metrics. `remote`, `absent` and
     #: `leave` are of `expected`; `late` is of `checked_in` (days with a first punch), and
     #: `worked_minutes` is the engine's worked time summed over those checked-in days.
     remote: int
+    half_day: int = 0
     absent: int
     leave: int
     late: int
@@ -41,6 +43,13 @@ class SummaryKpis(BaseModel):
     absent: int
     leave: int
     half_day: int
+    #: Today only: no punch yet and the shift is not over. The same count the company overview
+    #: calls `not_checked_in`; `not_checked_in` below is the older, wider figure.
+    not_in_yet: int = 0
+    #: Employees expected to work (employed, not on a holiday or weekly off), without `no_record`.
+    expected: int = 0
+    #: Weighted present over `expected` (a half day counts 0.5), 0-100; `null` when none expected.
+    rate: float | None = None
     holiday: int
     weekly_off: int
     incomplete: int
@@ -100,6 +109,7 @@ class GroupStat(BaseModel):
     headcount: int
     expected: int
     present: int
+    half_day: int = 0
     absent: int
     leave: int
     late: int

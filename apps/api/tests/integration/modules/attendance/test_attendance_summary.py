@@ -63,7 +63,8 @@ async def _company(client: AsyncClient) -> dict[str, Any]:
     chitra, dev = await add("Chitra", ctx["hr"]), await add("Dev", ctx["eng"])
     cid = ctx["company_id"]
 
-    # Today: Asha late by 20 with overtime, Bala absent with no punch, Chitra on leave.
+    # Today: Asha late by 20 with overtime, Bala with no punch yet (the engine says ABSENT, but the
+    # shift is still running), Chitra on leave.
     await _add_day(
         cid, asha, today, "PRESENT",
         **_complete(today, is_late=True, late_minutes=20, ot_minutes_detected=30,
@@ -143,7 +144,7 @@ async def test_every_dashboard_figure_over_the_window(
         assert len(daily) == 8  # every day of the window, empty ones included
         assert daily[today.isoformat()] == {
             "date": today.isoformat(), "expected": 3, "present": 1, "rate": pytest.approx(100 / 3),
-            "remote": 0, "absent": 1, "leave": 1, "late": 1, "checked_in": 1,
+            "remote": 0, "half_day": 0, "absent": 0, "leave": 1, "late": 1, "checked_in": 1,
             "worked_minutes": 500,
         }  # fmt: skip
         # Bala's open late day still counts as late and checked in for the trend's late %.
@@ -157,7 +158,10 @@ async def test_every_dashboard_figure_over_the_window(
         focus = data["focus"]
         # Dev has no row today: counted as "no record yet" and as not checked in.
         assert focus["total_employees"] == 4 and focus["no_record"] == 1
-        assert (focus["present"], focus["absent"], focus["leave"]) == (1, 1, 1)
+        # Bala's shift is not over: not yet due, so not absent.
+        assert (focus["present"], focus["absent"], focus["leave"]) == (1, 0, 1)
+        assert focus["not_in_yet"] == 1 and focus["half_day"] == 0
+        assert focus["expected"] == 3 and focus["rate"] == pytest.approx(100 / 3)
         assert focus["late"] == 1 and focus["checked_in"] == 1
         assert focus["not_checked_in"] == 2
         assert focus["overtime_employees"] == 1
@@ -169,8 +173,8 @@ async def test_every_dashboard_figure_over_the_window(
 
         assert data["distribution"] == [
             {"bucket": "PRESENT", "count": 1},
-            {"bucket": "ABSENT", "count": 1},
             {"bucket": "LEAVE", "count": 1},
+            {"bucket": "NOT_CHECKED_IN", "count": 1},
         ]
 
         # Only complete days are judged: Bala's open day yesterday is left out.
@@ -189,7 +193,7 @@ async def test_every_dashboard_figure_over_the_window(
 
         weekdays = {w["index"]: w for w in data["weekday_absence"]}
         assert weekdays[today.weekday()]["expected"] == 6
-        assert weekdays[today.weekday()]["absent"] == 2
+        assert weekdays[today.weekday()]["absent"] == 1  # last week's; today's is not yet due
         assert weekdays[yesterday.weekday()]["rate"] == 0
 
         # Lowest attendance first: HR (Chitra on leave) before Engineering (one of two present).
@@ -216,7 +220,9 @@ async def test_filters_narrow_the_population_but_not_the_breakdown(
         assert [g["name"] for g in hr["by_department"]] == ["HR", "Engineering"]
 
         one = await _summary(client, ctx["headers"], **window, employee_id=ctx["bala"])
-        assert one["focus"]["absent"] == 1 and one["focus"]["total_employees"] == 1
+        # Bala has no punch and today's shift is running: not yet due, not absent.
+        assert one["focus"]["not_in_yet"] == 1 and one["focus"]["absent"] == 0
+        assert one["focus"]["total_employees"] == 1
         assert one["frequent_late"] == []
 
         # "unassigned" is the breakdown's Unassigned row: everyone here has a department and

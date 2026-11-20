@@ -1,6 +1,7 @@
 {
  "absent": 1,
  "expected": 1,
+ "half_day": 1,
  "headcount": 1,
  "id": null,
  "late": 1,

@@ -4,7 +4,9 @@
 
 export interface AttendanceBuckets {
   total: number;
+  /** Fully present days only; a half day is `half_day`, never counted here. */
   present: number;
+  half_day: number;
   absent: number;
   on_leave: number;
   on_duty: number;
@@ -26,8 +28,9 @@ export interface AttendanceOverview extends AttendanceBuckets {
   is_today: boolean;
   generated_at: string;
   expected_employees: number;
+  /** Weighted present (a half day counts 0.5) over `expected_employees`, 0-100; null when none expected. */
+  attendance_rate: number | null;
   late: number;
-  half_day: number;
   half_day_leave: number;
   exceptions: number;
   departments: AttendanceDepartmentRow[];
@@ -36,6 +39,7 @@ export interface AttendanceOverview extends AttendanceBuckets {
 /** The mutually exclusive buckets, in display order. They always sum to `total`. */
 export const DISTRIBUTION_BUCKETS = [
   { key: "present", label: "Present", bar: "bg-success" },
+  { key: "half_day", label: "Half day", bar: "bg-half-day" },
   { key: "on_leave", label: "On leave", bar: "bg-on-leave" },
   { key: "on_duty", label: "On duty", bar: "bg-info" },
   { key: "remote_work", label: "Remote", bar: "bg-wfh" },
@@ -53,6 +57,7 @@ export type DistributionKey = (typeof DISTRIBUTION_BUCKETS)[number]["key"];
  * pretending to filter. */
 const ATTENDANCE_BUCKET: Partial<Record<keyof AttendanceBuckets | "late" | "exceptions", string>> = {
   present: "PRESENT",
+  half_day: "HALF_DAY",
   absent: "ABSENT",
   on_leave: "LEAVE",
   on_duty: "ON_DUTY",

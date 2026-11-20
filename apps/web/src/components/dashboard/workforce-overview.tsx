@@ -49,7 +49,7 @@ interface CardDef {
 function buildCards(d: AttendanceOverview): CardDef[] {
   const cards: CardDef[] = [
     { key: "total", label: "Total employees", value: d.total, dot: "bg-primary", note: `${d.expected_employees} expected to work` },
-    { key: "present", label: "Present", value: d.present, dot: "bg-success", note: d.half_day ? `${d.half_day} half-day` : undefined },
+    { key: "present", label: "Present", value: d.present, dot: "bg-success" },
     {
       key: "absent",
       label: "Absent",
@@ -64,6 +64,8 @@ function buildCards(d: AttendanceOverview): CardDef[] {
       : []),
     { key: "exceptions", label: "Attendance exceptions", value: d.exceptions, dot: "bg-warning", note: "Missing punch or pending approval" },
   ];
+  // A half day is its own figure, not "present"; shown only when there is one.
+  if (d.half_day > 0) cards.splice(2, 0, { key: "half_day", label: "Half day", value: d.half_day, dot: "bg-half-day", note: "Counts as half a day present" });
   // Remote work is only shown when the attendance engine actually produced such days.
   if (d.remote_work > 0) cards.splice(4, 0, { key: "remote_work", label: "Remote", value: d.remote_work, dot: "bg-wfh" });
   return cards;

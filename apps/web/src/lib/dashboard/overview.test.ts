@@ -42,7 +42,7 @@ describe("DISTRIBUTION_BUCKETS", () => {
   it("lists every primary bucket exactly once so the bar can add up to the total", () => {
     const keys = DISTRIBUTION_BUCKETS.map((b) => b.key).sort();
     const expected: Array<keyof AttendanceBuckets> = [
-      "absent", "incomplete", "no_record", "not_checked_in", "not_expected",
+      "absent", "half_day", "incomplete", "no_record", "not_checked_in", "not_expected",
       "on_duty", "on_leave", "present", "remote_work",
     ];
     expect(keys).toEqual(expected.sort());

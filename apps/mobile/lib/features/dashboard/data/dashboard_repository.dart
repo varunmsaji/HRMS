@@ -139,6 +139,7 @@ class AttendanceOverviewSummary {
   AttendanceOverviewSummary({
     required this.total,
     required this.present,
+    this.halfDay = 0,
     required this.onLeave,
     required this.absent,
     this.remoteWork = 0,
@@ -149,7 +150,9 @@ class AttendanceOverviewSummary {
   });
 
   final int total;
+  /// Fully present days only; a half day is [halfDay], never counted in [present].
   final int present;
+  final int halfDay;
   final int onLeave;
   final int absent;
   final int remoteWork;
@@ -161,16 +164,17 @@ class AttendanceOverviewSummary {
   final int halfDayLeave;
 
   /// Everyone not in a named bucket, so the chart still sums to [total] — web `attendanceSegments`.
-  int get others => [total - present - onLeave - absent - remoteWork - onDuty, 0].reduce((a, b) => a > b ? a : b);
+  int get others => [total - present - halfDay - onLeave - absent - remoteWork - onDuty, 0].reduce((a, b) => a > b ? a : b);
 
   /// Nobody in any named bucket yet, so a chart would be one grey ring — web `nobodyRecorded`.
-  bool get nobodyRecorded => present == 0 && onLeave == 0 && absent == 0 && remoteWork == 0 && onDuty == 0;
+  bool get nobodyRecorded => present == 0 && halfDay == 0 && onLeave == 0 && absent == 0 && remoteWork == 0 && onDuty == 0;
 
   factory AttendanceOverviewSummary.fromJson(Map<String, dynamic> json) {
     int n(String k) => (json[k] as num?)?.toInt() ?? 0;
     return AttendanceOverviewSummary(
       total: n('total'),
       present: n('present'),
+      halfDay: n('half_day'),
       onLeave: n('on_leave'),
       absent: n('absent'),
       remoteWork: n('remote_work'),

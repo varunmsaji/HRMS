@@ -1169,6 +1169,7 @@ async def get_attendance_summary(
         date_from=date_from,
         date_to=date_to,
         today=business_today(company.timezone),
+        timezone=company.timezone,
         compare_date=compare_date,
         filters=SummaryFilters(
             visible_employee_ids=visible_ids,

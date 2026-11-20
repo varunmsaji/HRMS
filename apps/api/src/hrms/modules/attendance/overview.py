@@ -3,26 +3,33 @@
 
 No attendance rule lives here. Every verdict (present, leave, weekly-off/holiday, late after
 grace, missing punch) is the calculation engine's own, stored on the row; this module only
-groups those rows with SQL. The single judgement it adds is a *time* one the engine cannot make
-because it has no clock: a zero-punch expected day reads `ABSENT`/`INCOMPLETE` the moment the row
-exists, even before the shift has started. For today, such an employee is `NOT_CHECKED_IN` until
-the scheduled shift end has passed (the row's own `scheduled_end`, else the end of the company's
-local day), and a mid-shift open punch counts as `PRESENT` rather than a missing-punch exception.
+groups those rows with SQL. How a row becomes a bucket, an exception and a rate weight is decided
+once, in `day_classification.py`, which the attendance summary also uses, so the home dashboard
+and the Attendance page agree. This module maps that module's buckets onto the overview's own:
+holiday, weekly off, non-working and not-employed days are `NOT_EXPECTED`, and `CONFIG_ERROR`
+reads `INCOMPLETE`. A half day is its own `HALF_DAY` bucket, not "present".
 
 Employees with no row for the date are reported as `no_record` — never guessed as absent, weekly
 off or not-checked-in: resolving their shift/calendar needs the engine run per employee, which a
 dashboard read must not do (nor write rows).
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, Integer, and_, case, cast, exists, func, literal, or_, select
+from sqlalchemy import ColumnElement, Integer, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.errors.base import ValidationError
-from hrms.modules.attendance.models import AttendanceDay, AttendanceRegularizationRequest
+from hrms.modules.attendance.day_classification import (
+    DayClock,
+    attendance_rate,
+    day_bucket,
+    is_exception,
+    local_day_end_utc,
+    rate_weight,
+)
+from hrms.modules.attendance.models import AttendanceDay
 from hrms.modules.attendance.overview_schemas import (
     AttendanceDepartmentRow,
     AttendanceOverviewRead,
@@ -30,15 +37,22 @@ from hrms.modules.attendance.overview_schemas import (
 from hrms.modules.employee.models import Employee, EmployeeAssignment, Employment
 from hrms.modules.organisation.models import Department
 from hrms.shared.business_time import business_today
-from hrms.shared.timezone import resolve_zoneinfo
 
-NOT_EXPECTED_STATUSES = ("NOT_EXPECTED", "NOT_JOINED", "EXITED")
-PRESENT_STATUSES = ("PRESENT", "HALF_DAY")
-#: Statuses the engine gives a day with no (or an unfinished) punch pair.
-OPEN_STATUSES = ("ABSENT", "INCOMPLETE")
+__all__ = ["BUCKETS", "AttendanceOverviewService", "local_day_end_utc"]
+
+#: The classifier's buckets folded into the overview's.
+_OVERVIEW_BUCKET = {
+    "NOT_EMPLOYED": "NOT_EXPECTED",
+    "HOLIDAY": "NOT_EXPECTED",
+    "WEEKLY_OFF": "NOT_EXPECTED",
+    "NON_WORKING": "NOT_EXPECTED",
+    "LEAVE": "ON_LEAVE",
+    "CONFIG_ERROR": "INCOMPLETE",
+}
 
 BUCKETS = (
     "PRESENT",
+    "HALF_DAY",
     "ABSENT",
     "ON_LEAVE",
     "ON_DUTY",
@@ -48,13 +62,6 @@ BUCKETS = (
     "NOT_EXPECTED",
     "NO_RECORD",
 )
-
-
-def local_day_end_utc(attendance_date: date, tz_name: str) -> datetime:
-    """The instant the company's local `attendance_date` ends, in UTC."""
-    tz: ZoneInfo = resolve_zoneinfo(tz_name)
-    next_midnight = datetime.combine(attendance_date + timedelta(days=1), time.min, tzinfo=tz)
-    return next_midnight.astimezone(UTC)
 
 
 class AttendanceOverviewService:
@@ -78,46 +85,13 @@ class AttendanceOverviewService:
         if target > today:
             raise ValidationError("The attendance overview cannot be requested for a future date.")
         is_today = target == today
-        day_end = local_day_end_utc(target, timezone)
+        clock = DayClock.for_company(today, timezone, now) if is_today else None
 
         ad = AttendanceDay
-        # Shift end after which a zero-punch day is a confirmed absence. Only meaningful today.
-        shift_end = func.coalesce(ad.scheduled_end, literal(day_end))
-        in_progress = and_(literal(is_today), shift_end > literal(now))
         has_punch = ad.actual_first_in.is_not(None)
-
-        bucket = case(
-            (ad.id.is_(None), "NO_RECORD"),
-            (ad.attendance_status.in_(NOT_EXPECTED_STATUSES), "NOT_EXPECTED"),
-            (ad.attendance_status == "LEAVE", "ON_LEAVE"),
-            (ad.attendance_status == "ON_DUTY", "ON_DUTY"),
-            (ad.attendance_status == "WFH", "REMOTE"),
-            (ad.attendance_status.in_(PRESENT_STATUSES), "PRESENT"),
-            # Checked in and the shift is still running: present, not a missing-punch exception.
-            (and_(ad.attendance_status.in_(OPEN_STATUSES), has_punch, in_progress), "PRESENT"),
-            # No punch yet and the shift has not ended: not yet due, never "absent".
-            (
-                and_(ad.attendance_status.in_(OPEN_STATUSES), ~has_punch, in_progress),
-                "NOT_CHECKED_IN",
-            ),
-            (ad.attendance_status == "ABSENT", "ABSENT"),
-            else_="INCOMPLETE",  # INCOMPLETE, CONFIG_ERROR
-        ).label("bucket")
-
-        pending_regularization = exists().where(
-            AttendanceRegularizationRequest.company_id == company_id,
-            AttendanceRegularizationRequest.employee_id == Employee.id,
-            AttendanceRegularizationRequest.attendance_date == target,
-            AttendanceRegularizationRequest.status == "SUBMITTED",
-        )
-        is_exception = or_(
-            ad.missing_punch.is_(True),
-            ad.is_pending_approval.is_(True),
-            ad.attendance_status.in_(("INCOMPLETE", "CONFIG_ERROR")),
-            ad.has_unresolved_break.is_(True),
-            ad.has_excess_break_exception.is_(True),
-            pending_regularization,
-        )
+        # The classifier's bucket (folded into the overview's below); no row at all is NO_RECORD.
+        bucket = case((ad.id.is_(None), "NO_RECORD"), else_=day_bucket(clock)).label("bucket")
+        exception = is_exception(company_id)
 
         def flag(condition: ColumnElement[bool]) -> ColumnElement[int]:
             return func.coalesce(func.sum(cast(case((condition, 1), else_=0), Integer)), 0)
@@ -128,9 +102,8 @@ class AttendanceOverviewService:
                 bucket,
                 func.count(Employee.id).label("n"),
                 flag(and_(ad.is_late.is_(True), has_punch)).label("late"),
-                flag(ad.attendance_status == "HALF_DAY").label("half_day"),
                 flag(and_(ad.leave_fraction > 0, ad.leave_fraction < 1)).label("half_day_leave"),
-                flag(and_(ad.id.is_not(None), is_exception)).label("exceptions"),
+                flag(and_(ad.id.is_not(None), exception)).label("exceptions"),
             )
             .select_from(Employee)
             .join(
@@ -197,10 +170,11 @@ class AttendanceOverviewService:
 
         overall = blank()
         by_dept: dict[UUID | None, dict[str, int]] = {}
-        overlays = {"late": 0, "half_day": 0, "half_day_leave": 0, "exceptions": 0}
+        overlays = {"late": 0, "half_day_leave": 0, "exceptions": 0}
         for r in rows:
-            by_dept.setdefault(r.department_id, blank())[r.bucket] += r.n
-            overall[r.bucket] += r.n
+            folded = _OVERVIEW_BUCKET.get(r.bucket, r.bucket)
+            by_dept.setdefault(r.department_id, blank())[folded] += r.n
+            overall[folded] += r.n
             for key in overlays:
                 overlays[key] += int(getattr(r, key))
 
@@ -208,6 +182,7 @@ class AttendanceOverviewService:
             return {
                 "total": sum(counts.values()),
                 "present": counts["PRESENT"],
+                "half_day": counts["HALF_DAY"],
                 "absent": counts["ABSENT"],
                 "on_leave": counts["ON_LEAVE"],
                 "on_duty": counts["ON_DUTY"],
@@ -229,12 +204,15 @@ class AttendanceOverviewService:
         departments.sort(key=lambda d: (d.department_id is None, d.department_name.lower()))
 
         payload = buckets_payload(overall)
+        expected = payload["total"] - payload["not_expected"] - payload["no_record"]
+        weighted = sum(rate_weight(b) * n for b, n in overall.items())
         return AttendanceOverviewRead(
             attendance_date=target,
             timezone=timezone,
             is_today=is_today,
             generated_at=now,
-            expected_employees=payload["total"] - payload["not_expected"] - payload["no_record"],
+            expected_employees=expected,
+            attendance_rate=attendance_rate(weighted, expected),
             departments=departments,
             **payload,
             **overlays,

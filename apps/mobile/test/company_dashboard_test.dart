@@ -87,6 +87,15 @@ Future<_Repo> _pump(WidgetTester tester, List<String> permissions, [_Repo? r]) a
 }
 
 void main() {
+  test('a half day is its own figure and the chart still adds up to the total', () {
+    final o = AttendanceOverviewSummary.fromJson({'total': 10, 'present': 4, 'half_day': 2, 'on_leave': 1, 'absent': 1, 'remote_work': 0, 'on_duty': 0});
+    expect(o.halfDay, 2);
+    expect(o.present, 4);
+    // Present, half day, leave and absent are named; the other two fall in "Others".
+    expect(o.others, 2);
+    expect(o.nobodyRecorded, isFalse);
+  });
+
   group('branch picker', () {
     testWidgets('hidden with one branch or none, as on web', (tester) async {
       await _pump(tester, const [dashboardCompanyView, attendanceView], _Repo(branches: const [(id: 'b-1', name: 'Kochi')]));
