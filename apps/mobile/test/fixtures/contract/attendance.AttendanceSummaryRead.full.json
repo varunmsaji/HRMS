@@ -25,6 +25,7 @@
    "rate": 1.5
   }
  ],
+ "calculated_at": "2026-01-15T10:00:00Z",
  "compare": {
   "absent": 1,
   "checked_in": 1,
