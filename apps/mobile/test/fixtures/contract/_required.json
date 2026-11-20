@@ -40,6 +40,12 @@
   "minutes",
   "shift_break_id"
  ],
+ "attendance.AttendanceDayDisplay": [
+  "code",
+  "glyph",
+  "label",
+  "tone"
+ ],
  "attendance.AttendanceDayRead": [
   "actual_first_in",
   "actual_last_out",

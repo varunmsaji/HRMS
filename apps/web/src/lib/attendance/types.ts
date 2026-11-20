@@ -105,6 +105,15 @@ export interface AttendanceBreak {
   is_excess: boolean;
 }
 
+/** How a screen names and colours a day. Computed by the API from the stored row. */
+export interface AttendanceDayDisplay {
+  code: string;
+  label: string;
+  tone: string;
+  glyph: string;
+  provisional: boolean;
+}
+
 export interface AttendanceDay {
   id: string;
   company_id: string;
@@ -175,6 +184,8 @@ export interface AttendanceDay {
   calculation_version: number;
   computation_snapshot: Record<string, unknown> | null;
   calculated_at: string | null;
+  /** The backend's name, tone and glyph for the day (R-B02). Absent on an older API. */
+  display?: AttendanceDayDisplay | null;
 
   is_locked: boolean;
   locked_at: string | null;

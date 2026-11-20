@@ -28,16 +28,16 @@ List<AttendanceDay> rowsBetween(List<AttendanceDay> rows, String from, String to
 /// Web `DAY_BUCKETS` order and `BUCKET_LABELS` wording.
 const dayBucketLabels = {
   'PRESENT': 'Present',
-  'REMOTE': 'Remote (WFH)',
+  'REMOTE': 'Work from home',
   'ON_DUTY': 'On duty',
   'HALF_DAY': 'Half day',
   'ABSENT': 'Absent',
   'LEAVE': 'On leave',
   'INCOMPLETE': 'Incomplete',
-  'CONFIG_ERROR': 'Config error',
+  'CONFIG_ERROR': 'Needs attention',
   'HOLIDAY': 'Holiday',
   'WEEKLY_OFF': 'Weekly off',
-  'NON_WORKING': 'Other non-working',
+  'NON_WORKING': 'Non-working day',
   'NOT_EMPLOYED': 'Not employed',
 };
 

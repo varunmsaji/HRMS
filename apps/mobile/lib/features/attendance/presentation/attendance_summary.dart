@@ -6,20 +6,26 @@ import '../../../core/widgets/ui.dart';
 /// Mirrors `bucketOf` / `BUCKET_LABELS` in `apps/web/src/lib/attendance/dashboard.ts`.
 const attendanceBucketLabels = {
   'PRESENT': 'Present',
-  'REMOTE': 'Remote (WFH)',
+  'REMOTE': 'Work from home',
   'ON_DUTY': 'On duty',
   'HALF_DAY': 'Half day',
   'ABSENT': 'Absent',
   'LEAVE': 'On leave',
   'INCOMPLETE': 'Incomplete',
-  'CONFIG_ERROR': 'Config error',
+  'CONFIG_ERROR': 'Needs attention',
   'HOLIDAY': 'Holiday',
   'WEEKLY_OFF': 'Weekly off',
-  'NON_WORKING': 'Other non-working',
+  'NON_WORKING': 'Non-working day',
   'NOT_EMPLOYED': 'Not employed',
 };
 
 String attendanceBucketOf(AttendanceDay day) {
+  // The API names the day (R-B02). Older rows without it fall back to the status below.
+  final display = day.raw['display'];
+  if (display is Map) {
+    final code = display['code'];
+    if (code is String && attendanceBucketLabels.containsKey(code)) return code;
+  }
   switch (day.attendanceStatus) {
     case 'NOT_JOINED':
     case 'EXITED':

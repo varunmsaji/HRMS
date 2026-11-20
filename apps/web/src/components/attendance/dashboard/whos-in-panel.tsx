@@ -389,7 +389,7 @@ export function WhosInPanel({
                         {d.row.day ? (
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-1">
-                              <AttendanceStatusBadge status={d.row.day.attendance_status} />
+                              <AttendanceStatusBadge status={d.row.day.attendance_status} display={d.row.day.display} />
                               {flagBadges(d.row.day, Boolean(mismatchFor?.(d.row)))}
                             </div>
                             {/* "Working" / "Not checked in" would repeat or contradict the reason shown below. */}
@@ -421,7 +421,7 @@ export function WhosInPanel({
                       </Link>
                       <p className="text-xs text-foreground-muted">{d.employee?.employee_code ?? "—"}</p>
                     </div>
-                    {d.row.day ? <AttendanceStatusBadge status={d.row.day.attendance_status} /> : <Badge variant="outline" className="whitespace-nowrap">No record</Badge>}
+                    {d.row.day ? <AttendanceStatusBadge status={d.row.day.attendance_status} display={d.row.day.display} /> : <Badge variant="outline" className="whitespace-nowrap">No record</Badge>}
                   </div>
                   <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
                     {showDate ? <div><dt className="text-foreground-muted">Date</dt><dd>{c.date}</dd></div> : null}

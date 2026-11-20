@@ -236,16 +236,16 @@ export type DayBucket = (typeof DAY_BUCKETS)[number];
 
 export const BUCKET_LABELS: Record<DayBucket, string> = {
   PRESENT: "Present",
-  REMOTE: "Remote (WFH)",
+  REMOTE: "Work from home",
   ON_DUTY: "On duty",
   HALF_DAY: "Half day",
   ABSENT: "Absent",
   LEAVE: "On leave",
   INCOMPLETE: "Incomplete",
-  CONFIG_ERROR: "Config error",
+  CONFIG_ERROR: "Needs attention",
   HOLIDAY: "Holiday",
   WEEKLY_OFF: "Weekly off",
-  NON_WORKING: "Other non-working",
+  NON_WORKING: "Non-working day",
   NOT_EMPLOYED: "Not employed",
 };
 
@@ -282,6 +282,9 @@ export const BUCKET_TONES: Record<DayBucket, { cell: string; bar: string }> = {
 };
 
 export function bucketOf(day: AttendanceDay): DayBucket {
+  // The API names the day (R-B02). Older rows without it fall back to the status below.
+  const code = day.display?.code;
+  if (code && (DAY_BUCKETS as readonly string[]).includes(code)) return code as DayBucket;
   switch (day.attendance_status) {
     case "NOT_JOINED":
     case "EXITED":

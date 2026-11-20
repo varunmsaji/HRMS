@@ -109,7 +109,7 @@ export function SelfView({ employeeId, today, timezone }: SelfViewProps) {
             <div className="flex flex-wrap items-center gap-2">
               {/* While the shift is running, Incomplete / Absent is only the last calculation's placeholder:
                   the presence label ("Working", "Not checked in") says where the day stands instead. */}
-              {isDayInProgress(todayRow, today, now) ? null : <AttendanceStatusBadge status={todayRow.attendance_status} />}
+              {isDayInProgress(todayRow, today, now) ? null : <AttendanceStatusBadge status={todayRow.attendance_status} display={todayRow.display} />}
               <span className="text-sm text-foreground-secondary">{PRESENCE_LABELS[presenceOf(todayRow)]}</span>
               {todayRow.is_late ? (
                 <Badge variant="warning">

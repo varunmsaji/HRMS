@@ -29,7 +29,7 @@ function DayDetails({ day }: { day: AttendanceDay }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <AttendanceStatusBadge status={day.attendance_status} />
+        <AttendanceStatusBadge status={day.attendance_status} display={day.display} />
         {s.problems.map((p) => (
           <Badge key={p} variant="warning">
             {p}

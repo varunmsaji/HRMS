@@ -73,7 +73,7 @@ void main() {
 
     test('daily uses web status labels and is searchable by name or status', () {
       final r = _report(all, 'daily');
-      expect(r.columns[2].render(days[1]), 'Remote (WFH)');
+      expect(r.columns[2].render(days[1]), 'Work from home');
       expect(reportView(r, query: 'on leave').total, 1);
       expect(reportView(r, query: 'BEN').total, 2);
     });

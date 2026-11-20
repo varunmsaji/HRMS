@@ -224,7 +224,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
                     </Link>
                   </td>
                   <td className="px-3 py-2">
-                    <AttendanceStatusBadge status={day.attendance_status} />
+                    <AttendanceStatusBadge status={day.attendance_status} display={day.display} />
                   </td>
                   <td className="px-3 py-2 text-foreground-secondary">
                     {day.scheduled_start && day.scheduled_end
