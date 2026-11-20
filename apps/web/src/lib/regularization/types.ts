@@ -14,6 +14,14 @@ export const REGULARIZATION_TYPES = [
 ] as const;
 export type RegularizationType = (typeof REGULARIZATION_TYPES)[number];
 
+/** The types someone can pick when asking for a correction. "Work from home" is left out (R-B05,
+ * D-AUD-3): the engine never records a work-from-home day, so approving that request changed
+ * nothing a person could see. The code stays accepted by the API and in `REGULARIZATION_TYPES`,
+ * so a request or a policy that already names it still reads and filters correctly. */
+export const SELECTABLE_REGULARIZATION_TYPES: readonly RegularizationType[] = REGULARIZATION_TYPES.filter(
+  (type) => type !== "WFH",
+);
+
 export const REGULARIZATION_TYPE_LABELS: Record<RegularizationType, string> = {
   MISSING_PUNCH: "Missing punch",
   WRONG_PUNCH: "Wrong punch time",

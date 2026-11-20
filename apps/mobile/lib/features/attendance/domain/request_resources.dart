@@ -15,6 +15,7 @@ const regularizationTypeLabels = {
   'WRONG_PUNCH': 'A punch time is wrong',
   'WRONG_SHIFT': 'Wrong shift assigned',
   'WRONG_STATUS': 'Day marked wrongly',
+  // Not offered when asking for a correction (R-B05); kept so an old request still reads.
   'WFH': 'Worked from home',
   'ON_DUTY': 'On duty elsewhere',
   'EXCESS_BREAK': 'Break ran over',
@@ -47,7 +48,7 @@ FormSpec regularizationSpec(bool onBehalf) => FormSpec(
       fields: [
         if (onBehalf) const FieldSpec('employee_id', 'Employee', kind: FieldKind.choice, choiceKey: 'employees', required: true),
         const FieldSpec('attendance_date', 'Attendance date', kind: FieldKind.date, required: true),
-        const FieldSpec('request_type', 'What needs correcting?', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'WFH', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
+        const FieldSpec('request_type', 'What needs correcting?', kind: FieldKind.select, required: true, options: ['MISSING_PUNCH', 'WRONG_PUNCH', 'WRONG_SHIFT', 'WRONG_STATUS', 'ON_DUTY', 'EXCESS_BREAK', 'FULL_DAY', 'EARLY_DEPARTURE_APPROVAL'], optionLabels: regularizationTypeLabels),
         const FieldSpec('correct_shift', 'Correct the assigned shift instead of punch times', kind: FieldKind.toggle),
         const FieldSpec('requested_shift_id', 'Correct shift', kind: FieldKind.choice, choiceKey: 'shifts', showWhen: 'correct_shift'),
         const FieldSpec('punch_in_time', 'Check-in time', kind: FieldKind.time, showWhen: '!correct_shift'),

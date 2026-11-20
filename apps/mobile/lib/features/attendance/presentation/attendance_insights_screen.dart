@@ -527,7 +527,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     String hint(String base, int now, int? then) => [base, if (then != null) _delta(now - then)].whereType<String>().join(' · ');
     final present = k.presentTotal;
     final more = <(String, String, String, String?, String?)>[
-      ('Remote (WFH)', '${k.remote}', present > 0 ? '${formatPct(pct(k.remote, present))} of those present' : 'Nobody present', 'REMOTE', null),
+      // Shown only when the engine produced work-from-home days (R-B05); today it never does.
+      if (k.remote > 0) ('Remote (WFH)', '${k.remote}', present > 0 ? '${formatPct(pct(k.remote, present))} of those present' : 'Nobody present', 'REMOTE', null),
       (
         'Overtime',
         k.overtimeMinutesDetected > 0 ? formatMinutes(k.overtimeMinutesDetected) : 'None',
