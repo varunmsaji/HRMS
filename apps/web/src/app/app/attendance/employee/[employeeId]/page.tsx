@@ -103,7 +103,7 @@ export default function EmployeeAttendanceProfilePage() {
         {todayRow ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <AttendanceStatusBadge status={todayRow.attendance_status} />
+              <AttendanceStatusBadge status={todayRow.attendance_status} display={todayRow.display} />
               <span className="text-sm text-foreground-secondary">{PRESENCE_LABELS[presenceOf(todayRow)]}</span>
             </div>
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">

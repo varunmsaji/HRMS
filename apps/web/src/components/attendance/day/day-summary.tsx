@@ -63,7 +63,7 @@ export function DaySummaryCard({ day, employeeName, employeeCode, shiftName, pre
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {inProgress ? <Badge variant="secondary">In progress</Badge> : <AttendanceStatusBadge status={day.attendance_status} />}
+            {inProgress ? <Badge variant="secondary">In progress</Badge> : <AttendanceStatusBadge status={day.attendance_status} display={day.display} />}
             {summary.problems.map((p) => (
               <Badge key={p} variant="warning">
                 {p}

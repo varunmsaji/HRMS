@@ -38,6 +38,7 @@ exception too, as the company overview always counted it (open question: whether
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import ColumnElement, and_, case, exists, func, literal, or_
@@ -147,3 +148,94 @@ def is_exception(company_id: object) -> ColumnElement[bool]:
         and_(ad.work_on_leave_flagged.is_(True), ad.work_on_leave_resolution.is_(None)),
         pending_regularization,
     )
+
+
+# ---------------------------------------------------------------------------
+# Display vocabulary (R-B02): what a screen calls a day, from the same buckets.
+# ---------------------------------------------------------------------------
+
+#: bucket -> (label, tone, glyph). The one vocabulary web and mobile both show. `tone` is a
+#: status colour family, never a rule. The same table is committed as
+#: `tests/fixtures/day_display_table.json` and checked on the web and mobile sides.
+DISPLAY_TABLE: dict[str, tuple[str, str, str]] = {
+    "PRESENT": ("Present", "success", "P"),
+    "REMOTE": ("Work from home", "wfh", "R"),
+    "ON_DUTY": ("On duty", "info", "OD"),
+    "HALF_DAY": ("Half day", "warning", "½"),
+    "ABSENT": ("Absent", "danger", "A"),
+    "LEAVE": ("On leave", "on_leave", "L"),
+    "INCOMPLETE": ("Incomplete", "warning", "!"),
+    "CONFIG_ERROR": ("Needs attention", "danger", "E"),
+    "HOLIDAY": ("Holiday", "holiday", "H"),
+    "WEEKLY_OFF": ("Weekly off", "holiday", "W"),
+    "NON_WORKING": ("Non-working day", "neutral", "–"),
+    "NOT_EMPLOYED": ("Not employed", "neutral", "·"),
+    "NOT_CHECKED_IN": ("Not in yet", "neutral", "…"),
+}
+#: Shown while the day's shift is still running and the person has punched in.
+PROVISIONAL_PRESENT_LABEL = "Working now"
+
+
+def python_day_bucket(
+    status: str,
+    calendar_day_type: str | None,
+    *,
+    has_punch: bool,
+    in_progress: bool,
+) -> str:
+    """`day_bucket` for one row in Python. Must give the same answer as the SQL `case`."""
+    if status in NOT_EMPLOYED_STATUSES:
+        return "NOT_EMPLOYED"
+    if status == "NOT_EXPECTED":
+        if calendar_day_type == "HOLIDAY":
+            return "HOLIDAY"
+        if calendar_day_type == "WEEKLY_OFF":
+            return "WEEKLY_OFF"
+        return "NON_WORKING"
+    if status == "WFH":
+        return "REMOTE"
+    if status in OPEN_STATUSES and in_progress:
+        return "PRESENT" if has_punch else "NOT_CHECKED_IN"
+    return status if status in STATUS_BUCKETS else "NON_WORKING"
+
+
+class DayDisplay(TypedDict):
+    code: str
+    label: str
+    tone: str
+    glyph: str
+    provisional: bool
+
+
+def day_display(
+    *,
+    status: str,
+    calendar_day_type: str | None,
+    attendance_date: date,
+    has_punch: bool,
+    scheduled_end: datetime | None,
+    timezone: str,
+    now: datetime | None = None,
+) -> DayDisplay:
+    """`{code, label, tone, glyph, provisional}` for one stored day.
+
+    `code` is the same bucket the dashboards count. `provisional` is true only for today's
+    open day whose shift has not ended, where the engine's verdict is not final yet.
+    """
+    now = now or datetime.now(UTC)
+    clock = DayClock.for_company(now.astimezone(resolve_zoneinfo(timezone)).date(), timezone, now)
+    in_progress = attendance_date == clock.today and (scheduled_end or clock.today_end) > now
+    code = python_day_bucket(
+        status, calendar_day_type, has_punch=has_punch, in_progress=in_progress
+    )
+    label, tone, glyph = DISPLAY_TABLE[code]
+    provisional = in_progress and status in OPEN_STATUSES
+    if provisional and code == "PRESENT":
+        label = PROVISIONAL_PRESENT_LABEL
+    return {
+        "code": code,
+        "label": label,
+        "tone": tone,
+        "glyph": glyph,
+        "provisional": provisional,
+    }

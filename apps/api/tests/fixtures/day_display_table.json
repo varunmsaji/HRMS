@@ -1,0 +1,67 @@
+{
+  "PRESENT": {
+    "label": "Present",
+    "tone": "success",
+    "glyph": "P"
+  },
+  "REMOTE": {
+    "label": "Work from home",
+    "tone": "wfh",
+    "glyph": "R"
+  },
+  "ON_DUTY": {
+    "label": "On duty",
+    "tone": "info",
+    "glyph": "OD"
+  },
+  "HALF_DAY": {
+    "label": "Half day",
+    "tone": "warning",
+    "glyph": "½"
+  },
+  "ABSENT": {
+    "label": "Absent",
+    "tone": "danger",
+    "glyph": "A"
+  },
+  "LEAVE": {
+    "label": "On leave",
+    "tone": "on_leave",
+    "glyph": "L"
+  },
+  "INCOMPLETE": {
+    "label": "Incomplete",
+    "tone": "warning",
+    "glyph": "!"
+  },
+  "CONFIG_ERROR": {
+    "label": "Needs attention",
+    "tone": "danger",
+    "glyph": "E"
+  },
+  "HOLIDAY": {
+    "label": "Holiday",
+    "tone": "holiday",
+    "glyph": "H"
+  },
+  "WEEKLY_OFF": {
+    "label": "Weekly off",
+    "tone": "holiday",
+    "glyph": "W"
+  },
+  "NON_WORKING": {
+    "label": "Non-working day",
+    "tone": "neutral",
+    "glyph": "–"
+  },
+  "NOT_EMPLOYED": {
+    "label": "Not employed",
+    "tone": "neutral",
+    "glyph": "·"
+  },
+  "NOT_CHECKED_IN": {
+    "label": "Not in yet",
+    "tone": "neutral",
+    "glyph": "…"
+  }
+}

@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from hrms.modules.attendance.day_classification import day_display
 from hrms.modules.attendance.geofence import (
     ACCURACY_LIMIT_MAX_M,
     ACCURACY_LIMIT_MIN_M,
@@ -1704,6 +1705,17 @@ def attendance_break_to_read(row: "AttendanceBreak") -> AttendanceBreakRead:
     )
 
 
+class AttendanceDayDisplay(BaseModel):
+    """How a screen names and colours a day. Computed from the stored row by the same rules the
+    dashboards count with (`day_classification`), so no client keeps its own status table."""
+
+    code: str
+    label: str
+    tone: str
+    glyph: str
+    provisional: bool = False
+
+
 class AttendanceDayRead(BaseModel):
     id: UUID
     company_id: UUID
@@ -1790,6 +1802,7 @@ class AttendanceDayRead(BaseModel):
 
     created_at: str
     updated_at: str
+    display: AttendanceDayDisplay | None = None
 
 
 def attendance_day_to_read(
@@ -1869,11 +1882,22 @@ def attendance_day_to_read(
         breaks=[attendance_break_to_read(b) for b in breaks],
         created_at=_format_timestamp(row.created_at) or "",
         updated_at=_format_timestamp(row.updated_at) or "",
+        display=AttendanceDayDisplay(
+            **day_display(
+                status=row.attendance_status,
+                calendar_day_type=row.calendar_day_type,
+                attendance_date=row.attendance_date,
+                has_punch=row.actual_first_in is not None,
+                scheduled_end=row.scheduled_end,
+                timezone=row.timezone,
+            )
+        ),
     )
 
 
 def attendance_day_to_audit_dict(read: AttendanceDayRead) -> dict[str, Any]:
-    return read.model_dump(mode="json")
+    # `display` is derived from the other fields on every read; it is not part of the audit trail.
+    return read.model_dump(mode="json", exclude={"display"})
 
 
 # ---------------------------------------------------------------------------

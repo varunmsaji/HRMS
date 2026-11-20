@@ -136,6 +136,23 @@ async def test_today_both_dashboards_count_the_same(
             "not_expected no_record"
         ).split()
         assert sum(overview[b] for b in buckets) == overview["total"]
+
+        # Each row's own `display.code` is the bucket the dashboards counted it in.
+        days = await client.get(
+            "/v1/attendance/days",
+            headers=headers,
+            params={"date_from": today.isoformat(), "date_to": today.isoformat(), "page_size": 100},
+        )
+        assert days.status_code == 200, days.text
+        rows = days.json()["data"]
+        codes = [d["display"]["code"] for d in rows]
+        assert codes.count("PRESENT") == overview["present"]
+        assert codes.count("HALF_DAY") == overview["half_day"]
+        assert codes.count("ABSENT") == overview["absent"]
+        assert codes.count("NOT_CHECKED_IN") == overview["not_checked_in"]
+        assert codes.count("LEAVE") == overview["on_leave"]
+        provisional = {d["display"]["code"] for d in rows if d["display"]["provisional"]}
+        assert provisional == {"PRESENT", "NOT_CHECKED_IN"}
     finally:
         await _cleanup_attendance_day(company_id=company_id)
 

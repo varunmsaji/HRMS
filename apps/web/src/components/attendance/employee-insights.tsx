@@ -562,6 +562,7 @@ export function EmployeeInsights({
                   {selectedCell.day ? (
                     <AttendanceStatusBadge
                       status={selectedCell.day.attendance_status}
+                      display={selectedCell.day.display}
                     />
                   ) : null}
                 </div>

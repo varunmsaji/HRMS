@@ -89,7 +89,7 @@ export function EmployeeMonthView({ month, days, regularizations, regularization
               <li key={day.id}>
                 <Link href={`/app/attendance/${day.id}`} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm hover:bg-accent">
                   <span className="w-16 font-medium text-foreground">{formatShortDate(day.attendance_date)}</span>
-                  <AttendanceStatusBadge status={day.attendance_status} />
+                  <AttendanceStatusBadge status={day.attendance_status} display={day.display} />
                   {problemLabels(day).map((label) => (
                     <Badge key={label} variant="warning">{label}</Badge>
                   ))}
