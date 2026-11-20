@@ -397,7 +397,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   icon: Icons.check_circle_outline,
                   label: 'Present Today',
                   value: '${overview.present}',
-                  hint: _hint(trendOf(overview.present, insights?.yesterdayPresent, 'vs yesterday'), overview.late > 0 ? '${overview.late} late arrivals' : null),
+                  hint: _hint(trendOf(overview.present, insights?.yesterdayPresent, 'vs yesterday'), overview.halfDay > 0 ? '${overview.halfDay} half-day, counted separately' : (overview.late > 0 ? '${overview.late} late arrivals' : null)),
                   accent: const Color(0xFF16A34A),
                   onTap: () => context.push('/app/team-attendance'),
                 ),
@@ -420,6 +420,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     ? _NoCheckIns(overview: overview)
                     : DonutChart(centerLabel: 'People', segments: [
                         DonutSegment('Present', overview.present, const Color(0xFF16A34A)),
+                        DonutSegment('Half day', overview.halfDay, const Color(0xFF84CC16)),
                         DonutSegment('On leave', overview.onLeave, const Color(0xFF8B5CF6)),
                         DonutSegment('Absent', overview.absent, const Color(0xFFEF4444)),
                         DonutSegment('WFH', overview.remoteWork, const Color(0xFF0D9488)),

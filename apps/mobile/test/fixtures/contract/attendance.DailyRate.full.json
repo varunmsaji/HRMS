@@ -3,6 +3,7 @@
  "checked_in": 1,
  "date": "2026-01-15",
  "expected": 1,
+ "half_day": 1,
  "late": 1,
  "leave": 1,
  "present": 1,

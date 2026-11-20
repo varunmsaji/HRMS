@@ -34,7 +34,9 @@ const overview: AttendanceOverview = {
   generated_at: "2026-10-30T05:00:00Z",
   total: 10,
   expected_employees: 8,
+  attendance_rate: 62.5,
   present: 5,
+  half_day: 0,
   absent: 1,
   on_leave: 1,
   on_duty: 0,
@@ -44,11 +46,10 @@ const overview: AttendanceOverview = {
   not_expected: 1,
   no_record: 1,
   late: 2,
-  half_day: 0,
   half_day_leave: 0,
   exceptions: 1,
   departments: [
-    { department_id: "d1", department_name: "Engineering", total: 6, present: 4, absent: 1, on_leave: 0, on_duty: 0, remote_work: 0, not_checked_in: 1, incomplete: 0, not_expected: 0, no_record: 0 },
+    { department_id: "d1", department_name: "Engineering", total: 6, present: 4, half_day: 0, absent: 1, on_leave: 0, on_duty: 0, remote_work: 0, not_checked_in: 1, incomplete: 0, not_expected: 0, no_record: 0 },
   ],
 };
 

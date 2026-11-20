@@ -14,13 +14,15 @@ import {
 } from "@/lib/attendance/dashboard";
 import type { FrequentLate, GroupStat, PunctualitySummary, RatePoint, WeekdayStat } from "@/lib/attendance/insights";
 
-/** One calendar day of the window. `rate` = present ÷ expected, `null` when nobody was expected. */
+/** One calendar day of the window. `rate` = weighted present ÷ expected (a half day counts 0.5),
+ * `null` when nobody was expected. `present` counts full days only; `half_day` is its own figure. */
 export interface SummaryDay {
   date: string;
   expected: number;
   present: number;
   rate: number | null;
   remote: number;
+  half_day?: number;
   absent: number;
   leave: number;
   late: number;
@@ -37,6 +39,10 @@ export interface SummaryKpis {
   absent: number;
   leave: number;
   half_day: number;
+  /** Today only: no punch yet and the shift is not over (the home dashboard's "not checked in"). */
+  not_in_yet?: number;
+  expected?: number;
+  rate?: number | null;
   holiday: number;
   weekly_off: number;
   incomplete: number;
@@ -135,7 +141,13 @@ export function toKpiSet(k: SummaryKpis): KpiSet {
 
 /** Every bucket, in display order, with a zero where the summary had none. */
 export function toDistribution(entries: AttendanceSummary["distribution"]): DistributionEntry[] {
-  const counts = new Map(entries.map((e) => [e.bucket, e.count]));
+  const counts = new Map<string, number>();
+  for (const e of entries) {
+    // "Not yet due" (today, shift still running) has no bucket of its own on this page yet: it
+    // stays with Absent, the bucket the day list filters it under, so nobody drops out of the chart.
+    const key = e.bucket === "NOT_CHECKED_IN" ? "ABSENT" : e.bucket;
+    counts.set(key, (counts.get(key) ?? 0) + e.count);
+  }
   return DAY_BUCKETS.map((bucket: DayBucket) => ({ bucket, label: BUCKET_LABELS[bucket], count: counts.get(bucket) ?? 0 }));
 }
 

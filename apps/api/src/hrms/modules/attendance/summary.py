@@ -2,18 +2,10 @@
 
 No attendance rule lives here. Every verdict (status, late, minutes, overtime, missing punch) is
 the calculation engine's own, stored on the `attendance_day` row; this module only groups rows with
-SQL. The day buckets are the dashboards' existing ones (web `bucketOf`, mobile
-`attendanceBucketOf`), now defined once:
-
-    NOT_JOINED / EXITED            -> NOT_EMPLOYED
-    WFH                            -> REMOTE
-    NOT_EXPECTED + HOLIDAY         -> HOLIDAY
-    NOT_EXPECTED + WEEKLY_OFF      -> WEEKLY_OFF
-    any other NOT_EXPECTED         -> NON_WORKING
-    every other status             -> itself
-
-"Expected" (the denominator of every rate) is every bucket except NOT_EMPLOYED, HOLIDAY,
-WEEKLY_OFF and NON_WORKING. "Working" (the numerator) is PRESENT, REMOTE and ON_DUTY.
+SQL. How a row becomes a bucket, an exception and a rate weight is decided once, in
+`day_classification.py`, which the company overview (the home dashboard) also uses; read its
+docstring for the bucket list, the expected-population rule and the rate. In short, the rate is
+weighted present over expected, where PRESENT, REMOTE and ON_DUTY weigh 1 and a HALF_DAY weighs 0.5.
 
 Department and branch come from the employee's assignment in force on each attendance date, so a
 transfer moves the employee's later days, not their history.
@@ -21,7 +13,7 @@ transfer moves the employee's later days, not their history.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
@@ -40,6 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from hrms.core.errors.base import ValidationError
+from hrms.modules.attendance.day_classification import (
+    DayClock,
+    attendance_rate,
+    day_bucket,
+    is_exception,
+    is_expected,
+    rate_weight,
+)
 from hrms.modules.attendance.models import AttendanceDay
 from hrms.modules.attendance.summary_schemas import (
     AttendanceSummaryRead,
@@ -68,13 +68,12 @@ DAY_BUCKETS = (
     "LEAVE",
     "INCOMPLETE",
     "CONFIG_ERROR",
+    "NOT_CHECKED_IN",
     "HOLIDAY",
     "WEEKLY_OFF",
     "NON_WORKING",
     "NOT_EMPLOYED",
 )
-NOT_EXPECTED_BUCKETS = frozenset({"NOT_EMPLOYED", "HOLIDAY", "WEEKLY_OFF", "NON_WORKING"})
-WORKING_BUCKETS = frozenset({"PRESENT", "REMOTE", "ON_DUTY"})
 
 LATE_BANDS = (
     ("1_15", "1–15 min", 1, 15),
@@ -89,14 +88,6 @@ UNASSIGNED = "Unassigned"
 UNASSIGNED_FILTER = "unassigned"
 FREQUENT_LATE_LIMIT = 5
 FREQUENT_LATE_MIN_DAYS = 2
-
-
-def pct(numerator: int, denominator: int) -> float | None:
-    return numerator / denominator * 100 if denominator > 0 else None
-
-
-def is_expected(bucket: str) -> bool:
-    return bucket not in NOT_EXPECTED_BUCKETS
 
 
 @dataclass(frozen=True)
@@ -118,22 +109,8 @@ def _org_filter(
     return column.is_(None) if value == UNASSIGNED_FILTER else column == value
 
 
-def _bucket_expr() -> ColumnElement[str]:
-    ad = AttendanceDay
-    status = ad.attendance_status
-    return case(
-        (status.in_(("NOT_JOINED", "EXITED")), "NOT_EMPLOYED"),
-        (status == "WFH", "REMOTE"),
-        (
-            status.in_(
-                ("PRESENT", "ON_DUTY", "HALF_DAY", "ABSENT", "LEAVE", "INCOMPLETE", "CONFIG_ERROR")
-            ),
-            status,
-        ),
-        (and_(status == "NOT_EXPECTED", ad.calendar_day_type == "HOLIDAY"), "HOLIDAY"),
-        (and_(status == "NOT_EXPECTED", ad.calendar_day_type == "WEEKLY_OFF"), "WEEKLY_OFF"),
-        else_="NON_WORKING",
-    )
+def pct(numerator: int, denominator: int) -> float | None:
+    return attendance_rate(numerator, denominator)
 
 
 def _count_if(condition: ColumnElement[bool]) -> ColumnElement[int]:
@@ -158,6 +135,7 @@ class AttendanceSummaryService:
         date_to: date,
         *,
         org_filters: bool = True,
+        clock: DayClock | None = None,
     ) -> Any:
         """One row per attendance day in the window, after the filters, as a subquery."""
         ad = AttendanceDay
@@ -166,20 +144,12 @@ class AttendanceSummaryService:
             select(
                 ad.employee_id.label("employee_id"),
                 ad.attendance_date.label("attendance_date"),
-                _bucket_expr().label("bucket"),
+                day_bucket(clock).label("bucket"),
                 checked_in.label("checked_in"),
                 ad.actual_last_out.is_not(None).label("checked_out"),
                 ad.is_late.label("is_late"),
                 ad.late_minutes.label("late_minutes"),
-                or_(
-                    ad.missing_punch.is_(True),
-                    ad.attendance_status == "CONFIG_ERROR",
-                    ad.is_pending_approval.is_(True),
-                    and_(
-                        ad.work_on_leave_flagged.is_(True),
-                        ad.work_on_leave_resolution.is_(None),
-                    ),
-                ).label("exception"),
+                is_exception(company_id).label("exception"),
                 ad.ot_minutes_detected.label("ot_detected"),
                 ad.ot_minutes_approved.label("ot_approved"),
                 ad.worked_minutes.label("worked_minutes"),
@@ -292,6 +262,8 @@ class AttendanceSummaryService:
         today: date,
         compare_date: date | None = None,
         filters: SummaryFilters | None = None,
+        timezone: str | None = None,
+        now: datetime | None = None,
     ) -> AttendanceSummaryRead:
         filters = filters or SummaryFilters()
         if date_from > date_to:
@@ -303,8 +275,11 @@ class AttendanceSummaryService:
         focus = date_to
         compare = compare_date or focus - timedelta(days=7)
         is_today = focus == today
+        # Today's open days are read against the clock (see `day_classification`); without the
+        # company timezone nothing is "in progress", as in a purely historical window.
+        clock = DayClock.for_company(today, timezone, now) if timezone else None
 
-        rows = self._rows(company_id, filters, date_from, date_to)
+        rows = self._rows(company_id, filters, date_from, date_to, clock=clock)
 
         per_day = (await self._session.execute(_per_day(rows))).all()
 
@@ -319,16 +294,30 @@ class AttendanceSummaryService:
         day = date_from
         while day <= date_to:
             tally = dict.fromkeys(
-                ("expected", "present", "remote", "absent", "leave", "late", "checked_in"), 0
+                (
+                    "expected",
+                    "present",
+                    "remote",
+                    "half_day",
+                    "absent",
+                    "leave",
+                    "late",
+                    "checked_in",
+                ),
+                0,
             )
+            weighted = 0.0
             worked = 0
             for r in by_date.get(day, []):
                 if is_expected(r.bucket):
                     tally["expected"] += r.n
-                if r.bucket in WORKING_BUCKETS:
+                weighted += rate_weight(r.bucket) * r.n
+                if r.bucket in ("PRESENT", "REMOTE", "ON_DUTY"):
                     tally["present"] += r.n
                 if r.bucket == "REMOTE":
                     tally["remote"] += r.n
+                if r.bucket == "HALF_DAY":
+                    tally["half_day"] += r.n
                 if r.bucket == "ABSENT":
                     tally["absent"] += r.n
                 if r.bucket == "LEAVE":
@@ -341,7 +330,7 @@ class AttendanceSummaryService:
             daily.append(
                 DailyRate(
                     date=day,
-                    rate=pct(tally["present"], tally["expected"]),
+                    rate=attendance_rate(weighted, tally["expected"]),
                     worked_minutes=worked,
                     **tally,
                 )
@@ -361,7 +350,7 @@ class AttendanceSummaryService:
         if date_from <= compare <= date_to:
             compare_kpis = _kpis(by_date[compare], 0) if by_date.get(compare) else None
         else:
-            compare_kpis = await self._kpis_on(company_id, filters, compare)
+            compare_kpis = await self._kpis_on(company_id, filters, compare, clock)
 
         focus_counts = {r.bucket: int(r.n) for r in by_date.get(focus, [])}
         distribution = [
@@ -392,15 +381,15 @@ class AttendanceSummaryService:
                 )
                 for i in range(7)
             ],
-            by_department=await self._breakdown(company_id, filters, focus, "department"),
-            by_branch=await self._breakdown(company_id, filters, focus, "branch"),
+            by_department=await self._breakdown(company_id, filters, focus, "department", clock),
+            by_branch=await self._breakdown(company_id, filters, focus, "branch", clock),
         )
 
     async def _kpis_on(
-        self, company_id: UUID, filters: SummaryFilters, day: date
+        self, company_id: UUID, filters: SummaryFilters, day: date, clock: DayClock | None
     ) -> SummaryKpis | None:
         """KPIs for a day outside the window (the comparison day of a short window)."""
-        rows = self._rows(company_id, filters, day, day)
+        rows = self._rows(company_id, filters, day, day, clock=clock)
         result = (await self._session.execute(_per_day(rows))).all()
         return _kpis(result, 0) if result else None
 
@@ -461,9 +450,14 @@ class AttendanceSummaryService:
         ]
 
     async def _breakdown(
-        self, company_id: UUID, filters: SummaryFilters, focus: date, key: str
+        self,
+        company_id: UUID,
+        filters: SummaryFilters,
+        focus: date,
+        key: str,
+        clock: DayClock | None,
     ) -> list[GroupStat]:
-        rows = self._rows(company_id, filters, focus, focus, org_filters=False)
+        rows = self._rows(company_id, filters, focus, focus, org_filters=False, clock=clock)
         column = rows.c.department_id if key == "department" else rows.c.branch_id
         result = (
             await self._session.execute(
@@ -479,17 +473,29 @@ class AttendanceSummaryService:
         names = await self._names(company_id, ids, key)
 
         groups: dict[UUID | None, dict[str, int]] = {}
+        weight: dict[UUID | None, float] = {}
         for r in result:
             g = groups.setdefault(
                 r.group_id,
-                {"headcount": 0, "expected": 0, "present": 0, "absent": 0, "leave": 0, "late": 0},
+                {
+                    "headcount": 0,
+                    "expected": 0,
+                    "present": 0,
+                    "half_day": 0,
+                    "absent": 0,
+                    "leave": 0,
+                    "late": 0,
+                },
             )
+            weight[r.group_id] = weight.get(r.group_id, 0.0) + rate_weight(r.bucket) * r.n
             g["headcount"] += r.n
             g["late"] += r.late
             if is_expected(r.bucket):
                 g["expected"] += r.n
-            if r.bucket in WORKING_BUCKETS:
+            if r.bucket in ("PRESENT", "REMOTE", "ON_DUTY"):
                 g["present"] += r.n
+            if r.bucket == "HALF_DAY":
+                g["half_day"] += r.n
             if r.bucket == "ABSENT":
                 g["absent"] += r.n
             if r.bucket == "LEAVE":
@@ -498,7 +504,7 @@ class AttendanceSummaryService:
             GroupStat(
                 id=group_id,
                 name=names.get(group_id, UNASSIGNED) if group_id else UNASSIGNED,
-                rate=pct(g["present"], g["expected"]),
+                rate=attendance_rate(weight.get(group_id, 0.0), g["expected"]),
                 **g,
             )
             for group_id, g in groups.items()
@@ -531,9 +537,11 @@ def _per_day(rows: Any) -> Select[Any]:
         func.count().label("n"),
         _count_if(rows.c.checked_in).label("checked_in"),
         _count_if(rows.c.is_late).label("late"),
-        _count_if(and_(rows.c.bucket.in_(("ABSENT", "INCOMPLETE")), ~rows.c.checked_in)).label(
-            "not_checked_in"
-        ),
+        # Legacy figure the Attendance page's drill-down list matches: an open day with no first
+        # punch, on any date. `not_in_yet` is the shared "shift not over" count.
+        _count_if(
+            and_(rows.c.bucket.in_(("ABSENT", "INCOMPLETE", "NOT_CHECKED_IN")), ~rows.c.checked_in)
+        ).label("not_checked_in"),
         _count_if(rows.c.exception).label("exceptions"),
         _count_if(rows.c.ot_detected > 0).label("ot_employees"),
         _sum_if(rows.c.ot_detected > 0, rows.c.ot_detected).label("ot_detected"),
@@ -560,6 +568,8 @@ def _kpis(rows: Iterable[Any], no_record: int) -> SummaryKpis:
         for name in totals:
             totals[name] += int(getattr(r, name))
     employed = sum(counts.values()) - counts["NOT_EMPLOYED"]
+    expected = sum(n for bucket, n in counts.items() if is_expected(bucket))
+    weighted = sum(rate_weight(bucket) * n for bucket, n in counts.items())
     return SummaryKpis(
         total_employees=employed + no_record,
         no_record=no_record,
@@ -569,6 +579,9 @@ def _kpis(rows: Iterable[Any], no_record: int) -> SummaryKpis:
         absent=counts["ABSENT"],
         leave=counts["LEAVE"],
         half_day=counts["HALF_DAY"],
+        not_in_yet=counts["NOT_CHECKED_IN"],
+        expected=expected,
+        rate=attendance_rate(weighted, expected),
         holiday=counts["HOLIDAY"],
         weekly_off=counts["WEEKLY_OFF"],
         incomplete=counts["INCOMPLETE"],

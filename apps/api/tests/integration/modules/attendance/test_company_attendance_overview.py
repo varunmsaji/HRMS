@@ -234,6 +234,7 @@ async def test_buckets_overlays_and_departments_for_today(
         # The terminated employee is outside the population.
         assert data["total"] == 9
         assert data["present"] == 3  # late, in-progress, unassigned
+        assert data["half_day"] == 0
         assert data["absent"] == 1  # shift over, nothing punched
         assert data["not_checked_in"] == 1  # shift still ahead: never "absent"
         assert data["on_leave"] == 1
