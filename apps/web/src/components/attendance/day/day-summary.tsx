@@ -5,8 +5,8 @@ import Link from "next/link";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
 import { Badge } from "@/components/ui/badge";
-import { summarizeDay } from "@/lib/attendance/day-detail";
-import { formatClockTime, formatMinutes } from "@/lib/attendance/format";
+import { isDayInProgress, summarizeDay } from "@/lib/attendance/day-detail";
+import { businessToday, formatClockTime, formatMinutes } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { cn } from "@/lib/utils";
 
@@ -46,8 +46,9 @@ function NavButton({ id, direction }: { id: string | null; direction: "prev" | "
 
 /** What happened on this day, in plain words, with the key numbers and day-to-day navigation. */
 export function DaySummaryCard({ day, employeeName, employeeCode, shiftName, prevDayId, nextDayId }: Props) {
-  const summary = summarizeDay(day);
   const tz = day.timezone;
+  const inProgress = isDayInProgress(day, businessToday(tz), new Date());
+  const summary = summarizeDay(day, { inProgress });
   return (
     <section aria-label="Day summary" className="rounded-2xl border border-border bg-surface p-6 shadow-elevation-1">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -62,7 +63,7 @@ export function DaySummaryCard({ day, employeeName, employeeCode, shiftName, pre
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <AttendanceStatusBadge status={day.attendance_status} />
+            {inProgress ? <Badge variant="secondary">In progress</Badge> : <AttendanceStatusBadge status={day.attendance_status} />}
             {summary.problems.map((p) => (
               <Badge key={p} variant="warning">
                 {p}
@@ -87,8 +88,8 @@ export function DaySummaryCard({ day, employeeName, employeeCode, shiftName, pre
         <Tile label="First in" value={formatClockTime(day.actual_first_in, tz)} tone={day.is_late ? "text-warning" : undefined} />
         <Tile
           label="Last out"
-          value={day.actual_last_out ? formatClockTime(day.actual_last_out, tz) : day.missing_punch ? "Missing" : "—"}
-          tone={day.missing_punch && !day.actual_last_out ? "text-danger" : day.is_early_out ? "text-warning" : undefined}
+          value={day.actual_last_out ? formatClockTime(day.actual_last_out, tz) : day.missing_punch && !inProgress ? "Missing" : "—"}
+          tone={day.missing_punch && !day.actual_last_out && !inProgress ? "text-danger" : day.is_early_out ? "text-warning" : undefined}
         />
         <Tile label="Worked" value={day.actual_first_in ? formatMinutes(day.worked_minutes) : "—"} />
       </dl>

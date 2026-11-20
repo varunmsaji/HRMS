@@ -6,7 +6,7 @@ re-adding the rows themselves. A rate is a percentage (0-100), and `null` when n
 divide by, never a made-up 0%.
 """
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -115,6 +115,9 @@ class AttendanceSummaryRead(BaseModel):
     is_today: bool
     #: Attendance days counted across the window, after the filters.
     row_count: int
+    #: The most recent `calculated_at` among the focus date's rows (after the filters): how fresh
+    #: the focus-day figures are. `null` when no row exists for the focus date.
+    calculated_at: datetime | None = None
     daily: list[DailyRate]
     focus: SummaryKpis
     #: `null` when there are no rows on `compare_date` to compare with.

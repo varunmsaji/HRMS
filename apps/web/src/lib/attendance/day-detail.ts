@@ -85,11 +85,25 @@ export interface DaySummary {
   context: string[];
 }
 
-/** A plain-language account of the day, built only from the row's own facts. */
-export function summarizeDay(day: AttendanceDay): DaySummary {
+/** The statuses the engine gives a day whose punches are missing or unfinished. */
+const OPEN_STATUSES = new Set(["ABSENT", "INCOMPLETE"]);
+
+/** True while today's shift is still running and the row's ABSENT / INCOMPLETE is only a placeholder.
+ * The engine has no clock: an open check-in is a "missing punch" the moment it is calculated. The
+ * company overview (`overview.py`) and the mobile day screen make the same call: no verdict until the
+ * scheduled end (or, with no schedule, the end of the company's day, which `today` already bounds). */
+export function isDayInProgress(day: AttendanceDay, today: string, now: Date): boolean {
+  if (day.attendance_date !== today || day.is_locked) return false;
+  if (!OPEN_STATUSES.has(day.attendance_status)) return false;
+  return day.scheduled_end ? new Date(day.scheduled_end).getTime() > now.getTime() : true;
+}
+
+/** A plain-language account of the day, built only from the row's own facts. With `inProgress`
+ * (see `isDayInProgress`) an unfinished day is described as running, not as missing a punch. */
+export function summarizeDay(day: AttendanceDay, { inProgress = false }: { inProgress?: boolean } = {}): DaySummary {
   const problems: string[] = [];
   const context: string[] = [];
-  if (day.missing_punch) problems.push("Missing punch");
+  if (day.missing_punch && !inProgress) problems.push("Missing punch");
   if (day.is_late) problems.push(day.late_minutes > 0 ? `Late by ${formatMinutes(day.late_minutes)}` : "Late");
   if (day.is_early_out)
     problems.push(
@@ -108,11 +122,17 @@ export function summarizeDay(day: AttendanceDay): DaySummary {
   if (day.is_locked) context.push("Locked for payroll");
 
   let headline: string;
-  if (day.attendance_status === "LEAVE") headline = "On approved leave.";
-  else if (day.attendance_status === "NOT_EXPECTED" || day.calendar_day_type === "WEEKLY_OFF")
-    headline = day.actual_first_in ? "Worked on a weekly off." : "Weekly off — no work expected.";
-  else if (day.calendar_day_type === "HOLIDAY" && !day.actual_first_in)
-    headline = `Holiday${day.holiday_name ? ` — ${day.holiday_name}` : ""}.`;
+  if (inProgress)
+    headline = day.actual_first_in
+      ? "Shift in progress — the day's result is worked out once the shift ends."
+      : "Not checked in yet — the shift is still running.";
+  else if (day.attendance_status === "LEAVE") headline = "On approved leave.";
+  else if (
+    day.attendance_status === "NOT_EXPECTED" ||
+    day.calendar_day_type === "WEEKLY_OFF" ||
+    (day.calendar_day_type === "HOLIDAY" && !day.actual_first_in)
+  )
+    headline = offDayHeadline(day);
   else if (day.attendance_status === "ABSENT") headline = "No attendance recorded for a scheduled day.";
   else if (day.attendance_status === "CONFIG_ERROR") headline = "This day could not be calculated — attendance setup needs attention.";
   else if (day.actual_first_in || day.worked_minutes > 0) {
@@ -121,6 +141,46 @@ export function summarizeDay(day: AttendanceDay): DaySummary {
   } else headline = "No punches recorded yet.";
 
   return { headline, problems, context };
+}
+
+/** The headline for a day with no work expected, named by the calendar's own day type: a holiday is
+ * never called a weekly off. */
+function offDayHeadline(day: AttendanceDay): string {
+  const worked = Boolean(day.actual_first_in);
+  switch (day.calendar_day_type) {
+    case "HOLIDAY": {
+      const name = day.holiday_name ? ` — ${day.holiday_name}` : "";
+      return worked ? `Worked on a holiday${name}.` : `Holiday${name}.`;
+    }
+    case "WEEKLY_OFF":
+      return worked ? "Worked on a weekly off." : "Weekly off — no work expected.";
+    case "SHUTDOWN":
+      return worked ? "Worked during a company shutdown." : "Company shutdown — no work expected.";
+    default:
+      return worked ? "Worked on a day with no work scheduled." : "No work scheduled for this day.";
+  }
+}
+
+function dayAmount(fraction: number): string {
+  if (fraction === 1) return "Full day";
+  if (fraction === 0.5) return "Half day";
+  return `${fraction} day`;
+}
+
+/** What the day is worth to pay, in words, from the row's own fractions (the same ones the period
+ * summary hands to Payroll). Never the raw "0.50". */
+export function payEffect(day: AttendanceDay): string {
+  if (day.attendance_status === "NOT_JOINED" || day.attendance_status === "EXITED") return "Not employed on this day";
+  const paid = Number(day.paid_day_fraction) || 0;
+  const lop = Number(day.lop_fraction) || 0;
+  const leave = Number(day.leave_fraction) || 0;
+  const unpaidOff = Number(day.unpaid_off_fraction) || 0;
+  const parts: string[] = [];
+  if (paid > 0) parts.push(`${dayAmount(paid)} paid`);
+  if (lop > 0) parts.push(`${dayAmount(lop)} unpaid (loss of pay)`);
+  if (unpaidOff > 0) parts.push(`${dayAmount(unpaidOff)} unpaid day off`);
+  if (leave > 0) parts.push(`${dayAmount(leave)} on leave`);
+  return parts.length > 0 ? parts.join(" · ") : "No pay effect";
 }
 
 /** Short labels for what is wrong with a day, for tables and lists. Empty when nothing is. */

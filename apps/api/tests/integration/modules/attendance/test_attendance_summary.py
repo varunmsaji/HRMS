@@ -69,8 +69,8 @@ async def _company(client: AsyncClient) -> dict[str, Any]:
         **_complete(today, is_late=True, late_minutes=20, ot_minutes_detected=30,
                     ot_minutes_approved=10, worked_minutes=500),
     )  # fmt: skip
-    await _add_day(cid, bala, today, "ABSENT")
-    await _add_day(cid, chitra, today, "LEAVE")
+    await _add_day(cid, bala, today, "ABSENT", calculated_at=_at(today, 4))
+    await _add_day(cid, chitra, today, "LEAVE", calculated_at=_at(today, 3))
     # Yesterday: Asha late by 5; Bala checked in late but has not checked out (not judged yet);
     # Chitra's weekly off; Dev on time.
     await _add_day(
@@ -136,6 +136,8 @@ async def test_every_dashboard_figure_over_the_window(
         assert data["compare_date"] == week_ago.isoformat()
         assert data["is_today"] is True
         assert data["row_count"] == 10
+        # The latest calculation among today's rows (Bala's at 04:00 UTC), not the request time.
+        assert datetime.fromisoformat(data["calculated_at"]) == _at(today, 4)
 
         daily = {d["date"]: d for d in data["daily"]}
         assert len(daily) == 8  # every day of the window, empty ones included
@@ -235,7 +237,7 @@ async def test_filters_narrow_the_population_but_not_the_breakdown(
         [row] = rows.json()["data"]
         assert (row["department_id"], row["branch_id"]) == (ctx["hr"], ctx["branch"])
 
-        # A past focus date has no "no record yet": that only describes today.
+        # Yesterday everyone has a row, so nobody is missing.
         past = await _summary(
             client,
             ctx["headers"],
@@ -245,6 +247,18 @@ async def test_filters_narrow_the_population_but_not_the_breakdown(
         assert past["is_today"] is False and past["focus"]["no_record"] == 0
         # The comparison day (8 days back) is outside the window and has no rows.
         assert past["compare"] is None
+        # A past focus date still counts an employed person with no row (a day that was never
+        # calculated): Dev has none a week ago and must not drop out of the totals.
+        week = await _summary(
+            client,
+            ctx["headers"],
+            date_from=ctx["week_ago"].isoformat(),
+            date_to=ctx["week_ago"].isoformat(),
+        )
+        assert week["is_today"] is False
+        assert (week["focus"]["no_record"], week["focus"]["total_employees"]) == (1, 4)
+        # None of the week-ago rows carries a calculation time.
+        assert week["calculated_at"] is None
     finally:
         await _cleanup_attendance_day(company_id=ctx["company_id"])
 

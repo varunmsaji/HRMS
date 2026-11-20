@@ -118,7 +118,9 @@ export function buildKpis(
       value: String(total),
       context:
         kpi.noRecord > 0
-          ? `${kpi.noRecord} with no record yet for ${focusLabel}`
+          ? focusLabel === "today"
+            ? `${kpi.noRecord} with no record yet for today`
+            : `${kpi.noRecord} not calculated for ${focusLabel}`
           : `employed ${focusLabel === "today" ? "today" : `on ${focusLabel}`}`,
       icon: Users,
       tone: "neutral",

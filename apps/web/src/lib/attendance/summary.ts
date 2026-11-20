@@ -70,6 +70,8 @@ export interface AttendanceSummary {
   compare_date: string;
   is_today: boolean;
   row_count: number;
+  /** Latest calculation time among the focus date's rows; null when none exists (older API: absent). */
+  calculated_at?: string | null;
   daily: SummaryDay[];
   focus: SummaryKpis;
   compare: SummaryKpis | null;

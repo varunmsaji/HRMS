@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import { buildTimeline, type BreakEventLite } from "@/lib/attendance/day-detail";
+import { buildTimeline, payEffect, type BreakEventLite } from "@/lib/attendance/day-detail";
 import { employeeName as nameOf, type EmployeeLite } from "@/lib/attendance/dashboard";
 import type { AttendanceDay, Punch } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -163,6 +163,7 @@ export default function AttendanceDayDetailPage() {
     [day, punches, breakEvents],
   );
   const isOwnDay = Boolean(day && user?.employee_id && day.employee_id === user.employee_id);
+  const canSeeTechnical = can("ATTENDANCE.RECOMPUTE") || can("ATTENDANCE.VIEW_ALL");
   // The API treats a request naming the caller's own employee as a self request, so on-behalf
   // is never offered on the viewer's own day.
   const requestMode: "SELF" | "ON_BEHALF" | null = !day
@@ -277,6 +278,13 @@ export default function AttendanceDayDetailPage() {
                           : "—"
                       }
                     />
+                    <Field label="Pay" value={payEffect(day)} />
+                    {day.work_on_leave_resolution ? (
+                      <Field
+                        label="Work-on-leave decision"
+                        value={`Leave kept — ${day.work_on_leave_resolution_reason ?? ""}`}
+                      />
+                    ) : null}
                   </dl>
                 </CardContent>
               </Card>
@@ -360,6 +368,9 @@ export default function AttendanceDayDetailPage() {
             </Card>
           ) : null}
 
+          {/* Raw codes, fractions, version ids and the snapshot are for HR and support only: an
+              employee sees the pay effect in words in the time summary above. */}
+          {canSeeTechnical ? (
           <details className="group rounded-2xl border border-border bg-surface shadow-elevation-1">
             <summary className="cursor-pointer select-none px-6 py-4 text-base font-semibold text-foreground">
               Calculation details
@@ -378,12 +389,6 @@ export default function AttendanceDayDetailPage() {
                 <Field label="Weekly-off fraction" value={day.weekly_off_fraction} />
                 <Field label="Unpaid off fraction" value={day.unpaid_off_fraction} />
                 <Field label="LOP fraction" value={day.lop_fraction} />
-                {day.work_on_leave_resolution ? (
-                  <Field
-                    label="Work-on-leave decision"
-                    value={`Leave kept — ${day.work_on_leave_resolution_reason ?? ""}`}
-                  />
-                ) : null}
                 <Field label="Calculation version" value={day.calculation_version} />
                 <Field label="Calculated at" value={formatDateTime(day.calculated_at, day.timezone)} />
                 <Field label="Locked at" value={day.is_locked ? formatDateTime(day.locked_at, day.timezone) : "—"} />
@@ -404,6 +409,7 @@ export default function AttendanceDayDetailPage() {
               </div>
             </div>
           </details>
+          ) : null}
         </div>
       ) : null}
 

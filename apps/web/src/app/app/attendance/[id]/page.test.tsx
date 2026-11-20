@@ -7,10 +7,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
+const auth = vi.hoisted(() => ({ permissions: ["ATTENDANCE.RECOMPUTE"] as string[] }));
 vi.mock("@/lib/auth/auth-context", () => ({
   useAuth: () => ({
     session: { companyId: "company-1", accessToken: "token" },
-    user: { permissions: ["ATTENDANCE.RECOMPUTE"] },
+    user: { permissions: auth.permissions },
   }),
 }));
 
@@ -198,6 +199,28 @@ describe("AttendanceDayDetailPage", () => {
 
     const recompute = await screen.findByRole("button", { name: /recompute/i });
     expect(recompute).toBeDisabled();
+  });
+
+  it("shows the pay effect in words and keeps the technical details for HR", async () => {
+    mockDayAndProjections({ ...sampleDay, paid_day_fraction: "0.50", lop_fraction: "0.50" });
+    render(<AttendanceDayDetailPage />);
+
+    expect(await screen.findByText("Half day paid · Half day unpaid (loss of pay)")).toBeInTheDocument();
+    expect(screen.getByText("Calculation details")).toBeInTheDocument();
+  });
+
+  it("hides the technical details from a viewer without HR rights", async () => {
+    auth.permissions = ["ATTENDANCE.VIEW"];
+    try {
+      mockDayAndProjections(sampleDay);
+      render(<AttendanceDayDetailPage />);
+
+      expect(await screen.findByText("Full day paid")).toBeInTheDocument();
+      expect(screen.queryByText("Calculation details")).not.toBeInTheDocument();
+      expect(screen.queryByText("Attendance policy version")).not.toBeInTheDocument();
+    } finally {
+      auth.permissions = ["ATTENDANCE.RECOMPUTE"];
+    }
   });
 
   it("shows a not-found message on 404", async () => {

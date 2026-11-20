@@ -58,7 +58,13 @@ import {
   type DayBucket,
   type DayFlag,
 } from "@/lib/attendance/dashboard";
-import { businessToday, formatClockTime, isoToDatetimeLocal, nowInZoneForDatetimeLocal } from "@/lib/attendance/format";
+import {
+  businessToday,
+  formatClockTime,
+  formatDateTime,
+  isoToDatetimeLocal,
+  nowInZoneForDatetimeLocal,
+} from "@/lib/attendance/format";
 import { mismatchOf } from "@/lib/attendance/mismatch";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { HR_CALENDAR_PERMISSIONS } from "@/lib/attendance/hr-calendar";
@@ -191,6 +197,8 @@ function AttendanceDashboard() {
 
   // Every total and chart on the page: counted by the backend, only reshaped here.
   const summary = data.summary.data;
+  // When the focus day's rows were last calculated (not when this page fetched them).
+  const calculatedAt = summary?.calculated_at ?? null;
   const totals = useMemo(() => {
     if (!summary) return null;
     const ratePoints = toRatePoints(summary.daily);
@@ -243,10 +251,11 @@ function AttendanceDashboard() {
   const hasDirectoryFilter = Boolean(filters.department || filters.branch);
   const rangeRows = useMemo(() => rowsInRange(population, range), [population, range]);
   const focusRows = useMemo(() => rowsOn(population, range.to), [population, range.to]);
+  // Listed for any focus date, not only today: on a past date an employed person with no row is a
+  // day that was never calculated, and HR needs to see it rather than have them silently missing.
   const noRecord = useMemo(
-    () =>
-      focusIsToday && employees ? employeesWithoutRecord(focusRows, employees, filters, range.to, directoryMap) : [],
-    [focusIsToday, employees, focusRows, filters, range.to, directoryMap],
+    () => (employees ? employeesWithoutRecord(focusRows, employees, filters, range.to, directoryMap) : []),
+    [employees, focusRows, filters, range.to, directoryMap],
   );
 
   // Needs Attention's whole-range items ("27 days · 22 employees") must drill into the same
@@ -593,8 +602,10 @@ function AttendanceDashboard() {
               layout === "grid"
                 ? `Each employee's status, day by day, ${winLabel}. Follows the filters above.`
                 : `${drillDescription ? `${drillDescription}. ` : ""}Snapshot from punches and the latest attendance calculation — not a live presence feed.${
-                    data.summary.loadedAt ? ` Loaded at ${formatClockTime(new Date(data.summary.loadedAt).toISOString(), timezone)}.` : ""
-                  }`
+                    calculatedAt
+                      ? ` Last calculated ${focusIsToday ? `at ${formatClockTime(calculatedAt, timezone)}` : formatDateTime(calculatedAt, timezone)}.`
+                      : ""
+                  }${data.summary.loadedAt ? ` Loaded at ${formatClockTime(new Date(data.summary.loadedAt).toISOString(), timezone)}.` : ""}`
             }
             status="ready"
             empty={layout === "grid" && muster.rows.length === 0 ? { title: "No attendance days to show.", icon: CalendarClock } : null}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTimeline, punchesForDay, summarizeDay } from "./day-detail";
+import { buildTimeline, isDayInProgress, payEffect, punchesForDay, summarizeDay } from "./day-detail";
 import type { AttendanceDay, Punch } from "./types";
 
 const day = (over: Partial<AttendanceDay> = {}): AttendanceDay =>
@@ -45,12 +45,73 @@ describe("summarizeDay", () => {
 
   it("describes leave, weekly off and absent days", () => {
     expect(summarizeDay(day({ attendance_status: "LEAVE" })).headline).toBe("On approved leave.");
+    expect(
+      summarizeDay(day({ attendance_status: "NOT_EXPECTED", calendar_day_type: "WEEKLY_OFF", actual_first_in: null }))
+        .headline,
+    ).toBe("Weekly off — no work expected.");
+    expect(
+      summarizeDay(day({ attendance_status: "PRESENT", calendar_day_type: "WEEKLY_OFF" })).headline,
+    ).toBe("Worked on a weekly off.");
     expect(summarizeDay(day({ attendance_status: "NOT_EXPECTED", actual_first_in: null })).headline).toBe(
-      "Weekly off — no work expected.",
+      "No work scheduled for this day.",
     );
     expect(summarizeDay(day({ attendance_status: "ABSENT", actual_first_in: null, worked_minutes: 0 })).headline).toBe(
       "No attendance recorded for a scheduled day.",
     );
+  });
+
+  it("names a holiday as a holiday, never as a weekly off", () => {
+    const holiday = { attendance_status: "NOT_EXPECTED", calendar_day_type: "HOLIDAY", holiday_name: "Diwali" } as const;
+    expect(summarizeDay(day({ ...holiday, actual_first_in: null })).headline).toBe("Holiday — Diwali.");
+    expect(summarizeDay(day({ ...holiday, holiday_name: null, actual_first_in: null })).headline).toBe("Holiday.");
+    expect(summarizeDay(day(holiday)).headline).toBe("Worked on a holiday — Diwali.");
+    expect(
+      summarizeDay(day({ attendance_status: "NOT_EXPECTED", calendar_day_type: "SHUTDOWN", actual_first_in: null }))
+        .headline,
+    ).toBe("Company shutdown — no work expected.");
+  });
+});
+
+describe("isDayInProgress", () => {
+  // Shift 09:00-18:00 UTC on 10 Aug; checked in, no punch-out yet, so the engine says INCOMPLETE.
+  const open = day({ attendance_date: "2026-08-10", attendance_status: "INCOMPLETE", actual_last_out: null, missing_punch: true });
+  const midShift = new Date("2026-08-10T12:00:00Z");
+
+  it("is true for today's open or empty day before the shift ends", () => {
+    expect(isDayInProgress(open, "2026-08-10", midShift)).toBe(true);
+    expect(isDayInProgress({ ...open, attendance_status: "ABSENT", actual_first_in: null }, "2026-08-10", midShift)).toBe(true);
+    expect(isDayInProgress({ ...open, scheduled_end: null }, "2026-08-10", midShift)).toBe(true);
+  });
+
+  it("is false once the shift has ended, on other days, for real verdicts and for locked days", () => {
+    expect(isDayInProgress(open, "2026-08-10", new Date("2026-08-10T18:30:00Z"))).toBe(false);
+    expect(isDayInProgress(open, "2026-08-11", midShift)).toBe(false);
+    expect(isDayInProgress({ ...open, attendance_status: "PRESENT" }, "2026-08-10", midShift)).toBe(false);
+    expect(isDayInProgress({ ...open, is_locked: true }, "2026-08-10", midShift)).toBe(false);
+  });
+
+  it("drops the missing-punch problem and says the shift is running", () => {
+    const s = summarizeDay(open, { inProgress: true });
+    expect(s.problems).not.toContain("Missing punch");
+    expect(s.headline).toBe("Shift in progress — the day's result is worked out once the shift ends.");
+    expect(summarizeDay({ ...open, actual_first_in: null }, { inProgress: true }).headline).toBe(
+      "Not checked in yet — the shift is still running.",
+    );
+    expect(summarizeDay(open).problems).toContain("Missing punch");
+  });
+});
+
+describe("payEffect", () => {
+  const pay = (over: Partial<AttendanceDay>) =>
+    payEffect(day({ paid_day_fraction: "0", lop_fraction: "0", leave_fraction: "0", unpaid_off_fraction: "0", ...over }));
+
+  it("words the day's pay fractions", () => {
+    expect(pay({ paid_day_fraction: "1.00" })).toBe("Full day paid");
+    expect(pay({ paid_day_fraction: "1.00", leave_fraction: "0.50" })).toBe("Full day paid · Half day on leave");
+    expect(pay({ lop_fraction: "1.00" })).toBe("Full day unpaid (loss of pay)");
+    expect(pay({ unpaid_off_fraction: "0.50", paid_day_fraction: "0.50" })).toBe("Half day paid · Half day unpaid day off");
+    expect(pay({})).toBe("No pay effect");
+    expect(pay({ attendance_status: "EXITED" })).toBe("Not employed on this day");
   });
 });
 

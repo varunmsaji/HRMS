@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import { PRESENCE_LABELS, formatShortDate, hasException, monthStart, presenceOf } from "@/lib/attendance/dashboard";
-import { exceptionLabels, minutesSince } from "@/lib/attendance/day-detail";
+import { exceptionLabels, isDayInProgress, minutesSince } from "@/lib/attendance/day-detail";
 import { formatClockTime, formatMinutes } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -107,7 +107,9 @@ export function SelfView({ employeeId, today, timezone }: SelfViewProps) {
         {todayRow ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <AttendanceStatusBadge status={todayRow.attendance_status} />
+              {/* While the shift is running, Incomplete / Absent is only the last calculation's placeholder:
+                  the presence label ("Working", "Not checked in") says where the day stands instead. */}
+              {isDayInProgress(todayRow, today, now) ? null : <AttendanceStatusBadge status={todayRow.attendance_status} />}
               <span className="text-sm text-foreground-secondary">{PRESENCE_LABELS[presenceOf(todayRow)]}</span>
               {todayRow.is_late ? (
                 <Badge variant="warning">

@@ -141,13 +141,18 @@ void main() {
       expect(gradients, isEmpty);
     });
 
-    testWidgets('calculation details are collapsed for everyone and expand to the version', (tester) async {
-      await pump(tester, const [attendanceView]);
+    testWidgets('calculation details are collapsed for HR and expand to the version', (tester) async {
+      await pump(tester, const [attendanceView, attendanceViewAll]);
       expect(find.text('Calculation details'), findsOneWidget);
       expect(find.text('Calculation version'), findsNothing);
       await tester.tap(find.text('Calculation details'));
       await tester.pumpAndSettle();
       expect(find.text('Calculation version'), findsOneWidget);
+    });
+
+    testWidgets('an employee sees no calculation details (version ids, raw fractions)', (tester) async {
+      await pump(tester, const [attendanceView]);
+      expect(find.text('Calculation details'), findsNothing);
     });
 
     testWidgets('an employee never sees Recompute', (tester) async {
@@ -211,6 +216,13 @@ void main() {
       expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Status: Late'), findsOneWidget);
     });
 
+    testWidgets('the pay effect is in words, never the raw fraction', (tester) async {
+      await pumpRow(tester, _row('p', '2026-09-15', 'HALF_DAY', over: {'paid_day_fraction': '0.50', 'lop_fraction': '0.50', 'leave_fraction': '0.00', 'unpaid_off_fraction': '0.00'}));
+      expect(find.text('OVERTIME AND PAY'), findsOneWidget);
+      expect(find.text('Half day paid · Half day unpaid (loss of pay)'), findsOneWidget);
+      expect(find.text('0.50'), findsNothing);
+    });
+
     testWidgets('approved leave on the date appears as its own section', (tester) async {
       await pumpRow(tester, _row('l', '2026-09-15', 'LEAVE', over: {'actual_first_in': null, 'actual_last_out': null}),
           projections: [LeaveDayProjection(leaveApplicationId: 'abcdefgh-1', fraction: '1.0', isPaid: true, status: 'APPROVED')]);
@@ -219,7 +231,8 @@ void main() {
     });
 
     testWidgets('calculation details keep every version and timestamp behind the tile', (tester) async {
-      await pumpRow(tester, _row('c', '2026-09-15', 'PRESENT', over: {'attendance_policy_version_id': 'apv-1', 'overtime_policy_version_id': 'opv-1'}));
+      await pumpRow(tester, _row('c', '2026-09-15', 'PRESENT', over: {'attendance_policy_version_id': 'apv-1', 'overtime_policy_version_id': 'opv-1'}),
+          permissions: const [attendanceView, attendanceRecompute]);
       await tester.drag(find.byType(ListView).first, const Offset(0, -3000));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Calculation details'));
