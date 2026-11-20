@@ -2490,6 +2490,17 @@ class AttendancePeriodSummaryRead(BaseModel):
     frozen: bool
 
 
+class AttendanceMonthSummaryRead(BaseModel):
+    """One month of the payroll arithmetic for a set of employees (R-B03).
+
+    Each row is the frozen `AttendancePeriodSummary` when a `CLOSED` period covers exactly this
+    month (`frozen: true`), otherwise the same arithmetic run live on the stored day rows
+    (`frozen: false`). An employee with no day rows in the month has no entry."""
+
+    month: str
+    summaries: list[AttendancePeriodSummaryRead]
+
+
 def _optional_decimal_str(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 

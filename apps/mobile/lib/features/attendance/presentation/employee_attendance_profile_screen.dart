@@ -13,6 +13,7 @@ import '../../../core/widgets/employee/status_map.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/employee_attendance_summary.dart';
+import '../domain/month_payroll.dart';
 import '../domain/request_resources.dart';
 import 'accent_stat_tile.dart';
 import 'attendance_day_detail_screen.dart';
@@ -53,6 +54,8 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
 
   String? _month;
   List<AttendanceDay> _monthDays = const [];
+  /// How payroll counts the shown month; null until loaded or if it could not be loaded.
+  MonthPayroll? _payroll;
 
   bool _regsLoading = true;
   bool _regsFailed = false;
@@ -162,6 +165,15 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
     );
   }
 
+  Future<void> _loadPayroll(String month) async {
+    try {
+      final rows = await ref.read(attendanceRepositoryProvider).monthPayroll(month: month, employeeIds: [widget.employeeId]);
+      if (mounted && _month == month) setState(() => _payroll = rows.isEmpty ? null : rows.first);
+    } catch (_) {
+      // Best effort: the day counts below stand on their own.
+    }
+  }
+
   List<Widget> _monthSections(BuildContext context) {
     final theme = Theme.of(context);
     final s = AttendanceRangeSummary.compute(_monthDays);
@@ -184,6 +196,18 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
               icon: Icons.trending_up_rounded, accent: c.onLeave, accentSubtle: c.onLeaveSubtle, hint: s.otDetectedMinutes > 0 ? '${formatMinutes(s.otApprovedMinutes)} approved' : null),
         ]),
       ),
+      if (_payroll case final p?) ...[
+        EmployeeSectionHeader('How payroll counts this month', caption: p.frozen ? 'Final, month closed' : 'So far, can change until the month closes'),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: AccentStatGrid(stats: [
+            AccentStat('Paid days', formatPayrollDays(p.paid), icon: Icons.payments_outlined, accent: c.success, accentSubtle: c.successSubtle),
+            AccentStat('Loss of pay', formatPayrollDays(p.lop), icon: Icons.money_off_rounded, accent: c.danger, accentSubtle: c.dangerSubtle, tone: p.lop > 0 ? c.danger : null),
+            AccentStat('Leave', formatPayrollDays(p.leave), icon: Icons.flight_takeoff_rounded, accent: c.onLeave, accentSubtle: c.onLeaveSubtle),
+            AccentStat('Half days', formatPayrollDays(p.half), icon: Icons.hourglass_bottom_rounded, accent: c.halfDay, accentSubtle: c.halfDaySubtle),
+          ]),
+        ),
+      ],
       const EmployeeSectionHeader('Attendance issues'),
       if (issues.isEmpty)
         Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('No attendance issues this month.', style: theme.textTheme.bodyMedium))
@@ -248,10 +272,14 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
                 initialMonth: widget.initialMonth,
                 // The month grid just below already has late arrivals, hours and the rest.
                 showFigures: false,
-                onLoaded: (month, days) => setState(() {
-                  _month = month;
-                  _monthDays = days;
-                }),
+                onLoaded: (month, days) {
+                  setState(() {
+                    _month = month;
+                    _monthDays = days;
+                    _payroll = null;
+                  });
+                  _loadPayroll(month);
+                },
               ),
             ),
             if (_month != null) ..._monthSections(context),

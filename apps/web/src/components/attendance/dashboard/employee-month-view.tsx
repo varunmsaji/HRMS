@@ -14,6 +14,7 @@ import Link from "next/link";
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
 import { StatTile, type StatTileProps } from "@/components/attendance/stat-tile";
 import { MonthCalendar } from "@/components/attendance/dashboard/month-calendar";
+import { PayrollMonthCard } from "@/components/attendance/dashboard/payroll-month-card";
 import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -27,6 +28,8 @@ import { REGULARIZATION_TYPE_LABELS, type RegularizationRequest } from "@/lib/re
 
 interface EmployeeMonthViewProps {
   month: string;
+  /** When given, the month also shows how payroll counts it (loaded from the API). */
+  employeeId?: string;
   days: AttendanceDay[];
   regularizations: RegularizationRequest[];
   /** `null` while the regularization list is loading or unavailable. */
@@ -45,7 +48,7 @@ function problemLabels(day: AttendanceDay): string[] {
 
 /** The month-level story for one employee — shared by the employee's own dashboard and the HR
  * employee-attendance profile. Everything is read off the backend's day rows. */
-export function EmployeeMonthView({ month, days, regularizations, regularizationNote }: EmployeeMonthViewProps) {
+export function EmployeeMonthView({ month, employeeId, days, regularizations, regularizationNote }: EmployeeMonthViewProps) {
   const summary = summarizeMonth(days);
   const c = summary.counts;
   const issues = days.filter(hasException).sort((a, b) => b.attendance_date.localeCompare(a.attendance_date));
@@ -73,6 +76,8 @@ export function EmployeeMonthView({ month, days, regularizations, regularization
           <StatTile key={stat.label} {...stat} />
         ))}
       </dl>
+
+      {employeeId ? <PayrollMonthCard employeeId={employeeId} month={month} /> : null}
 
       <section aria-labelledby="emp-cal-heading" className="space-y-2">
         <h3 id="emp-cal-heading" className="text-sm font-semibold text-foreground">Calendar</h3>

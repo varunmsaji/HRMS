@@ -6,6 +6,7 @@ identical CRUD/versioning/publish mechanics. Mirrors `organisation.service.Organ
 `ShiftVersion` methods (create/list/get/update/discard/publish/resolve_as_of) three times over,
 plus policy-resolution delegation (§16/§19 step 7)."""
 
+import calendar
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -146,6 +147,7 @@ from hrms.modules.attendance.repository import (
 from hrms.modules.attendance.resolution import PolicyResolutionService
 from hrms.modules.attendance.schemas import (
     AttendanceDayRead,
+    AttendanceMonthSummaryRead,
     AttendancePeriodBlockingReason,
     AttendancePeriodCreate,
     AttendancePeriodRead,
@@ -7388,6 +7390,43 @@ class PayrollPeriodInputs:
     overtime: list[tuple[UUID, str, Decimal | None, int]]
 
 
+def _aggregate_to_read(
+    employee_id: UUID, agg: dict[str, Any], generated_at: str
+) -> AttendancePeriodSummaryRead:
+    """One employee's live `_aggregate_day_rows` result as the period-summary read model."""
+    return AttendancePeriodSummaryRead(
+        employee_id=employee_id,
+        present_days=str(agg["present_days"]),
+        absent_days=str(agg["absent_days"]),
+        leave_days=str(agg["leave_days"]),
+        holiday_days=str(agg["holiday_days"]),
+        weekly_off_days=str(agg["weekly_off_days"]),
+        half_days=str(agg["half_days"]),
+        lop_days=str(agg["lop_days"]),
+        on_duty_days=str(agg["on_duty_days"]),
+        incomplete_days=str(agg["incomplete_days"]),
+        not_employed_days=str(agg["not_employed_days"]),
+        unpaid_off_days=str(agg["unpaid_off_days"]),
+        paid_days=str(agg["paid_days"]),
+        payable_days=str(agg["payable_days"]),
+        ot_minutes_normal=agg["ot_minutes_normal"],
+        ot_minutes_weekly_off=agg["ot_minutes_weekly_off"],
+        ot_minutes_holiday=agg["ot_minutes_holiday"],
+        ot_minutes_night=agg["ot_minutes_night"],
+        comp_off_minutes_earned=agg["comp_off_minutes_earned"],
+        late_count=agg["late_count"],
+        worked_minutes_total=agg["worked_minutes_total"],
+        paid_break_minutes_total=agg["paid_break_minutes_total"],
+        unpaid_break_minutes_total=agg["unpaid_break_minutes_total"],
+        auto_deducted_break_minutes_total=agg["auto_deducted_break_minutes_total"],
+        actual_break_minutes_total=agg["actual_break_minutes_total"],
+        excess_break_minutes_total=agg["excess_break_minutes_total"],
+        unresolved_break_days=agg["unresolved_break_days"],
+        generated_at=generated_at,
+        frozen=False,
+    )
+
+
 class AttendancePeriodService:
     """Period lifecycle (`OPEN` -> `CLOSED`), finalization validation, and the payroll-facing
     `AttendancePeriodSummary` snapshot. `CLOSED` *is* locked — closing a period is what actually
@@ -8231,40 +8270,62 @@ class AttendancePeriodService:
         now_str = _format_timestamp(datetime.now(UTC)) or ""
         aggregates = self._aggregate_day_rows(day_rows)
         return [
-            AttendancePeriodSummaryRead(
-                employee_id=employee_id,
-                present_days=str(agg["present_days"]),
-                absent_days=str(agg["absent_days"]),
-                leave_days=str(agg["leave_days"]),
-                holiday_days=str(agg["holiday_days"]),
-                weekly_off_days=str(agg["weekly_off_days"]),
-                half_days=str(agg["half_days"]),
-                lop_days=str(agg["lop_days"]),
-                on_duty_days=str(agg["on_duty_days"]),
-                incomplete_days=str(agg["incomplete_days"]),
-                not_employed_days=str(agg["not_employed_days"]),
-                unpaid_off_days=str(agg["unpaid_off_days"]),
-                paid_days=str(agg["paid_days"]),
-                payable_days=str(agg["payable_days"]),
-                ot_minutes_normal=agg["ot_minutes_normal"],
-                ot_minutes_weekly_off=agg["ot_minutes_weekly_off"],
-                ot_minutes_holiday=agg["ot_minutes_holiday"],
-                ot_minutes_night=agg["ot_minutes_night"],
-                comp_off_minutes_earned=agg["comp_off_minutes_earned"],
-                late_count=agg["late_count"],
-                worked_minutes_total=agg["worked_minutes_total"],
-                paid_break_minutes_total=agg["paid_break_minutes_total"],
-                unpaid_break_minutes_total=agg["unpaid_break_minutes_total"],
-                auto_deducted_break_minutes_total=agg["auto_deducted_break_minutes_total"],
-                actual_break_minutes_total=agg["actual_break_minutes_total"],
-                excess_break_minutes_total=agg["excess_break_minutes_total"],
-                unresolved_break_days=agg["unresolved_break_days"],
-                generated_at=now_str,
-                frozen=False,
-            )
+            _aggregate_to_read(employee_id, agg, now_str)
             for employee_id, agg in aggregates.items()
             if visible_ids is None or employee_id in visible_ids
         ]
+
+    async def month_summary(
+        self,
+        company_id: UUID,
+        month_start: date,
+        *,
+        employee_ids: frozenset[UUID],
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> AttendanceMonthSummaryRead:
+        """R-B03 - one month of the payroll arithmetic for many employees in one call.
+
+        For an employee whose `CLOSED` period covers exactly this month the frozen
+        `AttendancePeriodSummary` is returned unchanged (what Payroll reads). For everyone else the
+        same `_aggregate_day_rows` that `get_summary` and `finalize` use runs on their stored day
+        rows, so a screen never keeps a second month calculation. Only the employees the caller's
+        data scope allows are returned; the rest are dropped without comment."""
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        wanted = employee_ids if visible_ids is None else employee_ids & visible_ids
+        month = month_start.strftime("%Y-%m")
+        if not wanted:
+            return AttendanceMonthSummaryRead(month=month, summaries=[])
+        month_end = month_start.replace(
+            day=calendar.monthrange(month_start.year, month_start.month)[1]
+        )
+        frozen_rows = await self._summary_repo.list_frozen_for_month(
+            self._session,
+            company_id=company_id,
+            period_start=month_start,
+            period_end=month_end,
+            employee_ids=wanted,
+        )
+        summaries = [attendance_period_summary_to_read(r, frozen=True) for r in frozen_rows]
+        remaining = wanted - {r.employee_id for r in frozen_rows}
+        if remaining:
+            day_rows = await self._day_repo.list_filtered(
+                self._session,
+                company_id=company_id,
+                visible_employee_ids=frozenset(remaining),
+                employee_id=None,
+                date_from=month_start,
+                date_to=month_end,
+                status=None,
+            )
+            now_str = _format_timestamp(datetime.now(UTC)) or ""
+            summaries.extend(
+                _aggregate_to_read(employee_id, agg, now_str)
+                for employee_id, agg in self._aggregate_day_rows(day_rows).items()
+            )
+        return AttendanceMonthSummaryRead(month=month, summaries=summaries)
 
     # -- payroll seams (payroll plan Phase 5.2) ---------------------------------------
 

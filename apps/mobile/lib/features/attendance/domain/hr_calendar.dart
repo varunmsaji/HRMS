@@ -1,6 +1,7 @@
 import '../../profile/data/employee_repository.dart';
 import '../data/attendance_repository.dart';
 import '../presentation/attendance_summary.dart';
+import 'month_payroll.dart';
 
 /// Every employee's attendance for a month — the same rules as the web's `lib/attendance/hr-calendar.ts`.
 class HrCalendarRow {
@@ -10,8 +11,8 @@ class HrCalendarRow {
   final String? code;
   final cells = <String, AttendanceDay>{};
   double present = 0;
-  int absent = 0;
-  int leave = 0;
+  double absent = 0;
+  double leave = 0;
   int late = 0;
 }
 
@@ -48,6 +49,25 @@ List<HrCalendarRow> buildHrCalendar(List<AttendanceDay> days, List<Employee> emp
     if (day.raw['is_late'] == true) row.late += 1;
   }
   return rows.values.toList()..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+}
+
+/// Replaces each row's totals with the payroll month figures (R-B03), so the list adds up the way
+/// payroll will: a half-day leave with the other half worked is half leave and half present, a band
+/// half day is half a day. A row without a payroll entry keeps its own totals; the cells stay.
+List<HrCalendarRow> withPayrollTotals(List<HrCalendarRow> rows, List<MonthPayroll> payroll) {
+  final byId = {for (final p in payroll) p.employeeId: p};
+  return [
+    for (final row in rows)
+      if (byId[row.employeeId] case final p?)
+        (HrCalendarRow(employeeId: row.employeeId, name: row.name, code: row.code)
+          ..cells.addAll(row.cells)
+          ..present = p.presentForGrid
+          ..absent = p.absent
+          ..leave = p.leave
+          ..late = p.lateCount)
+      else
+        row,
+  ];
 }
 
 List<HrCalendarRow> filterHrRows(List<HrCalendarRow> rows, String query) {

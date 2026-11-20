@@ -14,6 +14,7 @@ import '../data/attendance_repository.dart';
 import '../data/roster_repository.dart';
 import '../domain/employee_calendar.dart' show formatMonthKey, shiftMonthKey;
 import '../domain/hr_calendar.dart';
+import '../domain/month_payroll.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import 'employee_attendance_profile_screen.dart';
@@ -67,6 +68,9 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
 
   ({List<AttendanceDay> items, int total})? _days;
   ({List<Employee> rows, bool more})? _employees;
+  /// Payroll month figures for everyone; null until loaded, or when they could not be loaded (the
+  /// rows then keep their own day-by-day totals).
+  List<MonthPayroll>? _payroll;
   ApiError? _error;
   bool _loading = true;
   int _request = 0;
@@ -101,6 +105,13 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
         _employees = people;
         _days = days;
       });
+      // Best effort: the grid already has its own totals, the payroll ones replace them when they arrive.
+      try {
+        final payroll = await ref.read(attendanceRepositoryProvider).monthPayroll(month: _month, employeeIds: [for (final e in people.rows) e.id]);
+        if (mounted && mine == _request) setState(() => _payroll = payroll);
+      } catch (_) {
+        if (mounted && mine == _request) setState(() => _payroll = null);
+      }
     } catch (e) {
       if (mounted && mine == _request) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
@@ -112,6 +123,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
     setState(() {
       _month = month;
       _days = null;
+      _payroll = null;
       _shown = _batch;
     });
     _load();
@@ -137,7 +149,12 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
     final days = _days;
     final people = _employees;
     final dates = hrMonthDates(_month);
-    var rows = days == null || people == null ? null : filterHrRows(buildHrCalendar(days.items, people.rows, dates), _query);
+    var rows = days == null || people == null
+        ? null
+        : filterHrRows(
+            _payroll == null ? buildHrCalendar(days.items, people.rows, dates) : withPayrollTotals(buildHrCalendar(days.items, people.rows, dates), _payroll!),
+            _query,
+          );
     // The list puts whoever needs a look first; the grid keeps the directory's order.
     if (rows != null && !_gridView) rows = sortByAttention(rows);
     final used = <String>{for (final d in days?.items ?? const <AttendanceDay>[]) attendanceBucketOf(d)};
@@ -219,8 +236,8 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
           title: Text(row.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
           subtitle: Wrap(children: [
             stat('Present', formatHrCount(row.present), t.successText),
-            stat('Absent', '${row.absent}', t.dangerText),
-            stat('Leave', '${row.leave}', t.onLeaveText),
+            stat('Absent', formatHrCount(row.absent), t.dangerText),
+            stat('Leave', formatHrCount(row.leave), t.onLeaveText),
             stat('Late', '${row.late}', t.warningText),
           ]),
           trailing: const Icon(Icons.chevron_right),
@@ -312,8 +329,8 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
               Row(children: [
                 for (final d in dates) dayCell(row, d),
                 total(formatHrCount(row.present), t.successText),
-                total('${row.absent}', t.dangerText),
-                total('${row.leave}', t.onLeaveText),
+                total(formatHrCount(row.absent), t.dangerText),
+                total(formatHrCount(row.leave), t.onLeaveText),
                 total('${row.late}', t.warningText),
               ]),
           ]),

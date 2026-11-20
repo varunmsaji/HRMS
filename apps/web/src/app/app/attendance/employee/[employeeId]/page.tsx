@@ -164,6 +164,7 @@ export default function EmployeeAttendanceProfilePage() {
       >
         <EmployeeMonthView
           month={month}
+          employeeId={employeeId}
           days={days.data ?? []}
           regularizations={regularizations.data ?? []}
           regularizationNote={

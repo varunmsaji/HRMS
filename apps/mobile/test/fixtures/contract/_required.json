@@ -114,6 +114,10 @@
   "worked_on_holiday",
   "worked_on_weekly_off"
  ],
+ "attendance.AttendanceMonthSummaryRead": [
+  "month",
+  "summaries"
+ ],
  "attendance.AttendancePeriodActionRead": [
   "action",
   "actor_user_id",

@@ -15,7 +15,15 @@ import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import type { EmployeeLite } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
-import { HR_CALENDAR_PERMISSIONS, buildHrCalendar, filterRows, monthDates, shiftMonth } from "@/lib/attendance/hr-calendar";
+import {
+  HR_CALENDAR_PERMISSIONS,
+  buildHrCalendar,
+  filterRows,
+  monthDates,
+  shiftMonth,
+  withPayrollTotals,
+} from "@/lib/attendance/hr-calendar";
+import { monthSummaryPath, type MonthSummaryResponse, type MonthSummaryRow } from "@/lib/attendance/month-summary";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -36,6 +44,15 @@ async function loadEmployees(): Promise<{ items: EmployeeLite[]; total: number }
     for (const p of rest) items.push(...p.data);
   }
   return { items, total: first.pagination?.total ?? items.length };
+}
+
+/** Payroll month figures for everyone, a batch of employees per request (the ids ride in the URL). */
+const SUMMARY_BATCH = 80;
+async function loadMonthSummaries(month: string, employeeIds: string[]): Promise<MonthSummaryRow[]> {
+  const batches: string[][] = [];
+  for (let i = 0; i < employeeIds.length; i += SUMMARY_BATCH) batches.push(employeeIds.slice(i, i + SUMMARY_BATCH));
+  const results = await Promise.all(batches.map((ids) => apiClient.get<MonthSummaryResponse>(monthSummaryPath(month, ids))));
+  return results.flatMap((r) => r.summaries);
 }
 
 const DAYS_PER_PAGE = 500;
@@ -74,10 +91,17 @@ export default function AttendanceCalendarPage() {
   const days = useSection(() => loadDays(dates[0], dates[dates.length - 1]), `cal|${month}`, allowed);
   const employees = useSection(loadEmployees, "cal-employees", allowed);
 
-  const rows = useMemo(
-    () => (days.data && employees.data ? buildHrCalendar(days.data.items, employees.data.items, dates) : null),
-    [days.data, employees.data, dates],
+  const employeeIds = employees.data?.items.map((e) => e.id) ?? null;
+  const payroll = useSection(
+    () => loadMonthSummaries(month, employeeIds ?? []),
+    `cal-payroll|${month}|${employeeIds?.length ?? 0}`,
+    allowed && employeeIds !== null,
   );
+  const rows = useMemo(() => {
+    if (!(days.data && employees.data)) return null;
+    const built = buildHrCalendar(days.data.items, employees.data.items, dates);
+    return payroll.data ? withPayrollTotals(built, payroll.data) : built;
+  }, [days.data, employees.data, dates, payroll.data]);
   const visible = rows ? filterRows(rows, query) : null;
   const truncated = employees.data ? employees.data.total > employees.data.items.length : false;
   const daysTruncated = days.data ? days.data.total > days.data.items.length : false;
