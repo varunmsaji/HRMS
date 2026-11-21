@@ -223,6 +223,29 @@ void main() {
       expect(find.text('0.50'), findsNothing);
     });
 
+    testWidgets('the API\'s explanation is shown as written', (tester) async {
+      await pumpRow(tester, _row('x', '2026-09-15', 'INCOMPLETE', over: {
+        'explanation': {
+          'reason': 'Punched in at 09:00 with no punch out. Send a correction request to fix it.',
+          'facts': [
+            {'key': 'first_in', 'label': 'First in', 'value': '09:00'},
+          ],
+          'pay': {'label': '1 day unpaid'},
+          'overtime': null,
+          'action': {'kind': 'REQUEST_CORRECTION', 'deadline': '2026-09-30', 'consequence': 'Counts as absent (unpaid) if not fixed'},
+        },
+      }));
+      expect(find.text('WHY THIS RESULT'), findsOneWidget);
+      expect(find.textContaining('Punched in at 09:00 with no punch out'), findsOneWidget);
+      expect(find.text('Fix by 30 Sep. Counts as absent (unpaid) if not fixed.'), findsOneWidget);
+      expect(find.text('1 day unpaid'), findsOneWidget);
+    });
+
+    testWidgets('a day the API sent no explanation for shows no "why" section', (tester) async {
+      await pumpRow(tester, _row('y', '2026-09-15', 'PRESENT'));
+      expect(find.text('WHY THIS RESULT'), findsNothing);
+    });
+
     testWidgets('approved leave on the date appears as its own section', (tester) async {
       await pumpRow(tester, _row('l', '2026-09-15', 'LEAVE', over: {'actual_first_in': null, 'actual_last_out': null}),
           projections: [LeaveDayProjection(leaveApplicationId: 'abcdefgh-1', fraction: '1.0', isPaid: true, status: 'APPROVED')]);
