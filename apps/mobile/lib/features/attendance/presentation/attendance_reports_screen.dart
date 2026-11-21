@@ -158,6 +158,8 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
               Padding(padding: const EdgeInsets.only(right: 6), child: ChoiceChip(label: Text(e.value), selected: _report == e.key, onSelected: (_) => _choose(e.key))),
           ]),
         ),
+        const SizedBox(height: 8),
+        Text(reportBasis[_report] ?? '', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 10),
         if (_report == 'payroll' && _period != null)
           Row(children: [

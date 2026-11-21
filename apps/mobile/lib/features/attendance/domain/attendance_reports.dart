@@ -103,6 +103,23 @@ List<EmployeeTally> tallyByEmployee(List<AttendanceDay> rows) {
 /// The shared request status words (`core/status_words.dart`).
 const overtimeStatusLabels = requestStatusWords;
 
+/// What each report counts, in one sentence (R-F01). The same words as the web
+/// (`apps/web/src/lib/attendance/report-basis.ts`): two reports can show different numbers for the
+/// same month and both be right, because one counts whole days and the other payroll days.
+const reportBasis = {
+  'daily': "One row per stored day. Status is the day's own result; a half day is named Half day, never Present.",
+  'present_absent': 'Whole days. Present includes work from home and on duty; a half day is counted on its own and not as present.',
+  'late_early': 'Days with a late arrival or an early departure beyond grace, as the calculation recorded them.',
+  'hours': "Days with a first punch only. Worked time is after unpaid breaks; scheduled time is the shift's.",
+  'overtime': 'Overtime records. Payroll pays the approved minutes only; pending minutes are paid only if they are approved before the period closes.',
+  'payroll': 'Payroll days from the period summary: a half day is split into paid and unpaid halves (0.5 each), so these figures can differ from the whole-day reports.',
+};
+
+/// Minutes on an overtime record that are still waiting for a decision. A rejected record's minutes
+/// are neither approved nor pending.
+int overtimePendingMinutes(Map<String, dynamic> record) =>
+    record['status'] == 'PENDING' ? ((_int(record, 'minutes_detected') - _int(record, 'minutes_approved')).clamp(0, 1 << 31)) : 0;
+
 /// The five reports built from the range's days and overtime records. The payroll report reads a
 /// period summary and is built by [payrollReport] once that has loaded.
 List<ReportDef> buildReports({required List<AttendanceDay> days, required List<Rec> overtime, required String Function(String id) name, required String zone}) {
@@ -194,6 +211,7 @@ List<ReportDef> buildReports({required List<AttendanceDay> days, required List<R
         ReportColumn('class', 'Day class', (r) => (r as Rec)['day_class'] == null ? '—' : overtimeDayClassLabels[r['day_class']] ?? '${r['day_class']}', (r) => '${(r as Rec)['day_class'] ?? ''}'),
         ReportColumn('detected', 'Detected', (r) => formatMinutes(_int(r as Rec, 'minutes_detected')), (r) => _int(r as Rec, 'minutes_detected'), numeric: true),
         ReportColumn('approved', 'Approved', (r) => formatMinutes(_int(r as Rec, 'minutes_approved')), (r) => _int(r as Rec, 'minutes_approved'), numeric: true),
+        ReportColumn('pending', 'Pending', (r) => overtimePendingMinutes(r as Rec) > 0 ? formatMinutes(overtimePendingMinutes(r)) : '—', (r) => overtimePendingMinutes(r as Rec), numeric: true),
         ReportColumn('status', 'Status', (r) => overtimeStatusLabels[(r as Rec)['status']] ?? '${r['status']}', (r) => '${(r as Rec)['status']}'),
       ],
     ),

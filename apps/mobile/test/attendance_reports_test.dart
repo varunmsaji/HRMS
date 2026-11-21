@@ -88,6 +88,23 @@ void main() {
       expect((second.page, second.rows.length), (2, 5), reason: 'a page past the end is clamped');
     });
 
+    test('overtime shows pending minutes only on records still waiting for a decision', () {
+      final all = buildReports(days: const [], overtime: [
+        {'id': 'o1', 'employee_id': 'a', 'attendance_date': '2026-11-03', 'minutes_detected': 105, 'minutes_approved': 90, 'status': 'PENDING'},
+        {'id': 'o2', 'employee_id': 'a', 'attendance_date': '2026-11-04', 'minutes_detected': 60, 'minutes_approved': 60, 'status': 'APPROVED'},
+        {'id': 'o3', 'employee_id': 'b', 'attendance_date': '2026-11-04', 'minutes_detected': 40, 'minutes_approved': 0, 'status': 'REJECTED'},
+      ], name: _name, zone: 'Asia/Kolkata');
+      final r = _report(all, 'overtime');
+      String cell(int i) => r.columns.firstWhere((c) => c.key == 'pending').render(r.rows[i]);
+      expect((cell(0), cell(1), cell(2)), ('0h 15m', '—', '—'));
+    });
+
+    test('every report states what it counts, and says payroll pays approved overtime', () {
+      expect(reportBasis.keys.toSet(), reportLabels.keys.toSet());
+      expect(reportBasis['overtime'], contains('approved minutes only'));
+      expect(reportBasis['payroll'], contains('0.5 each'));
+    });
+
     test('payroll attendance shows the backend figures and sums the four overtime kinds', () {
       final r = payrollReport([
         {'employee_id': 'a', 'payable_days': '21.5', 'paid_days': null, 'present_days': '20', 'ot_minutes_normal': 60, 'ot_minutes_night': 30},

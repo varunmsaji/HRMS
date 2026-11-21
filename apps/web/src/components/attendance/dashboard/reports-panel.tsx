@@ -19,6 +19,7 @@ import {
 } from "@/lib/attendance/dashboard";
 import { formatClockTime, formatMinutes } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
+import { overtimePending, overtimeTotals, REPORT_BASIS } from "@/lib/attendance/report-basis";
 import { OVERTIME_DAY_CLASS_LABELS, OVERTIME_STATUS_LABELS, type OvertimeDayClass, type OvertimeRecord } from "@/lib/overtime/types";
 import { cn } from "@/lib/utils";
 
@@ -133,6 +134,17 @@ function ReportTable<T>({ rows, columns, rowKey, searchText, empty }: ReportTabl
         </>
       )}
     </div>
+  );
+}
+
+function OvertimeTotalsLine({ records }: { records: OvertimeRecord[] }) {
+  if (records.length === 0) return null;
+  const t = overtimeTotals(records);
+  return (
+    <p className="text-sm text-foreground">
+      <span className="font-medium">Found</span> {formatMinutes(t.found)} · <span className="font-medium">Approved</span>{" "}
+      {formatMinutes(t.approved)} · <span className="font-medium">Pending</span> {formatMinutes(t.pending)}
+    </p>
   );
 }
 
@@ -297,6 +309,8 @@ export function ReportsPanel(props: ReportsPanelProps) {
       ) : overtime.status !== "ready" ? (
         <p role="status" className="text-sm text-foreground-secondary">Loading overtime…</p>
       ) : (
+        <div className="space-y-2">
+          <OvertimeTotalsLine records={overtime.data ?? []} />
         <ReportTable
           rows={overtime.data ?? []}
           rowKey={(r) => r.id}
@@ -308,9 +322,11 @@ export function ReportsPanel(props: ReportsPanelProps) {
             { key: "class", label: "Day class", render: (r) => (r.day_class ? OVERTIME_DAY_CLASS_LABELS[r.day_class as OvertimeDayClass] ?? r.day_class : "—"), sort: (r) => r.day_class ?? "" },
             { key: "detected", label: "Detected", align: "right", render: (r) => formatMinutes(r.minutes_detected), sort: (r) => r.minutes_detected },
             { key: "approved", label: "Approved", align: "right", render: (r) => formatMinutes(r.minutes_approved), sort: (r) => r.minutes_approved },
+            { key: "pending", label: "Pending", align: "right", render: (r) => (overtimePending(r) > 0 ? formatMinutes(overtimePending(r)) : "—"), sort: (r) => overtimePending(r) },
             { key: "status", label: "Status", render: (r) => OVERTIME_STATUS_LABELS[r.status], sort: (r) => r.status },
           ]}
         />
+        </div>
       );
   } else {
     body = <PayrollReport periods={props.periods} employeesById={employeesById} today={props.today} />;
@@ -340,6 +356,7 @@ export function ReportsPanel(props: ReportsPanelProps) {
           </button>
         ))}
       </div>
+      <p className="text-xs text-foreground-secondary">{REPORT_BASIS[report]}</p>
       <div role="tabpanel">{body}</div>
     </SectionCard>
   );
