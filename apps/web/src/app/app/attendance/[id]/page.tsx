@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 
+import { DayExplanationCard } from "@/components/attendance/day/day-explanation";
 import { DayRegularization } from "@/components/attendance/day/day-regularization";
 import { DaySummaryCard } from "@/components/attendance/day/day-summary";
 import { DayTimeline } from "@/components/attendance/day/day-timeline";
@@ -249,6 +250,8 @@ export default function AttendanceDayDetailPage() {
             prevDayId={neighbours.prev}
             nextDayId={neighbours.next}
           />
+
+          {day.explanation ? <DayExplanationCard explanation={day.explanation} /> : null}
 
           <div className="grid gap-6 lg:grid-cols-2">
             <DayTimeline items={timeline} timezone={day.timezone} />

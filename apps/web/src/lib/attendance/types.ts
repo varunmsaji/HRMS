@@ -114,6 +114,19 @@ export interface AttendanceDayDisplay {
   provisional: boolean;
 }
 
+/** Why a day has its result (R-C01..C03). Written by the API from the stored day and the policy
+ * in force; screens show it and never work it out. Only the single-day read carries it. */
+export interface AttendanceDayExplanation {
+  verdict: { status: string; label: string; tone: string };
+  reason: string;
+  facts: { key: string; label: string; value: string }[];
+  rules_applied: string[];
+  pay: { paid: string | null; unpaid: string | null; leave: string | null; label: string };
+  overtime: { found_min: number; approved_min: number; pending_min: number; class_label: string | null } | null;
+  action: { kind: string; deadline: string | null; consequence: string } | null;
+  provisional: boolean;
+}
+
 export interface AttendanceDay {
   id: string;
   company_id: string;
@@ -186,6 +199,8 @@ export interface AttendanceDay {
   calculated_at: string | null;
   /** The backend's name, tone and glyph for the day (R-B02). Absent on an older API. */
   display?: AttendanceDayDisplay | null;
+  /** Why the day has this result. Absent on lists and on an older API. */
+  explanation?: AttendanceDayExplanation | null;
 
   is_locked: boolean;
   locked_at: string | null;
