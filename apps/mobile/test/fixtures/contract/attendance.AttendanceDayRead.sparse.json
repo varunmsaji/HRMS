@@ -43,6 +43,7 @@
  "employee_id": "00000000-0000-0000-0000-000000001234",
  "engine_version": null,
  "excess_break_minutes": 1,
+ "explanation": null,
  "gross_elapsed_minutes": 1,
  "has_active_break": true,
  "has_excess_break_exception": true,
