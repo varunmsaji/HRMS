@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from hrms.modules.attendance.day_classification import day_display
+from hrms.modules.attendance.explanation import DayExplanation
 from hrms.modules.attendance.geofence import (
     ACCURACY_LIMIT_MAX_M,
     ACCURACY_LIMIT_MIN_M,
@@ -1803,6 +1804,8 @@ class AttendanceDayRead(BaseModel):
     created_at: str
     updated_at: str
     display: AttendanceDayDisplay | None = None
+    # R-C01 — why the day has this result. Set by `GET /attendance/days/{id}` only (None on lists).
+    explanation: DayExplanation | None = None
 
 
 def attendance_day_to_read(
@@ -1896,8 +1899,9 @@ def attendance_day_to_read(
 
 
 def attendance_day_to_audit_dict(read: AttendanceDayRead) -> dict[str, Any]:
-    # `display` is derived from the other fields on every read; it is not part of the audit trail.
-    return read.model_dump(mode="json", exclude={"display"})
+    # `display` and `explanation` are derived from the other fields on every read; they are not part
+    # of the audit trail.
+    return read.model_dump(mode="json", exclude={"display", "explanation"})
 
 
 # ---------------------------------------------------------------------------

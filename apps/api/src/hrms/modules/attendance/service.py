@@ -103,6 +103,7 @@ from hrms.modules.attendance.exceptions import (
     StaleShiftRosterResourceError,
     WorkOnLeaveNotFlaggedError,
 )
+from hrms.modules.attendance.explanation import PolicyBand, PolicyFacts, explain
 from hrms.modules.attendance.geofence_service import (
     GEOFENCED_SOURCES,
     GeofenceEvaluation,
@@ -4077,7 +4078,36 @@ class AttendanceDayService:
         breaks = await self._break_repo.list_for_day(
             self._session, company_id=company_id, attendance_day_id=attendance_day_id
         )
-        return attendance_day_to_read(row, breaks)
+        read = attendance_day_to_read(row, breaks)
+        policy = await self._explanation_policy(company_id, row.attendance_policy_version_id)
+        return read.model_copy(update={"explanation": explain(read, policy)})
+
+    async def _explanation_policy(
+        self, company_id: UUID, version_id: UUID | None
+    ) -> PolicyFacts | None:
+        """The policy version that governed a day, in the shape `explain` quotes. None when the day
+        has no policy snapshot or it cannot be loaded: the explanation then names no thresholds."""
+        if version_id is None:
+            return None
+        versions = await self._attendance_policy_repo.get_versions_by_ids(
+            self._session, company_id=company_id, version_ids={version_id}
+        )
+        if not versions:
+            return None
+        version = versions[0]
+        policy = await self._attendance_policy_repo.get_policy(
+            self._session, company_id=company_id, policy_id=version.policy_id
+        )
+        bands = await self._attendance_policy_repo.list_hour_bands(
+            self._session, company_id=company_id, policy_version_id=version.id
+        )
+        return PolicyFacts(
+            name=policy.name if policy is not None else None,
+            grace_in_minutes=version.grace_in_minutes,
+            grace_out_minutes=version.grace_out_minutes,
+            hour_bands=[PolicyBand(b.min_minutes, b.max_minutes, b.result_status) for b in bands],
+            incomplete_at_lock_behaviour=version.incomplete_at_lock_behaviour,
+        )
 
     async def list_attendance_days(
         self,
