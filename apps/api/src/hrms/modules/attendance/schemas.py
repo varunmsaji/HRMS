@@ -2456,6 +2456,9 @@ class AttendancePeriodBlockingReason(BaseModel):
 class AttendancePeriodValidationRead(BaseModel):
     status: str
     reasons: list[AttendancePeriodBlockingReason]
+    #: What closing will do that does not block it (R-F02): days that will be counted absent or
+    #: present at lock. Same shape as a reason; never changes `status`.
+    notices: list[AttendancePeriodBlockingReason] = []
     validated_at: str
 
 

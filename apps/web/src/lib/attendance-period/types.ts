@@ -73,6 +73,12 @@ export const ATTENDANCE_PERIOD_BLOCKING_REASON_LABELS: Record<string, string> = 
   WORK_ON_LEAVE_UNRESOLVED: "Punches on approved full-day leave awaiting an HR decision",
 };
 
+/** What closing will do that does not block it (R-F02). */
+export const ATTENDANCE_PERIOD_NOTICE_LABELS: Record<string, string> = {
+  ABSENT_AT_LOCK: "Incomplete days that will be counted absent",
+  PRESENT_AT_LOCK: "Incomplete days that will be counted present",
+};
+
 export interface AttendancePeriodBlockingReason {
   code: string;
   message: string;
@@ -84,6 +90,8 @@ export interface AttendancePeriodBlockingReason {
 export interface AttendancePeriodValidation {
   status: AttendancePeriodValidationStatus;
   reasons: AttendancePeriodBlockingReason[];
+  /** Non-blocking: days closing will resolve as absent or present. Absent on an older API. */
+  notices?: AttendancePeriodBlockingReason[];
   validated_at: string;
 }
 

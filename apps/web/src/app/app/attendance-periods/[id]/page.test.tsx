@@ -201,6 +201,32 @@ describe("AttendancePeriodDetailPage", () => {
     expect(screen.getByText(/pending regularization requests/i)).toBeInTheDocument();
   });
 
+  it("says what closing will do to incomplete days, even when nothing blocks it", async () => {
+    mockLoad(openPeriod);
+    const validation: AttendancePeriodValidation = {
+      status: "READY",
+      reasons: [],
+      notices: [
+        {
+          code: "ABSENT_AT_LOCK",
+          message: "These incomplete days will be counted as absent (unpaid) when the period is closed",
+          count: 3,
+          sample: ["emp-1:2026-08-10"],
+        },
+      ],
+      validated_at: "2026-08-15T00:00:00Z",
+    };
+    mockedPost.mockResolvedValue(validation);
+    const user = userEvent.setup();
+    render(<AttendancePeriodDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^validate$/i }));
+
+    expect(await screen.findByText("READY")).toBeInTheDocument();
+    expect(screen.getByText("What closing will do")).toBeInTheDocument();
+    expect(screen.getByText(/incomplete days that will be counted absent — 3/i)).toBeInTheDocument();
+  });
+
   it("finalizes the period through the confirmation dialog", async () => {
     mockLoad(openPeriod);
     mockedPost.mockResolvedValue({ ...closedPeriod });

@@ -502,6 +502,17 @@ async def test_finalize_resolves_incomplete_with_default_treat_absent_policy(
         assert calculated.json()["data"]["paid_day_fraction"] == "0.00"
 
         period = await _create_period(client, headers)
+
+        # R-F02 — before closing, the person closing is told this day will count as absent. It
+        # is a notice, not a blocker: the verdict stays READY.
+        preview = (
+            await client.post(f"/v1/attendance-periods/{period['id']}/validate", headers=headers)
+        ).json()["data"]
+        assert preview["status"] == "READY"
+        assert [n["code"] for n in preview["notices"]] == ["ABSENT_AT_LOCK"]
+        assert preview["notices"][0]["count"] == 1
+        assert preview["notices"][0]["sample"] == [f"{employee_id}:{_DAY}"]
+
         finalized = await client.post(
             f"/v1/attendance-periods/{period['id']}/finalize",
             headers={**headers, "If-Match": "1"},

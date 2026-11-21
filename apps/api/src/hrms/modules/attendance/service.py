@@ -7814,6 +7814,7 @@ class AttendancePeriodService:
         # AC-04 — INCOMPLETE days that lock will resolve as absent: their held overtime is
         # withdrawn by `_apply_incomplete_lock_resolution`, so it is not a blocker.
         absent_at_lock_day_ids: set[UUID] = set()
+        behaviour_by_version: dict[UUID | None, str] = {}
         if incomplete_rows:
             version_ids = {
                 r.attendance_policy_version_id
@@ -7823,9 +7824,7 @@ class AttendancePeriodService:
             versions = await self._policy_repo.get_versions_by_ids(
                 self._session, company_id=company_id, version_ids=version_ids
             )
-            behaviour_by_version: dict[UUID | None, str] = {
-                v.id: v.incomplete_at_lock_behaviour for v in versions
-            }
+            behaviour_by_version = {v.id: v.incomplete_at_lock_behaviour for v in versions}
             blocking_incomplete = [
                 r
                 for r in incomplete_rows
@@ -7862,6 +7861,47 @@ class AttendancePeriodService:
                         ],
                     )
                 )
+
+        # What closing will do to INCOMPLETE days that do not block (R-F02). These are told to
+        # the person closing the period before they close it; they never change READY/BLOCKED.
+        notices: list[AttendancePeriodBlockingReason] = []
+        absent_rows = [r for r in incomplete_rows if r.id in absent_at_lock_day_ids]
+        present_rows = [
+            r
+            for r in incomplete_rows
+            if r.id not in absent_at_lock_day_ids
+            and behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
+            == "TREAT_PRESENT"
+        ]
+        if absent_rows:
+            notices.append(
+                AttendancePeriodBlockingReason(
+                    code="ABSENT_AT_LOCK",
+                    message=(
+                        "These incomplete days will be counted as absent (unpaid) when the "
+                        "period is closed, and any overtime held on them is withdrawn"
+                    ),
+                    count=len(absent_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}" for r in absent_rows[:20]
+                    ],
+                )
+            )
+        if present_rows:
+            notices.append(
+                AttendancePeriodBlockingReason(
+                    code="PRESENT_AT_LOCK",
+                    message=(
+                        "These incomplete days will be counted as present (paid) when the "
+                        "period is closed, under the policy's lock behaviour"
+                    ),
+                    count=len(present_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                        for r in present_rows[:20]
+                    ],
+                )
+            )
 
         # PENDING_LEAVE - LV-04. A leave request still waiting for a decision would lock its
         # days as absent (loss of pay), and approval is refused once the period is closed. It
@@ -8130,6 +8170,7 @@ class AttendancePeriodService:
         result = AttendancePeriodValidationRead(
             status=status,
             reasons=reasons,
+            notices=notices,
             validated_at=_format_timestamp(datetime.now(UTC)) or "",
         )
         return result, day_rows
