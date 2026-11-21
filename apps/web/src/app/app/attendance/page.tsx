@@ -12,6 +12,7 @@ import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboar
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
 import { MusterHeatmap } from "@/components/attendance/dashboard/muster-heatmap";
 import { NeedsAttention } from "@/components/attendance/dashboard/needs-attention";
+import { NotCalculatedNotice } from "@/components/attendance/dashboard/not-calculated-notice";
 import { OvertimePanel } from "@/components/attendance/dashboard/overtime-panel";
 import { PayrollReadiness, payrollNeedsAttention } from "@/components/attendance/dashboard/payroll-readiness";
 import { ReportsPanel } from "@/components/attendance/dashboard/reports-panel";
@@ -564,6 +565,14 @@ function AttendanceDashboard() {
 
           {view === "today" ? (
             <div role="tabpanel" id="att-panel-today" aria-labelledby="att-tab-today" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
+          {!focusIsToday ? (
+            <NotCalculatedNotice
+              date={range.to}
+              dateLabel={focusLabel}
+              employeeIds={noRecord.map((employee) => employee.id)}
+              canRecalculate={canRecompute}
+            />
+          ) : null}
           <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]">
             <TodayPulse
               points={totals.ratePoints}
