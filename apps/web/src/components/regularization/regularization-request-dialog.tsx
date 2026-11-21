@@ -19,7 +19,7 @@ import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import {
-  REGULARIZATION_TYPES,
+  SELECTABLE_REGULARIZATION_TYPES,
   REGULARIZATION_TYPE_LABELS,
   type RegularizationRequest,
 } from "@/lib/regularization/types";
@@ -197,7 +197,7 @@ export function RegularizationRequestDialog({
               }
             >
               <option value="">Choose…</option>
-              {REGULARIZATION_TYPES.map((type) => (
+              {SELECTABLE_REGULARIZATION_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {REGULARIZATION_TYPE_LABELS[type]}
                 </option>

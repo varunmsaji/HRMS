@@ -184,17 +184,23 @@ export function buildKpis(
       drill: { flag: "not_checked_in" },
       count: kpi.notCheckedIn,
     }),
-    mk({
-      key: "remote",
-      label: "Remote (WFH)",
-      value: String(kpi.remote),
-      context:
-        present > 0 ? `${formatPct(pct(kpi.remote, present))} of those present` : "Nobody present",
-      icon: Home,
-      tone: "info",
-      drill: { bucket: "REMOTE" },
-      count: kpi.remote,
-    }),
+    // Work from home is shown only when the engine actually produced such days (R-B05): it never
+    // does today, so an always-zero tile only made people ask where the remote staff were.
+    ...(kpi.remote > 0
+      ? [
+          mk({
+            key: "remote",
+            label: "Remote (WFH)",
+            value: String(kpi.remote),
+            context:
+              present > 0 ? `${formatPct(pct(kpi.remote, present))} of those present` : "Nobody present",
+            icon: Home,
+            tone: "info",
+            drill: { bucket: "REMOTE" },
+            count: kpi.remote,
+          }),
+        ]
+      : []),
     mk({
       key: "overtime",
       label: "Overtime",
