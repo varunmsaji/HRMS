@@ -5,10 +5,12 @@ the day fields, so no database is involved. Thresholds quoted in the text must b
 own values, and a verdict is never recomputed.
 """
 
+from dataclasses import replace
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
-from hrms.modules.attendance.explanation import PolicyBand, PolicyFacts, explain
+from hrms.modules.attendance.explanation import OvertimeFacts, PolicyBand, PolicyFacts, explain
 
 POLICY = PolicyFacts(
     name="Standard",
@@ -47,6 +49,7 @@ def _day(**over: Any) -> SimpleNamespace:
         "calendar_day_type": "WORKING",
         "holiday_name": None,
         "is_regularized": False,
+        "is_locked": False,
         "paid_day_fraction": "1.00",
         "lop_fraction": "0.00",
         "leave_fraction": "0.00",
@@ -134,7 +137,10 @@ def test_incomplete_with_a_punch_in_only() -> None:
     )
     out = explain(day, POLICY)
     assert out.reason.startswith("Punched in at 09:30 with no punch out.")
-    assert out.action is None  # the deadline and consequence belong to R-C02
+    assert out.action is not None
+    assert out.action.kind == "REQUEST_CORRECTION"
+    assert out.action.deadline is None  # no open period known
+    assert out.action.consequence == "Counts as absent (unpaid) if not fixed"
 
 
 def test_holiday_names_the_holiday() -> None:
@@ -226,3 +232,72 @@ def test_overtime_found_and_approved_come_from_the_day() -> None:
         15,
     )
     assert explain(_day(), POLICY).overtime is None
+
+
+def _incomplete(**over: Any) -> SimpleNamespace:
+    base: dict[str, Any] = {
+        "attendance_status": "INCOMPLETE",
+        "actual_last_out": None,
+        "worked_minutes": 0,
+        "display": _display("INCOMPLETE", "Incomplete", "warning"),
+        "computation_snapshot": {"inputs": {"punch_ids": ["p1"]}},
+    }
+    base.update(over)
+    return _day(**base)
+
+
+def test_incomplete_names_the_deadline_and_consequence_in_the_reason() -> None:
+    out = explain(_incomplete(), POLICY, correction_deadline=date(2026, 11, 30))
+    assert out.action is not None
+    assert out.action.deadline == "2026-11-30"
+    assert out.reason.endswith("Fix it by 30 Nov. Counts as absent (unpaid) if not fixed.")
+
+
+def test_incomplete_under_treat_present_counts_as_present_only_with_a_punch() -> None:
+    policy = replace(POLICY, incomplete_at_lock_behaviour="TREAT_PRESENT")
+    with_punch = explain(_incomplete(), policy)
+    assert with_punch.action is not None
+    assert with_punch.action.consequence == "Counts as present if not fixed"
+    # H-02: no punches at all is a no-show, absent whatever the company chose.
+    no_punch = explain(
+        _incomplete(
+            actual_first_in=None,
+            computation_snapshot={"inputs": {"punch_ids": []}},
+        ),
+        policy,
+    )
+    assert no_punch.action is not None
+    assert no_punch.action.consequence == "Counts as absent (unpaid) if not fixed"
+
+
+def test_incomplete_under_keep_incomplete_blocks_the_close() -> None:
+    policy = replace(POLICY, incomplete_at_lock_behaviour="KEEP_INCOMPLETE")
+    out = explain(_incomplete(), policy)
+    assert out.action is not None
+    assert "cannot close the period" in out.action.consequence
+
+
+def test_no_action_for_a_locked_or_provisional_or_complete_day() -> None:
+    assert explain(_incomplete(is_locked=True), POLICY).action is None
+    assert explain(_day(), POLICY).action is None
+    working = _incomplete(display=_display("PRESENT", "Working now", "success", provisional=True))
+    assert explain(working, POLICY).action is None
+
+
+def test_overtime_record_is_the_authority_over_the_day_row() -> None:
+    day = _day(ot_minutes_detected=105, ot_minutes_approved=0, ot_pending=False)
+    pending = OvertimeFacts(105, 90, "PENDING", "WEEKDAY")
+    out = explain(day, POLICY, overtime_record=pending)
+    assert out.overtime is not None
+    assert (out.overtime.found_min, out.overtime.approved_min, out.overtime.pending_min) == (
+        105,
+        90,
+        15,
+    )
+    assert out.overtime.class_label == "WEEKDAY"
+    approved = explain(day, POLICY, overtime_record=OvertimeFacts(105, 105, "APPROVED", "WEEKDAY"))
+    assert approved.overtime is not None
+    assert approved.overtime.pending_min == 0
+    rejected = explain(day, POLICY, overtime_record=OvertimeFacts(105, 0, "REJECTED", "WEEKDAY"))
+    assert rejected.overtime is not None
+    assert (rejected.overtime.approved_min, rejected.overtime.pending_min) == (0, 0)

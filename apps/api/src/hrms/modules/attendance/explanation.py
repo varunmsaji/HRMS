@@ -7,21 +7,25 @@ every figure from the row. If the facts for a sentence are not on hand it says l
 invented. Clients render the result; they do not derive it.
 
 Contract: `docs/audits/attendance-complete-audit-2026-11-19/ATTENDANCE_UI_UX_IMPROVEMENT_PLAN.md`
-section 4. Not built here (later tasks): the INCOMPLETE correction deadline and consequence
-(`action`, R-C02) and the overtime found / approved / pending split from overtime records (R-C03);
-`action` is always `None` and `overtime` carries only what the day row itself stores.
+section 4. `action` (R-C02) is set only for an INCOMPLETE day: the deadline is the end of the open
+attendance period (the cutoff the reminders name) and the consequence follows the policy's
+`incomplete_at_lock_behaviour`, with the engine's own rule that a day with no punches at all
+resolves as absent whatever the company chose (H-02). `overtime` (R-C03) comes from the day's
+overtime record when one exists, else from the figures stored on the day.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
+
+from hrms.modules.attendance.calculation import day_has_no_punches
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,22 @@ class ExplanationOvertime(BaseModel):
     class_label: str | None
 
 
+class ExplanationAction(BaseModel):
+    kind: str
+    deadline: str | None
+    consequence: str
+
+
+@dataclass(frozen=True)
+class OvertimeFacts:
+    """The day's overtime record, when one exists."""
+
+    minutes_detected: int
+    minutes_approved: int
+    status: str
+    classification_code: str | None
+
+
 class DayExplanation(BaseModel):
     verdict: ExplanationVerdict
     reason: str
@@ -77,7 +97,7 @@ class DayExplanation(BaseModel):
     rules_applied: list[str]
     pay: ExplanationPay
     overtime: ExplanationOvertime | None
-    action: dict[str, str] | None = None
+    action: ExplanationAction | None = None
     provisional: bool
 
 
@@ -154,6 +174,8 @@ def explain(
     policy: PolicyFacts | None,
     *,
     shift_name: str | None = None,
+    correction_deadline: date | None = None,
+    overtime_record: OvertimeFacts | None = None,
 ) -> DayExplanation:
     """Explain one stored day. `day` is an `AttendanceDayRead` (read by attribute, so a test may
     pass any object with the same fields); `policy` is the version that governed the day, or None
@@ -216,6 +238,10 @@ def explain(
         facts.append(ExplanationFact(key="breaks", label="Breaks", value=text))
 
     reason = _reason(day, status, policy, snapshot, worked, first_in, provisional, rules)
+    action = _action(day, policy, correction_deadline) if not provisional else None
+    if action is not None:
+        by = f" Fix it by {correction_deadline:%d %b}." if correction_deadline else ""
+        reason = f"{reason}{by} {action.consequence}."
     if day.late_classification and day.late_classification != "NONE":
         rules.append(f"late_band:{day.late_classification}")
     if day.early_departure_classification and day.early_departure_classification != "NONE":
@@ -240,8 +266,8 @@ def explain(
         pay=ExplanationPay(
             paid=paid, unpaid=unpaid, leave=leave, label=_pay_label(paid, unpaid, leave)
         ),
-        overtime=_overtime(day),
-        action=None,
+        overtime=_overtime(day, overtime_record),
+        action=action,
         provisional=provisional,
     )
 
@@ -257,16 +283,51 @@ def _pay_label(paid: str | None, unpaid: str | None, leave: str | None) -> str:
     return ", ".join(parts) if parts else "No pay effect"
 
 
-def _overtime(day: Any) -> ExplanationOvertime | None:
-    found = int(day.ot_minutes_detected or 0)
+def _overtime(day: Any, record: OvertimeFacts | None) -> ExplanationOvertime | None:
+    """Found / approved / pending. A record is the authority (payroll pays `minutes_approved`);
+    without one, the figures stored on the day."""
+    if record is not None:
+        found = int(record.minutes_detected or 0)
+        approved = int(record.minutes_approved or 0)
+        pending = max(0, found - approved) if record.status == "PENDING" else 0
+        label = record.classification_code
+    else:
+        found = int(day.ot_minutes_detected or 0)
+        approved = int(day.ot_minutes_approved or 0)
+        pending = max(0, found - approved) if day.ot_pending else 0
+        label = day.ot_classification
     if found <= 0:
         return None
-    approved = int(day.ot_minutes_approved or 0)
     return ExplanationOvertime(
-        found_min=found,
-        approved_min=approved,
-        pending_min=max(0, found - approved) if day.ot_pending else 0,
-        class_label=day.ot_classification,
+        found_min=found, approved_min=approved, pending_min=pending, class_label=label
+    )
+
+
+#: What happens to an INCOMPLETE day that is still unfixed when the period closes.
+_LOCK_CONSEQUENCE = {
+    "TREAT_ABSENT": "Counts as absent (unpaid) if not fixed",
+    "TREAT_PRESENT": "Counts as present if not fixed",
+    "KEEP_INCOMPLETE": "Stays incomplete and HR cannot close the period until it is settled",
+}
+
+
+def _action(
+    day: Any, policy: PolicyFacts | None, deadline: date | None
+) -> ExplanationAction | None:
+    """R-C02 — what to do about an INCOMPLETE day, by when, and what happens if nothing is done."""
+    if day.attendance_status != "INCOMPLETE" or day.is_locked:
+        return None
+    behaviour = (policy.incomplete_at_lock_behaviour if policy else None) or "TREAT_ABSENT"
+    no_punches = day_has_no_punches(
+        day.computation_snapshot, day.actual_first_in, day.actual_last_out
+    )
+    if no_punches and behaviour == "TREAT_PRESENT":
+        behaviour = "TREAT_ABSENT"  # H-02: a day with no punches at all is absent at close
+    consequence = _LOCK_CONSEQUENCE.get(behaviour, _LOCK_CONSEQUENCE["TREAT_ABSENT"])
+    return ExplanationAction(
+        kind="REQUEST_CORRECTION",
+        deadline=deadline.isoformat() if deadline else None,
+        consequence=consequence,
     )
 
 

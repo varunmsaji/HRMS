@@ -154,3 +154,36 @@ async def test_period_far_from_its_end_is_not_reminded(
         await _cleanup_attendance_period(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_day_page_explains_the_deadline_of_an_incomplete_day(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """R-C02: the explanation's deadline is the end of the open period the reminders use."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _punch(client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN")
+        calculated = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": _DAY},
+        )
+        day = calculated.json()["data"]
+        assert day["attendance_status"] == "INCOMPLETE"
+        day_url = f"/v1/attendance/days/{day['id']}"
+
+        # No open period yet: the action is there, the deadline is not.
+        before = (await client.get(day_url, headers=headers)).json()["data"]["explanation"]
+        assert before["action"]["kind"] == "REQUEST_CORRECTION"
+        assert before["action"]["deadline"] is None
+
+        period = await _create_period(client, headers)
+        after = (await client.get(day_url, headers=headers)).json()["data"]["explanation"]
+        assert after["action"]["deadline"] == period["period_end"]
+        assert "Fix it by" in after["reason"]
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
