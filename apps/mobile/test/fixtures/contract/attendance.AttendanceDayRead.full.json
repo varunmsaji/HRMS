@@ -49,6 +49,42 @@
  "employee_id": "00000000-0000-0000-0000-000000001234",
  "engine_version": 1,
  "excess_break_minutes": 1,
+ "explanation": {
+  "action": {
+   "consequence": null,
+   "deadline": null,
+   "kind": null
+  },
+  "facts": [
+   {
+    "key": null,
+    "label": null,
+    "value": null
+   }
+  ],
+  "overtime": {
+   "approved_min": null,
+   "class_label": null,
+   "found_min": null,
+   "pending_min": null
+  },
+  "pay": {
+   "label": "x",
+   "leave": null,
+   "paid": null,
+   "unpaid": null
+  },
+  "provisional": true,
+  "reason": "x",
+  "rules_applied": [
+   "x"
+  ],
+  "verdict": {
+   "label": "x",
+   "status": "x",
+   "tone": "x"
+  }
+ },
  "gross_elapsed_minutes": 1,
  "has_active_break": true,
  "has_excess_break_exception": true,

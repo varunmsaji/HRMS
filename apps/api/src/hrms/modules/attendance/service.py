@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
@@ -103,6 +103,7 @@ from hrms.modules.attendance.exceptions import (
     StaleShiftRosterResourceError,
     WorkOnLeaveNotFlaggedError,
 )
+from hrms.modules.attendance.explanation import OvertimeFacts, PolicyBand, PolicyFacts, explain
 from hrms.modules.attendance.geofence_service import (
     GEOFENCED_SOURCES,
     GeofenceEvaluation,
@@ -249,6 +250,7 @@ from hrms.modules.attendance.work_schedule import (
 from hrms.modules.attendance.work_schedule import (
     zone_or_none as _zone_or_none,
 )
+from hrms.modules.employee.models import Employment
 from hrms.modules.notification.approvals import (
     OVERTIME_FLOW,
     REGULARIZATION_FLOW,
@@ -4077,7 +4079,84 @@ class AttendanceDayService:
         breaks = await self._break_repo.list_for_day(
             self._session, company_id=company_id, attendance_day_id=attendance_day_id
         )
-        return attendance_day_to_read(row, breaks)
+        read = attendance_day_to_read(row, breaks)
+        policy = await self._explanation_policy(company_id, row.attendance_policy_version_id)
+        deadline = (
+            await self._correction_deadline(company_id, row.employee_id, row.attendance_date)
+            if row.attendance_status == "INCOMPLETE" and not row.is_locked
+            else None
+        )
+        record = await self._ot_record_repo.get_by_attendance_day(
+            self._session, company_id=company_id, attendance_day_id=row.id
+        )
+        facts = (
+            OvertimeFacts(
+                minutes_detected=record.minutes_detected,
+                minutes_approved=record.minutes_approved,
+                status=record.status,
+                classification_code=record.classification_code,
+            )
+            if record is not None
+            else None
+        )
+        explanation = explain(read, policy, correction_deadline=deadline, overtime_record=facts)
+        return read.model_copy(update={"explanation": explanation})
+
+    async def _correction_deadline(
+        self, company_id: UUID, employee_id: UUID, attendance_date: date
+    ) -> date | None:
+        """The end of the not-yet-closed attendance period that covers an unfixed day, for the
+        employee's legal entity at that date: the cutoff after which the day is resolved at lock
+        (the same period the daily reminders use). None when no such period is open."""
+        stmt = (
+            select(func.min(AttendancePeriod.period_end))
+            .join(
+                Employment,
+                (Employment.legal_entity_id == AttendancePeriod.legal_entity_id)
+                & (Employment.company_id == AttendancePeriod.company_id),
+            )
+            .where(
+                AttendancePeriod.company_id == company_id,
+                AttendancePeriod.status != "CLOSED",
+                AttendancePeriod.period_start <= attendance_date,
+                AttendancePeriod.period_end >= attendance_date,
+                Employment.employee_id == employee_id,
+                Employment.deleted_at.is_(None),
+                Employment.joining_date <= attendance_date,
+                or_(
+                    Employment.last_working_day.is_(None),
+                    Employment.last_working_day >= attendance_date,
+                ),
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def _explanation_policy(
+        self, company_id: UUID, version_id: UUID | None
+    ) -> PolicyFacts | None:
+        """The policy version that governed a day, in the shape `explain` quotes. None when the day
+        has no policy snapshot or it cannot be loaded: the explanation then names no thresholds."""
+        if version_id is None:
+            return None
+        versions = await self._attendance_policy_repo.get_versions_by_ids(
+            self._session, company_id=company_id, version_ids={version_id}
+        )
+        if not versions:
+            return None
+        version = versions[0]
+        policy = await self._attendance_policy_repo.get_policy(
+            self._session, company_id=company_id, policy_id=version.policy_id
+        )
+        bands = await self._attendance_policy_repo.list_hour_bands(
+            self._session, company_id=company_id, policy_version_id=version.id
+        )
+        return PolicyFacts(
+            name=policy.name if policy is not None else None,
+            grace_in_minutes=version.grace_in_minutes,
+            grace_out_minutes=version.grace_out_minutes,
+            hour_bands=[PolicyBand(b.min_minutes, b.max_minutes, b.result_status) for b in bands],
+            incomplete_at_lock_behaviour=version.incomplete_at_lock_behaviour,
+        )
 
     async def list_attendance_days(
         self,
@@ -7735,6 +7814,7 @@ class AttendancePeriodService:
         # AC-04 — INCOMPLETE days that lock will resolve as absent: their held overtime is
         # withdrawn by `_apply_incomplete_lock_resolution`, so it is not a blocker.
         absent_at_lock_day_ids: set[UUID] = set()
+        behaviour_by_version: dict[UUID | None, str] = {}
         if incomplete_rows:
             version_ids = {
                 r.attendance_policy_version_id
@@ -7744,9 +7824,7 @@ class AttendancePeriodService:
             versions = await self._policy_repo.get_versions_by_ids(
                 self._session, company_id=company_id, version_ids=version_ids
             )
-            behaviour_by_version: dict[UUID | None, str] = {
-                v.id: v.incomplete_at_lock_behaviour for v in versions
-            }
+            behaviour_by_version = {v.id: v.incomplete_at_lock_behaviour for v in versions}
             blocking_incomplete = [
                 r
                 for r in incomplete_rows
@@ -7783,6 +7861,47 @@ class AttendancePeriodService:
                         ],
                     )
                 )
+
+        # What closing will do to INCOMPLETE days that do not block (R-F02). These are told to
+        # the person closing the period before they close it; they never change READY/BLOCKED.
+        notices: list[AttendancePeriodBlockingReason] = []
+        absent_rows = [r for r in incomplete_rows if r.id in absent_at_lock_day_ids]
+        present_rows = [
+            r
+            for r in incomplete_rows
+            if r.id not in absent_at_lock_day_ids
+            and behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
+            == "TREAT_PRESENT"
+        ]
+        if absent_rows:
+            notices.append(
+                AttendancePeriodBlockingReason(
+                    code="ABSENT_AT_LOCK",
+                    message=(
+                        "These incomplete days will be counted as absent (unpaid) when the "
+                        "period is closed, and any overtime held on them is withdrawn"
+                    ),
+                    count=len(absent_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}" for r in absent_rows[:20]
+                    ],
+                )
+            )
+        if present_rows:
+            notices.append(
+                AttendancePeriodBlockingReason(
+                    code="PRESENT_AT_LOCK",
+                    message=(
+                        "These incomplete days will be counted as present (paid) when the "
+                        "period is closed, under the policy's lock behaviour"
+                    ),
+                    count=len(present_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                        for r in present_rows[:20]
+                    ],
+                )
+            )
 
         # PENDING_LEAVE - LV-04. A leave request still waiting for a decision would lock its
         # days as absent (loss of pay), and approval is refused once the period is closed. It
@@ -8051,6 +8170,7 @@ class AttendancePeriodService:
         result = AttendancePeriodValidationRead(
             status=status,
             reasons=reasons,
+            notices=notices,
             validated_at=_format_timestamp(datetime.now(UTC)) or "",
         )
         return result, day_rows

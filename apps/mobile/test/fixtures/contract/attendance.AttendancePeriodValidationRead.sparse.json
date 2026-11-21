@@ -1,4 +1,14 @@
 {
+ "notices": [
+  {
+   "code": "x",
+   "count": 1,
+   "message": "x",
+   "sample": [
+    "x"
+   ]
+  }
+ ],
  "reasons": [
   {
    "code": "x",

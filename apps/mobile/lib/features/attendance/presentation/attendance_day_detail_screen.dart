@@ -14,6 +14,7 @@ import '../../leave/presentation/leave_application_detail_screen.dart';
 import '../../profile/data/employee_repository.dart' show Employee;
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
+import '../domain/day_explanation.dart';
 import '../domain/day_timeline.dart';
 import '../domain/pay_effect.dart';
 import '../domain/roster_views.dart' show addDaysIso;
@@ -339,6 +340,31 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     }
   }
 
+  /// "Why this result" — the API's own explanation, shown as written. Nothing is derived here, so
+  /// the web page and this screen always say the same thing. Drawn only when the API sent one.
+  List<Widget> _explanationSection(Object? raw) {
+    final e = DayExplanation.tryParse(raw);
+    if (e == null) return const [];
+    final text = Theme.of(context).textTheme;
+    return [
+      const EmployeeSectionHeader('Why this result'),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+        child: Text(e.reason, style: text.bodyMedium),
+      ),
+      if (e.actionLine != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.warning_amber_rounded, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(e.actionLine!, style: text.bodyMedium)),
+          ]),
+        ),
+      ..._facts('', [...e.facts, ('Pay', e.payLabel), if (e.overtimeLine != null) ('Overtime', e.overtimeLine!)]).skip(1),
+    ];
+  }
+
   /// Rows with no value are left out, and a section with none is not drawn at all.
   List<Widget> _facts(String title, List<(String, String)> rows, {String? footnote}) {
     final shown = [for (final r in rows) if (r.$2.isNotEmpty && r.$2 != '—') r];
@@ -447,6 +473,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
                   if (canKeepLeave) OutlinedButton(onPressed: _busy ? null : _keepLeave, child: const Text('Keep leave')),
                 ]),
               ),
+            ..._explanationSection(r['explanation']),
             ..._timelineSection(day),
             ..._facts('Schedule', [
               ('Calendar day type', _pretty(s('calendar_day_type'))),

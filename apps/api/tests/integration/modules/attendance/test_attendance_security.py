@@ -150,6 +150,17 @@ async def _cleanup_scoped_users() -> None:
                 "(SELECT id FROM \"user\" WHERE email LIKE 'scoped-%')"
             )
         )
+        # `_create_permission_scoped_user` also writes a `user_company` row and a `user_role` row;
+        # both, and any audit rows the user wrote, reference the user, so they go first.
+        scoped = "(SELECT id FROM \"user\" WHERE email LIKE 'scoped-%')"
+        await session.execute(
+            text(
+                "DELETE FROM user_role WHERE user_company_id IN "
+                f"(SELECT id FROM user_company WHERE user_id IN {scoped})"
+            )
+        )
+        await session.execute(text(f"DELETE FROM audit_log WHERE actor_user_id IN {scoped}"))
+        await session.execute(text(f"DELETE FROM user_company WHERE user_id IN {scoped}"))
         await session.execute(text("DELETE FROM \"user\" WHERE email LIKE 'scoped-%'"))
         await session.commit()
 
@@ -203,6 +214,10 @@ async def test_self_scope_sees_only_own_attendance_day(
 
         own = await client.get(f"/v1/attendance/days/{self_day['id']}", headers=scoped_headers)
         assert own.status_code == 200
+        # R-C01: the single-day read explains the result; the list read does not carry it.
+        explanation = own.json()["data"]["explanation"]
+        assert explanation["reason"]
+        assert explanation["verdict"]["label"]
 
         # Permission granted, but the target falls outside SELF scope -> 404, never 403 (F4/F8/F9
         # pattern; a 403 would confirm the resource exists for a caller who can't see it).
@@ -215,6 +230,7 @@ async def test_self_scope_sees_only_own_attendance_day(
         assert listed.status_code == 200
         ids = {row["id"] for row in listed.json()["data"]}
         assert ids == {self_day["id"]}
+        assert all(row.get("explanation") is None for row in listed.json()["data"])
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

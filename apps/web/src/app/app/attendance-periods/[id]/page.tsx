@@ -29,6 +29,7 @@ import { ApiError, describeApiError } from "@/lib/api/errors";
 import {
   ATTENDANCE_PERIOD_ACTION_LABELS,
   ATTENDANCE_PERIOD_BLOCKING_REASON_LABELS,
+  ATTENDANCE_PERIOD_NOTICE_LABELS,
   ATTENDANCE_PERIOD_SUMMARY_COLUMNS as SUMMARY_COLUMNS,
   type AttendancePeriod,
   type AttendancePeriodSummaryRow,
@@ -285,6 +286,23 @@ export default function AttendancePeriodDetailPage() {
                     Every check passed — this period can be finalized.
                   </p>
                 )}
+                {validation.notices && validation.notices.length > 0 ? (
+                  <div className="mt-4">
+                    <h3 className="mb-2 text-sm font-semibold text-foreground">What closing will do</h3>
+                    <ul className="space-y-2 text-sm">
+                      {validation.notices.map((notice) => (
+                        <li key={notice.code} className="rounded-md border border-border bg-surface-secondary p-3">
+                          <p className="font-medium text-foreground">
+                            {ATTENDANCE_PERIOD_NOTICE_LABELS[notice.code] ?? notice.code}
+                            {" — "}
+                            {notice.count}
+                          </p>
+                          <p className="text-foreground-secondary">{notice.message}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
