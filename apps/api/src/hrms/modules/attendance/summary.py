@@ -584,7 +584,9 @@ def _kpis(rows: Iterable[Any], no_record: int) -> SummaryKpis:
         rate=attendance_rate(weighted, expected),
         holiday=counts["HOLIDAY"],
         weekly_off=counts["WEEKLY_OFF"],
-        incomplete=counts["INCOMPLETE"],
+        # A day the engine could not calculate reads as incomplete here, as it does on the home
+        # dashboard (`overview.py`): it needs HR, and must not drop out of every figure.
+        incomplete=counts["INCOMPLETE"] + counts["CONFIG_ERROR"],
         late=totals["late"],
         not_checked_in=totals["not_checked_in"] + no_record,
         checked_in=totals["checked_in"],
