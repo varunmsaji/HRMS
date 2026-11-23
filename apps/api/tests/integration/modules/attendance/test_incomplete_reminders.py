@@ -27,7 +27,9 @@ from tests.integration.modules.organisation.test_registration_flow import _clean
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.core.rbac.service import RbacService
 from hrms.modules.attendance.reminders import IncompleteDayReminderService, PeriodReminderResult
+from hrms.modules.employee.service import EmployeeService
 
 pytestmark = pytest.mark.asyncio
 
@@ -248,6 +250,23 @@ async def test_hr_digest_counts_only_the_employees_of_the_recipients_branches(
         assert same.email in digests
         assert "1 employees have 1 incomplete attendance days" in digests[same.email]
         assert result.hr_recipients == 2
+        # the bulk visibility check agrees with the per-employee one
+        async with get_session_factory()() as session:
+            await set_rls_company_id(session, str(company_id))
+            employees = EmployeeService(session)
+            scope = await RbacService(session).resolve_data_scope(
+                same.user_id, company_id, "ATTENDANCE.LOCK"
+            )
+            wanted = [UUID(employee_id)]
+            assert await employees.employee_ids_in_assigned_branches(company_id, wanted, scope) == {
+                UUID(employee_id)
+            }
+            other_scope = await RbacService(session).resolve_data_scope(
+                elsewhere.user_id, company_id, "ATTENDANCE.LOCK"
+            )
+            assert not await employees.employee_ids_in_assigned_branches(
+                company_id, wanted, other_scope
+            )
     finally:
         await _cleanup_attendance_period(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

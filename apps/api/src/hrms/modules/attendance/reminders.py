@@ -268,13 +268,10 @@ class IncompleteDayReminderService:
             if DataScopeLevel.COMPANY in scope.levels:
                 visible = list(by_employee)
             elif scope.company_grant_restricted:
-                visible = [
-                    employee_id
-                    for employee_id in by_employee
-                    if await employees.is_employee_in_assigned_branches(
-                        company_id, employee_id, scope
-                    )
-                ]
+                in_branches = await employees.employee_ids_in_assigned_branches(
+                    company_id, by_employee, scope
+                )
+                visible = [employee_id for employee_id in by_employee if employee_id in in_branches]
             else:
                 continue
             if visible:

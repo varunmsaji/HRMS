@@ -226,6 +226,7 @@ void main() {
   group('not calculated (R-D06)', () {
     Map<String, dynamic> emp(String id, String code, {String? joined = '2026-01-01', String? last, bool active = true}) =>
         {'id': id, 'first_name': 'F$code', 'last_name': 'L', 'employee_code': code, 'status': 'ACTIVE', 'is_active': active, 'version': 1, 'employment_joining_date': joined, 'employment_last_working_day': last};
+    const viewAll = [attendanceViewAll, attendancePunchOnBehalf, attendanceRecompute, attendanceRegularizationApprove];
     final people = [
       emp('e1', 'E-1'), // has a row
       emp('e2', 'E-2'), // employed, no row -> not calculated
@@ -241,7 +242,7 @@ void main() {
     });
 
     testWidgets('a past date says how many are not calculated and queues exactly them', (tester) async {
-      final (_, api) = await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people);
+      final (_, api) = await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people, permissions: viewAll);
       expect(find.text('Not calculated: 1.'), findsOneWidget);
       await tester.tap(find.widgetWithText(OutlinedButton, 'Recalculate'));
       await tester.pumpAndSettle();
@@ -251,13 +252,18 @@ void main() {
     });
 
     testWidgets('without the recompute grant it only tells; today never shows it', (tester) async {
-      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people, permissions: const [attendancePunchOnBehalf]);
+      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people, permissions: const [attendanceViewAll, attendancePunchOnBehalf]);
       expect(find.text('Not calculated: 1.'), findsOneWidget);
       expect(find.widgetWithText(OutlinedButton, 'Recalculate'), findsNothing);
     });
 
+    testWidgets('someone who cannot read company-wide attendance is not shown a count built from the wider employee list', (tester) async {
+      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people, permissions: const [attendancePunchOnBehalf, attendanceRecompute]);
+      expect(find.textContaining('Not calculated'), findsNothing);
+    });
+
     testWidgets('nothing is shown when everyone employed has a row', (tester) async {
-      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'}), _dayJson({'id': 'b', 'employee_id': 'e2'})], employees: people);
+      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'}), _dayJson({'id': 'b', 'employee_id': 'e2'})], employees: people, permissions: viewAll);
       expect(find.textContaining('Not calculated'), findsNothing);
     });
   });

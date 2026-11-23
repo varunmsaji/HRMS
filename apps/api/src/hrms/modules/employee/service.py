@@ -4,6 +4,7 @@ statutory), and E-08 (employee banking)."""
 
 import hashlib
 import hmac
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -277,6 +278,21 @@ class EmployeeService:
         return assignment.branch_id in await self._live_branch_ids(
             company_id, frozenset({assignment.branch_id})
         )
+
+    async def employee_ids_in_assigned_branches(
+        self, company_id: UUID, employee_ids: Iterable[UUID], scope: DataScope
+    ) -> set[UUID]:
+        """Bulk form of `is_employee_in_assigned_branches`: of `employee_ids`, those whose current
+        branch is one of the caller's assigned, live branches, using two queries however many
+        employees there are."""
+        if not scope.branch_ids:
+            return set()
+        current = await self._assignment_repo.current_branch_ids(
+            self._session, company_id=company_id, employee_ids=employee_ids
+        )
+        wanted = frozenset(b for b in current.values() if b is not None and b in scope.branch_ids)
+        live = await self._live_branch_ids(company_id, wanted)
+        return {e for e, b in current.items() if b is not None and b in live}
 
     async def resolve_employee_id_for_user(self, company_id: UUID, user_id: UUID) -> UUID | None:
         """Resolves the `employee_id` claim that login/refresh embeds in the JWT

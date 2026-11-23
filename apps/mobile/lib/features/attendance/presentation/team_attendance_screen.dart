@@ -165,22 +165,30 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
 
   /// Who is employed on a past [_date] yet has no row, read from the employee list the way the web
   /// does. Quiet on any failure: the notice is an extra, and the list may not be readable here.
+  /// Shown only to someone who reads company-wide attendance (the employee list can be broader than
+  /// the attendance they may see), and only when the whole roster was read - a partial roster would
+  /// report a wrong count.
   Future<void> _findNotCalculated(List<AttendanceDay> days) async {
     final date = _date;
-    if (date.compareTo(businessToday(_zone)) >= 0 || _employeeId.isNotEmpty) {
+    final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+    if (date.compareTo(businessToday(_zone)) >= 0 || _employeeId.isNotEmpty || !permissions.contains(attendanceViewAll)) {
       if (mounted && _notCalculated.isNotEmpty) setState(() => _notCalculated = const []);
       return;
     }
     try {
       final repo = ref.read(employeeRepositoryProvider);
       final all = <Employee>[];
+      var complete = false;
       for (var page = 1; page <= 50; page++) {
         final r = await repo.listEmployeesPage(page: page, perPage: 100);
         all.addAll(r.rows);
-        if (!r.hasNext) break;
+        if (!r.hasNext) {
+          complete = true;
+          break;
+        }
       }
       if (!mounted || date != _date) return;
-      final ids = [for (final e in employeesWithoutRecord(all, {for (final d in days) d.employeeId}, date)) e.id];
+      final ids = complete ? [for (final e in employeesWithoutRecord(all, {for (final d in days) d.employeeId}, date)) e.id] : const <String>[];
       setState(() => _notCalculated = ids);
     } catch (_) {
       if (mounted && date == _date) setState(() => _notCalculated = const []);
