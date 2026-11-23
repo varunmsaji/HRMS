@@ -10,6 +10,8 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
+from tests.integration.modules.account_invite.uac_helpers import Tenant as UacTenant
+from tests.integration.modules.account_invite.uac_helpers import onboard, teardown
 from tests.integration.modules.attendance.test_attendance_day import (
     _build_wired_employee,
     _cleanup_attendance_day,
@@ -187,3 +189,66 @@ async def test_day_page_explains_the_deadline_of_an_incomplete_day(
         await _cleanup_attendance_period(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def _grant_lock_to_hr_admin(company_id: UUID) -> None:
+    """HR_ADMIN does not hold ATTENDANCE.LOCK by default; a tenant that gave it to HR is the case
+    where the digest used to leak company-wide counts to a branch-restricted HR."""
+    async with get_session_factory()() as session:
+        await set_rls_company_id(session, str(company_id))
+        await session.execute(
+            text(
+                "INSERT INTO role_permission(role_id, permission_id, data_scope) "
+                "SELECT r.id, p.id, 'COMPANY' FROM role r, permission p "
+                "WHERE r.company_id = :c AND r.code = 'HR_ADMIN' AND p.code = 'ATTENDANCE.LOCK' "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"c": str(company_id)},
+        )
+        await session.commit()
+
+
+async def test_hr_digest_counts_only_the_employees_of_the_recipients_branches(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    tenant = UacTenant(headers=headers, company_id=company_id, admin_user_id=user_id, emails=[])
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        employee_branch = wired["branch"]["id"]
+        await _punch(client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN")
+        await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": _DAY},
+        )
+        await _create_period(client, headers)
+        await _grant_lock_to_hr_admin(company_id)
+
+        # `onboard` gives an HR_ADMIN a branch other than the employee's; the second one is then
+        # reassigned to the employee's branch through the user-management API.
+        elsewhere = await onboard(client, tenant, "HR_ADMIN")
+        same = await onboard(client, tenant, "HR_ADMIN")
+        put = await client.put(
+            f"/v1/users/{same.user_id}/branches",
+            headers=headers,
+            json={"branch_ids": [employee_branch]},
+        )
+        assert put.status_code == 200, put.text
+
+        sender = _CapturingSender()
+        [result] = await _run(company_id, sender, today=date(2026, 8, 11))
+        digests = {
+            to: body for to, subject, body in sender.sent if not subject.startswith("Action needed")
+        }
+        # company admin (everyone) and the HR of the employee's branch; the HR of another branch
+        # is not sent counts for employees they cannot open.
+        assert elsewhere.email not in digests
+        assert same.email in digests
+        assert "1 employees have 1 incomplete attendance days" in digests[same.email]
+        assert result.hr_recipients == 2
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await teardown(tenant)

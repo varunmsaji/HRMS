@@ -5,8 +5,9 @@ at close → absent (LOP)").
 For each attendance period that is not yet `CLOSED` and whose end is at most
 `Settings.attendance_incomplete_reminder_lead_days` away (or already past), every employee with
 an unlocked `INCOMPLETE` day in `[period_start, min(period_end, today - 1)]` gets one email
-listing those dates, and every user holding `ATTENDANCE.LOCK` gets one digest per period. Today
-itself is excluded — a day still in progress is routinely incomplete.
+listing those dates, and every user holding `ATTENDANCE.LOCK` gets one digest per period, counting
+only the employees their data scope covers. Today itself is excluded — a day still in progress
+is routinely incomplete.
 
 Runs once a day (`attendance.run_incomplete_reminders`). Beat has no leader election
 (`OPS-006`), so each period's run is recorded as one `ATTENDANCE_INCOMPLETE_REMINDERS_SENT`
@@ -25,7 +26,8 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings
 from hrms.core.db.models.identity import User
 from hrms.core.observability.logging import get_logger
-from hrms.core.rbac.service import RbacRepository
+from hrms.core.rbac.service import RbacRepository, RbacService
+from hrms.core.rbac.types import DataScopeLevel
 from hrms.modules.attendance.calculation import day_has_no_punches
 from hrms.modules.attendance.email_templates import (
     build_incomplete_days_hr_digest_email,
@@ -130,7 +132,6 @@ class IncompleteDayReminderService:
         ).all()
 
         by_employee: dict[UUID, dict[str, Any]] = {}
-        no_punch_days = 0
         for (
             employee_id,
             attendance_date,
@@ -141,17 +142,19 @@ class IncompleteDayReminderService:
             email,
             user_status,
         ) in rows:
-            if day_has_no_punches(snapshot, first_in, last_out):
-                no_punch_days += 1
             entry = by_employee.setdefault(
                 employee_id,
                 {
                     "first_name": first_name,
                     "email": email if user_status == "ACTIVE" else None,
                     "dates": [],
+                    "no_punch_days": 0,
                 },
             )
             entry["dates"].append(attendance_date)
+            if day_has_no_punches(snapshot, first_in, last_out):
+                entry["no_punch_days"] += 1
+        no_punch_days = sum(e["no_punch_days"] for e in by_employee.values())
 
         result.incomplete_days = len(rows)
         result.employees = len(by_employee)
@@ -186,34 +189,18 @@ class IncompleteDayReminderService:
             else:
                 result.send_failures += 1
 
-        hr_user_ids = await RbacRepository().list_user_ids_with_permission(
-            self._session, company_id=company_id, code=ATTENDANCE_LOCK
-        )
-        hr_emails: list[str] = []
-        if hr_user_ids:
-            hr_emails = [
-                email
-                for email in (
-                    await self._session.execute(
-                        select(User.email).where(
-                            User.id.in_(hr_user_ids),
-                            User.status == "ACTIVE",
-                            User.email.is_not(None),
-                        )
-                    )
-                ).scalars()
-                if email
-            ]
-        subject, html_body, text_body = build_incomplete_days_hr_digest_email(
-            period_label=period_label,
-            period_end=period.period_end,
-            employee_count=result.employees,
-            incomplete_day_count=result.incomplete_days,
-            employees_without_email=result.employees_without_email,
-            period_url=f"{base_url}/app/attendance-periods/{period.id}",
-            no_punch_day_count=no_punch_days,
-        )
-        for email in hr_emails:
+        for email, visible in await self._digest_audience(company_id, by_employee):
+            # Each recipient is told only about the employees they can act on: counts for other
+            # branches are not theirs to see (admin-assigned branch access).
+            subject, html_body, text_body = build_incomplete_days_hr_digest_email(
+                period_label=period_label,
+                period_end=period.period_end,
+                employee_count=len(visible),
+                incomplete_day_count=sum(len(by_employee[e]["dates"]) for e in visible),
+                employees_without_email=sum(1 for e in visible if not by_employee[e]["email"]),
+                period_url=f"{base_url}/app/attendance-periods/{period.id}",
+                no_punch_day_count=sum(by_employee[e]["no_punch_days"] for e in visible),
+            )
             if await self._send(
                 email,
                 subject,
@@ -245,6 +232,54 @@ class IncompleteDayReminderService:
             },
         )
         return result
+
+    async def _digest_audience(
+        self, company_id: UUID, by_employee: dict[UUID, dict[str, Any]]
+    ) -> list[tuple[str, list[UUID]]]:
+        """Who gets the HR digest, and which of the period's employees each of them may see.
+
+        Holders of `ATTENDANCE.LOCK` with a genuine company-wide grant see everyone. An HR whose
+        grant was narrowed to assigned branches sees only employees currently placed at one of
+        them, and gets no digest when that is nobody. A holder whose scope is neither (a bare
+        branch/department grant) is not sent company-wide counts."""
+        hr_user_ids = await RbacRepository().list_user_ids_with_permission(
+            self._session, company_id=company_id, code=ATTENDANCE_LOCK
+        )
+        if not hr_user_ids:
+            return []
+        users = (
+            await self._session.execute(
+                select(User.id, User.email).where(
+                    User.id.in_(hr_user_ids),
+                    User.status == "ACTIVE",
+                    User.email.is_not(None),
+                )
+            )
+        ).all()
+        from hrms.modules.employee.service import EmployeeService
+
+        rbac = RbacService(self._session)
+        employees = EmployeeService(self._session)
+        audience: list[tuple[str, list[UUID]]] = []
+        for user_id, email in users:
+            if not email:
+                continue
+            scope = await rbac.resolve_data_scope(user_id, company_id, ATTENDANCE_LOCK)
+            if DataScopeLevel.COMPANY in scope.levels:
+                visible = list(by_employee)
+            elif scope.company_grant_restricted:
+                visible = [
+                    employee_id
+                    for employee_id in by_employee
+                    if await employees.is_employee_in_assigned_branches(
+                        company_id, employee_id, scope
+                    )
+                ]
+            else:
+                continue
+            if visible:
+                audience.append((email, visible))
+        return audience
 
     async def _already_sent(self, company_id: UUID, period_id: UUID, today: date) -> bool:
         stmt = select(AuditLog.id).where(
