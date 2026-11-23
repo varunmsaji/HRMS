@@ -8,6 +8,8 @@ import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_insights.dart';
+import 'package:hrms_mobile/features/attendance/domain/not_calculated.dart';
+import 'package:hrms_mobile/features/profile/data/employee_repository.dart' show Employee;
 import 'package:hrms_mobile/features/attendance/presentation/attendance_mismatches_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/team_attendance_screen.dart';
 
@@ -74,12 +76,13 @@ Future<(_Repo, FakeApiClient)> _pump(
   List<Map<String, dynamic>> days, {
   List<String> permissions = const [attendancePunchOnBehalf, attendanceRecompute, attendanceRegularizationApprove],
   List<Map<String, dynamic>> pending = const [],
+  List<Map<String, dynamic>>? employees,
 }) async {
   tester.view.physicalSize = const Size(800, 3000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final repo = _Repo(days);
-  final api = FakeApiClient(lists: {'/employees': _employees, '/regularizations': pending});
+  final api = FakeApiClient(lists: {'/employees': employees ?? _employees, '/regularizations': pending}, objects: {'/attendance/days/calculate-range': const {}});
   await tester.pumpWidget(
     ProviderScope(overrides: [attendanceRepositoryProvider.overrideWithValue(repo), apiClientProvider.overrideWithValue(api), fakeAuth(permissions)], child: MaterialApp(home: screen)),
   );
@@ -217,6 +220,45 @@ void main() {
         _dayJson({'id': 'ok'}),
       ]);
       expect(find.text('Nothing needs fixing'), findsOneWidget);
+    });
+  });
+
+  group('not calculated (R-D06)', () {
+    Map<String, dynamic> emp(String id, String code, {String? joined = '2026-01-01', String? last, bool active = true}) =>
+        {'id': id, 'first_name': 'F$code', 'last_name': 'L', 'employee_code': code, 'status': 'ACTIVE', 'is_active': active, 'version': 1, 'employment_joining_date': joined, 'employment_last_working_day': last};
+    final people = [
+      emp('e1', 'E-1'), // has a row
+      emp('e2', 'E-2'), // employed, no row -> not calculated
+      emp('e3', 'E-3', joined: '2026-12-01'), // not joined yet
+      emp('e4', 'E-4', last: '2026-11-01'), // left before the day
+      emp('e5', 'E-5', joined: null), // no employment yet
+      emp('e6', 'E-6', active: false), // inactive record
+    ];
+
+    test('lists only people employed on the date with no row', () {
+      final all = [for (final p in people) Employee.fromJson(p)];
+      expect([for (final e in employeesWithoutRecord(all, {'e1'}, '2026-11-13')) e.id], ['e2']);
+    });
+
+    testWidgets('a past date says how many are not calculated and queues exactly them', (tester) async {
+      final (_, api) = await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people);
+      expect(find.text('Not calculated: 1.'), findsOneWidget);
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Recalculate'));
+      await tester.pumpAndSettle();
+      final call = api.calls.single;
+      expect(call.path, '/attendance/days/calculate-range');
+      expect(call.body, {'date_from': '2026-11-13', 'date_to': '2026-11-13', 'employee_ids': ['e2']});
+    });
+
+    testWidgets('without the recompute grant it only tells; today never shows it', (tester) async {
+      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'})], employees: people, permissions: const [attendancePunchOnBehalf]);
+      expect(find.text('Not calculated: 1.'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Recalculate'), findsNothing);
+    });
+
+    testWidgets('nothing is shown when everyone employed has a row', (tester) async {
+      await _pump(tester, const TeamAttendanceScreen(date: '2026-11-13'), [_dayJson({'id': 'a', 'employee_id': 'e1'}), _dayJson({'id': 'b', 'employee_id': 'e2'})], employees: people);
+      expect(find.textContaining('Not calculated'), findsNothing);
     });
   });
 
