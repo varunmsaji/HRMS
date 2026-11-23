@@ -21,10 +21,17 @@ What it adds:
   (`20261030090000_attendance_geofencing`); this migration relies on it and never drops it. FORCE row-level security with the usual `tenant_isolation` policy.
 * `account_invite.branch_ids UUID[] NOT NULL DEFAULT '{}'`: the branches an invited HR / branch
   manager will get when they accept, so such a user is never created with no access.
-* Backfill: every user who holds HR_ADMIN or BRANCH_MANAGER in a company and does NOT hold
-  COMPANY_ADMIN there receives one live row for every active, non-deleted branch of that company,
-  so existing HR keeps today's whole-company reach until an admin edits the list. COMPANY_ADMIN
-  ignores the list and gets no rows. Re-running adds nothing (ON CONFLICT DO NOTHING).
+* Backfill, so nobody's reach changes when the application starts reading the list:
+  - a user who holds HR_ADMIN in a company and does NOT hold COMPANY_ADMIN there receives one live
+    row for every active, non-deleted branch of that company (HR was company-wide);
+  - a user who holds BRANCH_MANAGER (and not COMPANY_ADMIN) receives one row for the branch of
+    their own current assignment only, the branch their scope resolved to before: the earliest
+    employee linked to the user, assignment with `effective_to IS NULL`, branch active and not
+    deleted. A branch manager with no linked employee, no current branch, or an inactive branch
+    gets no row (they saw no one before and still see no one until an admin assigns branches);
+  - a user holding both roles gets every branch (HR's reach);
+  - COMPANY_ADMIN ignores the list and gets no rows.
+  Re-running adds nothing (ON CONFLICT DO NOTHING).
 
 The backfill runs BEFORE row-level security is switched on for the new table, and the migration
 refuses to run as a role that is itself subject to row-level security (it would read no roles and
@@ -95,17 +102,58 @@ def upgrade() -> None:
         ALTER TABLE account_invite
           ADD COLUMN IF NOT EXISTS branch_ids UUID[] NOT NULL DEFAULT '{}';
 
-        -- Existing HR / branch managers keep today's whole-company reach until an admin edits
-        -- the list. COMPANY_ADMIN (in the same company) ignores the list: no rows.
+        -- Existing access is preserved. HR was company-wide: every live branch. COMPANY_ADMIN (in
+        -- the same company) ignores the list: no rows.
         INSERT INTO user_branch_access (company_id, user_id, branch_id)
         SELECT DISTINCT uc.company_id, uc.user_id, b.id
         FROM user_company uc
         JOIN user_role ur ON ur.user_company_id = uc.id
         JOIN role r ON r.id = ur.role_id
                    AND r.company_id = uc.company_id
-                   AND r.code IN ('HR_ADMIN', 'BRANCH_MANAGER')
+                   AND r.code = 'HR_ADMIN'
                    AND r.deleted_at IS NULL
         JOIN branch b ON b.company_id = uc.company_id
+                     AND b.deleted_at IS NULL
+                     AND b.is_active
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM user_role ur2
+          JOIN role r2 ON r2.id = ur2.role_id
+                      AND r2.company_id = uc.company_id
+                      AND r2.code = 'COMPANY_ADMIN'
+                      AND r2.deleted_at IS NULL
+          WHERE ur2.user_company_id = uc.id
+        )
+        ON CONFLICT (company_id, user_id, branch_id) WHERE deleted_at IS NULL DO NOTHING;
+
+        -- A branch manager's scope was their own current branch: keep exactly that, not every
+        -- branch. The employee is the earliest one linked to the user, as the application resolves
+        -- it; the assignment is the current one (effective_to IS NULL). A user who also holds
+        -- HR_ADMIN already has every branch from the statement above.
+        INSERT INTO user_branch_access (company_id, user_id, branch_id)
+        SELECT DISTINCT uc.company_id, uc.user_id, b.id
+        FROM user_company uc
+        JOIN user_role ur ON ur.user_company_id = uc.id
+        JOIN role r ON r.id = ur.role_id
+                   AND r.company_id = uc.company_id
+                   AND r.code = 'BRANCH_MANAGER'
+                   AND r.deleted_at IS NULL
+        JOIN LATERAL (
+          SELECT e.id
+          FROM employee e
+          WHERE e.company_id = uc.company_id
+            AND e.user_id = uc.user_id
+            AND e.deleted_at IS NULL
+          ORDER BY e.created_at, e.id
+          LIMIT 1
+        ) emp ON true
+        JOIN employee_assignment ea ON ea.company_id = uc.company_id
+                                   AND ea.employee_id = emp.id
+                                   AND ea.deleted_at IS NULL
+                                   AND ea.effective_to IS NULL
+                                   AND ea.branch_id IS NOT NULL
+        JOIN branch b ON b.id = ea.branch_id
+                     AND b.company_id = uc.company_id
                      AND b.deleted_at IS NULL
                      AND b.is_active
         WHERE NOT EXISTS (

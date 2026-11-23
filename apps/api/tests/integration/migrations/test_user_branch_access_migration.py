@@ -4,8 +4,9 @@ Same approach as `test_shift_name_unique_migration.py`: each test works in a dat
 inside the disposable QA Postgres (a copy of a template migrated to the revision just before the one
 under test) and drops it afterwards. Rows are synthetic.
 
-Cases: U1 clean upgrade creates the table, the invite column and FORCE RLS; U2 the backfill gives
-HR / branch managers every live branch and nobody else anything; U3 the database refuses a branch of
+Cases: U1 clean upgrade creates the table, the invite column and FORCE RLS; U2 the backfill keeps
+existing reach: HR gets every live branch, a branch manager only the branch of their current
+assignment, nobody else anything; U3 the database refuses a branch of
 another company; U4 one live row per (company, user, branch), history is allowed; U5 tenant
 isolation holds for the runtime role; U6 downgrade and re-upgrade are clean and the backfill is
 idempotent; U7 an empty database upgrades.
@@ -105,6 +106,47 @@ def _user(
     return user_id
 
 
+def _place(
+    c: psycopg.Connection[Any],
+    company: uuid.UUID,
+    user_id: uuid.UUID,
+    branch_id: uuid.UUID,
+    *,
+    past_branch_id: uuid.UUID | None = None,
+) -> None:
+    """Links an employee to `user_id` and gives them a CURRENT assignment at `branch_id` (and,
+    optionally, an ended one at `past_branch_id`)."""
+    employee = _insert(
+        c,
+        "employee",
+        company_id=company,
+        user_id=user_id,
+        employee_code=f"E{uuid.uuid4().hex[:8]}",
+        deleted_at=None,
+    )
+    if past_branch_id is not None:
+        _insert(
+            c,
+            "employee_assignment",
+            company_id=company,
+            employee_id=employee,
+            branch_id=past_branch_id,
+            effective_from="2025-01-01",
+            effective_to="2025-12-31",
+            deleted_at=None,
+        )
+    _insert(
+        c,
+        "employee_assignment",
+        company_id=company,
+        employee_id=employee,
+        branch_id=branch_id,
+        effective_from="2026-01-01",
+        effective_to=None,
+        deleted_at=None,
+    )
+
+
 def _rows(db: str, company: uuid.UUID | None = None) -> dict[uuid.UUID, set[uuid.UUID]]:
     sql = "SELECT user_id, branch_id FROM user_branch_access WHERE deleted_at IS NULL"
     args: tuple[Any, ...] = ()
@@ -123,7 +165,7 @@ def _seed(db: str) -> dict[str, Any]:
     with _conn(db) as c:
         a, b = _company(c, "A"), _company(c, "B")
         b1, b2 = _branch(c, a, "Bengaluru"), _branch(c, a, "Mumbai")
-        _branch(c, a, "Closed", active=False)
+        closed = _branch(c, a, "Closed", active=False)
         _branch(c, a, "Gone", deleted=True)
         bb = _branch(c, b, "Delhi")
         roles_a = {
@@ -134,6 +176,14 @@ def _seed(db: str) -> dict[str, Any]:
             code: _role(c, b, code)
             for code in ("COMPANY_ADMIN", "HR_ADMIN", "BRANCH_MANAGER", "EMPLOYEE")
         }
+        bm = _user(c, a, roles_a, "BRANCH_MANAGER")
+        _place(c, a, bm, b1, past_branch_id=b2)  # current: Bengaluru; Mumbai is history
+        bm_mumbai = _user(c, a, roles_a, "BRANCH_MANAGER")
+        _place(c, a, bm_mumbai, b2)
+        bm_closed = _user(c, a, roles_a, "BRANCH_MANAGER")
+        _place(c, a, bm_closed, closed)  # placed at a branch that is no longer active
+        both = _user(c, a, roles_a, "HR_ADMIN", "BRANCH_MANAGER")
+        _place(c, a, both, b1)
         return {
             "a": a,
             "b": b,
@@ -141,8 +191,11 @@ def _seed(db: str) -> dict[str, Any]:
             "b2": b2,
             "bb": bb,
             "hr": _user(c, a, roles_a, "HR_ADMIN"),
-            "bm": _user(c, a, roles_a, "BRANCH_MANAGER"),
-            "both": _user(c, a, roles_a, "HR_ADMIN", "BRANCH_MANAGER"),
+            "bm": bm,
+            "bm_mumbai": bm_mumbai,
+            "bm_closed": bm_closed,
+            "bm_unplaced": _user(c, a, roles_a, "BRANCH_MANAGER"),  # no employee at all
+            "both": both,
             "admin_hr": _user(c, a, roles_a, "COMPANY_ADMIN", "HR_ADMIN"),
             "admin": _user(c, a, roles_a, "COMPANY_ADMIN"),
             "emp": _user(c, a, roles_a, "EMPLOYEE"),
@@ -170,20 +223,21 @@ def test_u1_clean_upgrade_creates_the_table_the_column_and_force_rls(scratch: st
     assert column == ("ARRAY", "NO")
 
 
-def test_u2_backfill_gives_hr_and_branch_managers_every_live_branch_and_nobody_else(
-    scratch: str,
-) -> None:
+def test_u2_backfill_keeps_existing_reach_and_gives_nobody_else_anything(scratch: str) -> None:
     s = _seed(scratch)
     rc, out = _upgrade(scratch)
     assert rc == 0, out[-2000:]
     live = {s["b1"], s["b2"]}  # not the inactive and not the deleted branch
     rows = _rows(scratch)
-    assert rows[s["hr"]] == live
-    assert rows[s["bm"]] == live
-    assert rows[s["both"]] == live
+    assert rows[s["hr"]] == live  # HR was company-wide
+    assert rows[s["both"]] == live  # HR + branch manager: HR's reach
     assert rows[s["hr_b"]] == {s["bb"]}  # only its own company's branch
-    for ignored in ("admin_hr", "admin", "emp"):
-        assert s[ignored] not in rows, f"{ignored} must get no rows"
+    # A branch manager's scope was their own CURRENT branch: not every branch, and not history.
+    assert rows[s["bm"]] == {s["b1"]}
+    assert rows[s["bm_mumbai"]] == {s["b2"]}
+    # No current live branch, no row: they saw no one before and still see no one.
+    for none in ("bm_closed", "bm_unplaced", "admin_hr", "admin", "emp"):
+        assert s[none] not in rows, f"{none} must get no rows"
 
 
 def test_u3_the_database_refuses_a_branch_of_another_company(scratch: str) -> None:
