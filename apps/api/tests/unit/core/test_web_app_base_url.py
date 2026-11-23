@@ -17,6 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from hrms.core.config.settings import Settings
+from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.account_invite.service import AccountInviteService
 from hrms.modules.attendance.reminders import IncompleteDayReminderService
 from hrms.modules.identity.service import IdentityService
@@ -305,7 +306,7 @@ async def test_production_attendance_reminder_links_use_the_configured_origin() 
                     )
                 ]
             ),
-            _Result(["hr@example.com"]),
+            _Result([(uuid4(), "hr@example.com")]),
         ]
     )
     service = IncompleteDayReminderService(session, settings, sent)  # type: ignore[arg-type]
@@ -313,7 +314,11 @@ async def test_production_attendance_reminder_links_use_the_configured_origin() 
     with (
         patch("hrms.modules.attendance.reminders.RbacRepository") as rbac,
         patch("hrms.modules.attendance.reminders.AuditService") as audit,
+        patch("hrms.modules.attendance.reminders.RbacService") as rbac_service,
     ):
+        rbac_service.return_value.resolve_data_scope = AsyncMock(
+            return_value=DataScope(levels=frozenset({DataScopeLevel.COMPANY}))
+        )
         rbac.return_value.list_user_ids_with_permission = AsyncMock(return_value=[uuid4()])
         audit.return_value.record = AsyncMock()
         await service._send_for_period(uuid4(), period, today=date(2026, 4, 10))  # type: ignore[arg-type]

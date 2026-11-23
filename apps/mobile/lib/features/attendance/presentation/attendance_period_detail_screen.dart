@@ -26,6 +26,13 @@ const periodBlockingReasonLabels = {
   'WORK_ON_LEAVE_UNRESOLVED': 'Punches on approved full-day leave awaiting an HR decision',
 };
 
+/// What closing will do that does not block it (R-F02). Same words as the web
+/// (`ATTENDANCE_PERIOD_NOTICE_LABELS`). Absent on an older API.
+const periodNoticeLabels = {
+  'ABSENT_AT_LOCK': 'Incomplete days that will be counted absent',
+  'PRESENT_AT_LOCK': 'Incomplete days that will be counted present',
+};
+
 const periodActionLabels = {
   'OPENED': 'Period opened',
   'VALIDATED': 'Validated — ready to finalize',
@@ -258,6 +265,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
       final open = p['status'] == 'OPEN';
       final actions = ((p['actions'] as List?) ?? const []).cast<Rec>();
       final reasons = ((_validation?['reasons'] as List?) ?? const []).cast<Rec>();
+      final notices = ((_validation?['notices'] as List?) ?? const []).cast<Rec>();
       final frozen = _summary.isNotEmpty && _summary.first['frozen'] == true;
       body = RefreshIndicator(
         onRefresh: _load,
@@ -310,6 +318,20 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
                     )
                 else
                   const Text('Every check passed — this period can be finalized.'),
+                if (notices.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Text('What closing will do', style: TextStyle(fontWeight: FontWeight.w700)),
+                  for (final n in notices)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${periodNoticeLabels[n['code']] ?? n['code']} — ${n['count']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Text('${n['message']}', style: TextStyle(color: scheme.onSurfaceVariant)),
+                      ]),
+                    ),
+                ],
               ]),
             _section('Summary ${_summary.isNotEmpty ? (frozen ? '(frozen)' : '(live preview)') : ''}'.trim(), [
               if (_summary.isEmpty) Text('No calculated attendance in this range yet.', style: TextStyle(color: scheme.onSurfaceVariant)),

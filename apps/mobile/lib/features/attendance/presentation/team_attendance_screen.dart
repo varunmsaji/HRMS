@@ -12,8 +12,11 @@ import '../../../core/format.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/list_filter.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../profile/data/employee_repository.dart' show Employee;
+import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
 import '../domain/attendance_mismatch.dart';
+import '../domain/not_calculated.dart';
 import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
@@ -102,6 +105,9 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   ApiError? _error;
   List<AttendanceDay> _days = const [];
   List<Choice> _employees = const [];
+  /// R-D06: employed people with no calculated day on a past [_date]; empty when unknown.
+  List<String> _notCalculated = const [];
+  bool _queuing = false;
   Map<String, String> _pending = const {};
   bool _onlyMismatches = false;
 
@@ -149,11 +155,82 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
             dateTo: _date,
           );
       if (mounted) setState(() => _days = days);
+      _findNotCalculated(days);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Who is employed on a past [_date] yet has no row, read from the employee list the way the web
+  /// does. Quiet on any failure: the notice is an extra, and the list may not be readable here.
+  /// Shown only to someone who reads company-wide attendance (the employee list can be broader than
+  /// the attendance they may see), and only when the whole roster was read - a partial roster would
+  /// report a wrong count.
+  Future<void> _findNotCalculated(List<AttendanceDay> days) async {
+    final date = _date;
+    final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+    if (date.compareTo(businessToday(_zone)) >= 0 || _employeeId.isNotEmpty || !permissions.contains(attendanceViewAll)) {
+      if (mounted && _notCalculated.isNotEmpty) setState(() => _notCalculated = const []);
+      return;
+    }
+    try {
+      final repo = ref.read(employeeRepositoryProvider);
+      final all = <Employee>[];
+      var complete = false;
+      for (var page = 1; page <= 50; page++) {
+        final r = await repo.listEmployeesPage(page: page, perPage: 100);
+        all.addAll(r.rows);
+        if (!r.hasNext) {
+          complete = true;
+          break;
+        }
+      }
+      if (!mounted || date != _date) return;
+      final ids = complete ? [for (final e in employeesWithoutRecord(all, {for (final d in days) d.employeeId}, date)) e.id] : const <String>[];
+      setState(() => _notCalculated = ids);
+    } catch (_) {
+      if (mounted && date == _date) setState(() => _notCalculated = const []);
+    }
+  }
+
+  Future<void> _recalculate() async {
+    final ids = _notCalculated;
+    setState(() => _queuing = true);
+    try {
+      await ref.read(apiClientProvider).post<Object?>('/attendance/days/calculate-range', body: {'date_from': _date, 'date_to': _date, 'employee_ids': ids}, parse: (_) => null);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Calculation queued for ${ids.length} ${ids.length == 1 ? 'day' : 'days'}. Refresh in a minute to see them counted.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? 'Could not queue the calculation: ${e.message}' : 'Could not queue the calculation.')));
+    } finally {
+      if (mounted) setState(() => _queuing = false);
+    }
+  }
+
+  Widget _notCalculatedNotice(BuildContext context, bool canRecalculate) {
+    final n = _notCalculated.length;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: toneColors(context, Tone.warning).bg, borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Not calculated: $n.', style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text('${n == 1 ? 'One employed person has' : '$n employed people have'} no calculated day for ${formatDayDate(_date)}, so they are missing from the figures here.', style: TextStyle(color: scheme.onSurfaceVariant)),
+        if (canRecalculate && n <= recalculateMaxEmployees)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: OutlinedButton(onPressed: _queuing ? null : _recalculate, child: Text(_queuing ? 'Queuing…' : 'Recalculate')),
+            ),
+          ),
+      ]),
+    );
   }
 
   Future<void> _pickDate() async {
@@ -307,6 +384,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                                 ),
                               ),
                             ),
+                          if (_notCalculated.isNotEmpty) _notCalculatedNotice(context, permissions.contains(attendanceRecompute)),
                           if (_flag == 'not_checked_in' && (widget.missing ?? 0) > 0)
                             Padding(
                               padding: const EdgeInsets.only(bottom: 8),

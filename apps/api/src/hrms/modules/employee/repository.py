@@ -1,7 +1,7 @@
 """Pure-query repository for the employee module — no business rules (Module Standard §2),
 mirroring `organisation/repository.py`'s own convention exactly."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -736,6 +736,23 @@ class EmployeeAssignmentRepository:
             EmployeeAssignment.effective_to.is_(None),
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def current_branch_ids(
+        self, session: AsyncSession, *, company_id: UUID, employee_ids: Iterable[UUID]
+    ) -> dict[UUID, UUID | None]:
+        """The current assignment's branch for each given employee, in one query. An employee
+        with no current assignment is absent; one with an assignment but no branch maps to
+        `None`."""
+        ids = list(employee_ids)
+        if not ids:
+            return {}
+        stmt = select(EmployeeAssignment.employee_id, EmployeeAssignment.branch_id).where(
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.employee_id.in_(ids),
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+        )
+        return {employee_id: branch_id for employee_id, branch_id in await session.execute(stmt)}
 
     async def get_assignment_as_of(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, as_of: date

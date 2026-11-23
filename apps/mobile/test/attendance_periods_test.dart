@@ -169,6 +169,24 @@ void main() {
       expect(find.text('Pending attendance corrections — 3'), findsOneWidget);
     });
 
+    testWidgets('validate says what closing will do to incomplete days, even when nothing blocks it (R-F02)', (tester) async {
+      final api = _api(objects: {
+        '/attendance-periods/p1/validate': {
+          'status': 'READY',
+          'validated_at': '2026-09-30T10:00:00Z',
+          'reasons': [],
+          'notices': [
+            {'code': 'ABSENT_AT_LOCK', 'count': 3, 'message': 'These incomplete days will be counted as absent (unpaid) when the period is closed'}
+          ],
+        },
+      });
+      await _pump(tester, api, [attendanceLock], const AttendancePeriodDetailScreen(periodId: 'p1'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Validate'));
+      await tester.pumpAndSettle();
+      expect(find.text('What closing will do'), findsOneWidget);
+      expect(find.text('Incomplete days that will be counted absent — 3'), findsOneWidget);
+    });
+
     testWidgets('finalize carries the version and surfaces blocking reasons from a refusal', (tester) async {
       final api = _api(failing: {
         '/attendance-periods/p1/finalize': ApiError(status: 409, code: 'ATTENDANCE_PERIOD_BLOCKED', message: 'blocked', details: [
