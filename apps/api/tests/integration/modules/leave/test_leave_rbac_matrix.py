@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from tests.integration.branch_access_support import grant_all_branches
 from tests.integration.modules.attendance.test_attendance_security import _cleanup_scoped_users
 from tests.integration.modules.leave.test_leave_application import (
     _register_tenant,
@@ -116,7 +117,8 @@ _ROUTES: list[tuple[str, str, dict | None, set[str]]] = [
 async def _user_with_default_role(
     company_id: UUID, role_code: str, employee_id: UUID
 ) -> dict[str, str]:
-    """A fresh active user whose only role is the company's real default role `role_code`."""
+    """A fresh active user whose only role is the company's real default role `role_code`. An
+    `HR_ADMIN` is also assigned every branch of the company, as the migration backfill does."""
     async with get_session_factory()() as session:
         await set_rls_company_id(session, str(company_id))
         role = (
@@ -159,6 +161,10 @@ async def _user_with_default_role(
             )
         )
         await session.commit()
+    if role_code == "HR_ADMIN":
+        # HR_ADMIN covers its assigned branches. An HR migrated from before branch assignment holds
+        # every branch, so this models that HR (the tests here check what HR may do, not the list).
+        await grant_all_branches(company_id, user_id)
     token = create_access_token(
         user_id=user_id, company_id=company_id, session_id=session_id, employee_id=employee_id
     )

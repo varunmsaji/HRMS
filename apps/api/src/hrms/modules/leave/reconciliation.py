@@ -648,16 +648,19 @@ class LeaveCalendarReconciliationService:
         return None
 
     async def _recipients(self, company_id: UUID, employee_id: UUID) -> list[UUID | None]:
-        """The employee, and HR (company-wide leave approvers)."""
+        """The employee, and the HR who can act on their leave (company-wide, or limited to the
+        employee's branch)."""
         from hrms.modules.leave.permissions import LEAVE_APPLICATION_APPROVE
         from hrms.modules.notification.producer import (
             employee_user_id,
-            permission_holder_user_ids,
+            reviewer_user_ids_for_employee,
         )
 
         return [
             await employee_user_id(self._session, company_id, employee_id),
-            *await permission_holder_user_ids(self._session, company_id, LEAVE_APPLICATION_APPROVE),
+            *await reviewer_user_ids_for_employee(
+                self._session, company_id, LEAVE_APPLICATION_APPROVE, employee_id
+            ),
         ]
 
     async def _record_change(

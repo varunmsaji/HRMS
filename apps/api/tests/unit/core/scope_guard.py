@@ -13,6 +13,11 @@ company-wide one. This module finds those handlers with the `ast` module (no reg
   `DataScope`, e.g. `_attendance_view_scope`, `_combined_balance_scope`);
 * imperative: `x = await rbac.resolve_data_scope(...)` where `x` is never read.
 
+One dependency applies the scope itself instead of handing it to the handler: `case_access(code)`
+(`modules/onboarding/access.py`) checks the permission and then 404s a case outside a
+branch-restricted caller's branches before the handler runs. A parameter bound to it is therefore
+not an ignored scope, and `_APPLIES_SCOPE_ITSELF` is the only such name the guard accepts.
+
 "Uses the scope" means the bound name is read anywhere in the handler body (including being
 forwarded to a service). It cannot prove the callee filters correctly - that stays the job of the
 runtime scope tests - but it does catch the exact defect class found in B6/B10.
@@ -24,6 +29,9 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[3] / "src" / "hrms"
 _HTTP = {"get", "post", "put", "patch", "delete"}
+#: Dependencies that enforce the data scope inside the dependency (see the module docstring). Keep
+#: this list to dependencies whose own tests prove the enforcement.
+_APPLIES_SCOPE_ITSELF = ("case_access",)
 
 
 @dataclass(frozen=True)
@@ -102,6 +110,14 @@ def _dependency_permissions(
     return found
 
 
+def _applies_scope_itself(*nodes: ast.AST | None) -> bool:
+    return any(
+        node is not None and any(_is_call_to(sub, name) for sub in ast.walk(node))
+        for node in nodes
+        for name in _APPLIES_SCOPE_ITSELF
+    )
+
+
 def _mentions_datascope(annotation: ast.AST | None) -> bool:
     return annotation is not None and any(
         isinstance(n, ast.Name) and n.id == "DataScope" for n in ast.walk(annotation)
@@ -154,6 +170,8 @@ def scan_source(source: str, module: str, consts: dict[str, str]) -> list[Handle
         defaults = [None] * (len(args.args) + len(args.posonlyargs) - len(args.defaults))
         defaults += list(args.defaults) + list(args.kw_defaults)
         for param, default in zip(params, defaults, strict=False):
+            if _applies_scope_itself(param.annotation, default):
+                continue
             perms: list[str] = []
             if param.annotation is not None:
                 perms += _dependency_permissions(param.annotation, consts, aliases)

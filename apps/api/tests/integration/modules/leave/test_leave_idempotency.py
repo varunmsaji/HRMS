@@ -16,6 +16,7 @@ import pytest
 from entrypoints.api import app
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from tests.integration.branch_access_support import place_at_one_branch
 from tests.integration.modules.attendance.test_attendance_period import (
     _cleanup_attendance_period,
     _insert_closed_period,
@@ -707,6 +708,7 @@ async def test_replay_does_not_bypass_authorisation_and_is_bound_to_the_requeste
             assert denied.status_code == 403, denied.text
             assert "Idempotent-Replayed" not in denied.headers
         # another holder of the permission cannot replay the first user's result either
+        await place_at_one_branch(company_id, [employee_id])  # the HR covers this employee's branch
         other_admin = await _user_with_default_role(company_id, "HR_ADMIN", employee_id)
         stolen = await _post(client, other_admin, ADJUST, body, key)
         assert stolen.status_code == 409

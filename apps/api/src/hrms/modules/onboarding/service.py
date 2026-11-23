@@ -19,10 +19,11 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.locks import lock_onboarding_case_email
 from hrms.core.db.session import set_rls_company_id
-from hrms.core.errors.base import AppError, NotFoundError
+from hrms.core.errors.base import AppError, NotFoundError, PermissionDeniedError
 from hrms.core.links import mobile_link
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
+from hrms.core.rbac.types import DataScope
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.account_invite.email_templates import LoginDetails
 from hrms.modules.attendance.face_policy import FacePolicyService
@@ -385,12 +386,38 @@ class OnboardingCaseService:
         )
 
     @logged_operation("recruitment.onboarding_case.create")
+    async def visible_branch_ids(
+        self, company_id: UUID, scope: DataScope | None
+    ) -> frozenset[UUID] | None:
+        """The live branches a branch-restricted caller may see cases in; `None` for everyone else
+        (no filter). A deactivated or deleted branch drops out of the set."""
+        if scope is None or not scope.is_branch_restricted:
+            return None
+        if not scope.branch_ids:
+            return frozenset()
+        from hrms.modules.organisation.service import OrganisationService
+
+        return await OrganisationService(self._session, self._settings).filter_active_branch_ids(
+            company_id, scope.branch_ids
+        )
+
+    async def assert_case_in_scope(self, company_id: UUID, case_id: UUID, scope: DataScope) -> None:
+        """404 for a case a branch-restricted caller cannot reach: another branch, no branch, or a
+        deactivated one. A missing case is left to the route's own 404."""
+        visible = await self.visible_branch_ids(company_id, scope)
+        if visible is None:
+            return
+        case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None or case.branch_id is None or case.branch_id not in visible:
+            raise NotFoundError("Resource not found")
+
     async def create_case(
         self,
         company_id: UUID,
         body: OnboardingCaseCreate,
         *,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> OnboardingCaseRead:
@@ -399,6 +426,14 @@ class OnboardingCaseService:
         # convention (`EmployeeService.create_employee`); every authenticated route's
         # `TenantContext.user_id` (this parameter's sole caller) is always populated.
         assert actor_user_id is not None
+        visible = await self.visible_branch_ids(company_id, scope)
+        if visible is not None and (body.branch_id is None or body.branch_id not in visible):
+            # A restricted caller must name a branch they cover, or the case would be hidden from
+            # them (and everyone else limited to other branches) the moment it exists.
+            raise PermissionDeniedError(
+                "Choose one of the branches assigned to you for this onboarding case",
+                code="BRANCH_NOT_ASSIGNED",
+            )
         if body.designation_id is not None:
             await self._assert_designation_ownership(company_id, body.designation_id)
         if body.department_id is not None:
@@ -456,23 +491,34 @@ class OnboardingCaseService:
         return read
 
     async def list_cases(
-        self, company_id: UUID, *, status: str | None = None, page: PageParams | None = None
+        self,
+        company_id: UUID,
+        *,
+        status: str | None = None,
+        page: PageParams | None = None,
+        scope: DataScope | None = None,
     ) -> tuple[list[OnboardingCaseRead], int]:
         """`page=None` returns every case, unpaginated, with `total` equal to that same count —
         the exact shape this method had before FINDING-03. `GET /onboarding-cases` always passes
         `page`."""
+        branch_ids = await self.visible_branch_ids(company_id, scope)
         if page is None:
-            cases = await self._repo.list_cases(self._session, company_id=company_id, status=status)
+            cases = await self._repo.list_cases(
+                self._session, company_id=company_id, status=status, branch_ids=branch_ids
+            )
             reads = [onboarding_case_to_read(case) for case in cases]
             return reads, len(reads)
         cases = await self._repo.list_cases(
             self._session,
             company_id=company_id,
             status=status,
+            branch_ids=branch_ids,
             limit=page.limit,
             offset=page.offset,
         )
-        total = await self._repo.count_cases(self._session, company_id=company_id, status=status)
+        total = await self._repo.count_cases(
+            self._session, company_id=company_id, status=status, branch_ids=branch_ids
+        )
         return [onboarding_case_to_read(case) for case in cases], total
 
     async def get_case(self, company_id: UUID, case_id: UUID) -> OnboardingCaseRead:

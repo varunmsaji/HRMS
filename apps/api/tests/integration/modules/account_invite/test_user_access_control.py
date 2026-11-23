@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from tests.integration.branch_access_support import make_branch
 
 from hrms.core.audit.models import AuditLog
 from hrms.core.db.models.identity import UserCompany, UserRole
@@ -227,7 +228,10 @@ async def test_multi_role_user_gets_union_of_permissions(
             await client.patch(
                 f"/v1/users/{user.user_id}/roles",
                 headers=tenant.headers,
-                json={"role_codes": ["EMPLOYEE", "HR_ADMIN"]},
+                json={
+                    "role_codes": ["EMPLOYEE", "HR_ADMIN"],
+                    "branch_ids": [str(await make_branch(tenant.company_id))],
+                },
             )
         ).status_code == 200
         both = set(
@@ -306,7 +310,10 @@ async def test_assign_roles_duplicate_codes_do_not_create_duplicate_grants(
         r = await client.patch(
             f"/v1/users/{target.user_id}/roles",
             headers=tenant.headers,
-            json={"role_codes": ["HR_ADMIN", "HR_ADMIN", "HR_ADMIN"]},
+            json={
+                "role_codes": ["HR_ADMIN", "HR_ADMIN", "HR_ADMIN"],
+                "branch_ids": [str(await make_branch(tenant.company_id))],
+            },
         )
         assert r.status_code == 200, r.text
         factory = get_session_factory()
@@ -414,7 +421,10 @@ async def test_role_assignment_and_invites_are_audited(
         r = await client.patch(
             f"/v1/users/{target.user_id}/roles",
             headers=tenant.headers,
-            json={"role_codes": ["HR_ADMIN"]},
+            json={
+                "role_codes": ["HR_ADMIN"],
+                "branch_ids": [str(await make_branch(tenant.company_id))],
+            },
         )
         assert r.status_code == 200
         factory = get_session_factory()

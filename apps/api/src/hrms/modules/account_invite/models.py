@@ -16,7 +16,8 @@ needed, applied up front here instead of as a follow-up fix)."""
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +42,12 @@ class AccountInvite(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
     )
     role_code: Mapped[str] = mapped_column(String(60))
+    #: Branches an invited HR / branch manager will cover once they accept (applied to
+    #: `user_branch_access` at accept time). Empty for every other role. Not a foreign key: each id
+    #: is re-checked against the company's live branches when the invite is accepted.
+    branch_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PG_UUID(as_uuid=True)), default=list, server_default=text("'{}'")
+    )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

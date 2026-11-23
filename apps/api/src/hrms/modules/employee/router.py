@@ -212,14 +212,23 @@ async def create_employee(
     request: Request,
     response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_CREATE))],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_CREATE))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     idempotency_key: Annotated[str | None, Depends(optional_idempotency_key)],
 ) -> DataEnvelope[EmployeeRead]:
     """`Idempotency-Key` is optional (API audit H-4): without it every call creates an employee;
     with it a retry after a lost response replays the first result (header
-    `Idempotent-Replayed: true`) instead of creating a second employee."""
+    `Idempotent-Replayed: true`) instead of creating a second employee.
+
+    A caller limited to their assigned branches cannot create an employee here: this route carries
+    no branch, so the new employee would be invisible to them. They use onboarding, which does."""
+    if scope.is_branch_restricted:
+        raise PermissionDeniedError(
+            "Creating an employee directly is not available for branch-restricted access; "
+            "start an onboarding case for the branch instead",
+            code="BRANCH_RESTRICTED_USE_ONBOARDING",
+        )
 
     def execute() -> Awaitable[EmployeeRead]:
         return service.create_employee(

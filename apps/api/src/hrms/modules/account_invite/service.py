@@ -25,10 +25,15 @@ from hrms.modules.account_invite.email_templates import LoginDetails, build_acco
 from hrms.modules.account_invite.exceptions import (
     AccountCreationConflictError,
     AccountInviteInvalidError,
+    BranchAccessNotApplicableError,
+    BranchAccessRequiredError,
     EmployeeAlreadyHasAccountError,
     EmployeeMissingEmailError,
+    InactiveBranchError,
     InvalidRoleCodeError,
+    InviteBranchesUnavailableError,
     RoleRequiredError,
+    SelfBranchChangeNotAllowedError,
     SelfRoleChangeNotAllowedError,
     UserAlreadyInCompanyError,
 )
@@ -65,6 +70,17 @@ ASSIGNABLE_ROLE_CODES = (
 )
 
 
+#: Roles whose reach is the admin-assigned branch list (`user_branch_access`). A user who also holds
+#: `COMPANY_ADMIN` ignores the list and keeps the whole company.
+BRANCH_ROLE_CODES = ("HR_ADMIN", "BRANCH_MANAGER")
+
+
+def _needs_branches(role_codes: list[str]) -> bool:
+    """Whether this role set is branch-restricted: it holds HR or branch manager and no company
+    admin. Such a user must cover at least one branch."""
+    return bool(set(role_codes) & set(BRANCH_ROLE_CODES)) and "COMPANY_ADMIN" not in role_codes
+
+
 class AccountInviteService:
     def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
@@ -72,6 +88,20 @@ class AccountInviteService:
         self._repo = AccountInviteRepository()
         self._identity_repo = IdentityRepository()
         self._audit = AuditService()
+
+    async def _validated_branch_ids(self, company_id: UUID, branch_ids: list[UUID]) -> list[UUID]:
+        """Every id must be a live branch of THIS company. A foreign, unknown or deleted branch is
+        the same not-found answer used for any cross-tenant id; an inactive one is a validation
+        error."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        organisation = OrganisationService(self._session, self._settings)
+        ids = list(dict.fromkeys(branch_ids))
+        for branch_id in ids:
+            branch = await organisation.get_branch(company_id, branch_id)
+            if not branch.is_active:
+                raise InactiveBranchError(branch_id)
+        return ids
 
     async def issue_for_employee(
         self,
@@ -149,6 +179,7 @@ class AccountInviteService:
             email=body.email.lower(),
             employee_id=None,
             role_code=body.role_code,
+            branch_ids=body.branch_ids,
             first_name=None,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
@@ -168,9 +199,19 @@ class AccountInviteService:
         user_agent: str | None,
         employee_code: str | None = None,
         send_email: bool = True,
+        branch_ids: list[UUID] | None = None,
     ) -> AccountInviteRead:
         if role_code not in ASSIGNABLE_ROLE_CODES:
             raise InvalidRoleCodeError(role_code)
+        if role_code in BRANCH_ROLE_CODES:
+            # Never create an HR / branch manager with no access.
+            invite_branch_ids = await self._validated_branch_ids(company_id, branch_ids or [])
+            if not invite_branch_ids:
+                raise BranchAccessRequiredError()
+        elif branch_ids:
+            raise BranchAccessNotApplicableError()
+        else:
+            invite_branch_ids = []
         role = await self._repo.get_role_by_code(
             self._session, company_id=company_id, code=role_code
         )
@@ -201,6 +242,7 @@ class AccountInviteService:
                 "email": email,
                 "employee_id": employee_id,
                 "role_code": role_code,
+                "branch_ids": invite_branch_ids,
                 "token_hash": token_hash,
                 "created_by_user_id": actor_user_id,
                 "expires_at": expires_at,
@@ -244,6 +286,7 @@ class AccountInviteService:
             id=invite.id,
             email=email,
             role_code=role_code,
+            branch_ids=invite_branch_ids,
             expires_at=expires_at,
             invite_url=invite_url,
             email_sent=queued,
@@ -431,6 +474,37 @@ class AccountInviteService:
             self._session, user_company_id=user_company.id, role_id=role.id
         )
 
+        if invite.role_code in BRANCH_ROLE_CODES:
+            # Re-check at accept time: a branch named by the invite may have been deactivated since.
+            # With none left, nothing is created (this transaction rolls back) rather than leaving
+            # an HR / branch manager with no access.
+            from hrms.modules.organisation.service import OrganisationService
+
+            live_branches = await OrganisationService(
+                self._session, self._settings
+            ).filter_active_branch_ids(invite.company_id, frozenset(invite.branch_ids or []))
+            if not live_branches:
+                raise InviteBranchesUnavailableError()
+            await self._repo.replace_branch_access(
+                self._session,
+                company_id=invite.company_id,
+                user_id=user_id,
+                branch_ids=set(live_branches),
+                actor_user_id=invite.created_by_user_id,
+                now=now,
+            )
+            await self._audit.record(
+                self._session,
+                company_id=invite.company_id,
+                actor_user_id=invite.created_by_user_id,
+                action="USER_BRANCH_ACCESS_SET",
+                entity_type="user",
+                entity_id=user_id,
+                after={"branch_ids": sorted(str(b) for b in live_branches)},
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
         if invite.employee_id is not None:
             from hrms.modules.employee.repository import EmployeeRepository
 
@@ -514,6 +588,9 @@ class AccountInviteService:
             total = await self._repo.count_user_companies_for_company(
                 self._session, company_id=company_id
             )
+        branches_by_user = await self._repo.list_live_branch_ids_for_users(
+            self._session, company_id=company_id, user_ids=[user.id for _, user in rows]
+        )
         summaries = []
         for user_company, user in rows:
             role_codes = await self._repo.list_role_codes_for_user_company(
@@ -528,6 +605,7 @@ class AccountInviteService:
                     is_primary=user_company.is_primary,
                     status=user_company.status,
                     role_codes=sorted(role_codes),
+                    branch_ids=branches_by_user.get(user.id, []),
                 )
             )
         return summaries, total
@@ -573,6 +651,22 @@ class AccountInviteService:
                 raise InvalidRoleCodeError(code)
             role_ids.append(role.id)
 
+        # Branches are decided before anything is written, and applied in this same transaction as
+        # the roles: a failure anywhere leaves both unchanged.
+        new_branch_ids: list[UUID] | None = None
+        if _needs_branches(role_codes):
+            if body.branch_ids is not None:
+                new_branch_ids = await self._validated_branch_ids(company_id, body.branch_ids)
+                keeping = new_branch_ids
+            else:
+                keeping = (
+                    await self._repo.list_live_branch_ids_for_users(
+                        self._session, company_id=company_id, user_ids=[target_user_id]
+                    )
+                ).get(target_user_id, [])
+            if not keeping:
+                raise BranchAccessRequiredError()
+
         await self._repo.replace_user_roles(
             self._session, user_company_id=membership.id, role_ids=role_ids
         )
@@ -589,4 +683,96 @@ class AccountInviteService:
             user_agent=user_agent,
         )
 
+        if _needs_branches(role_codes):
+            if new_branch_ids is not None:
+                await self._apply_branches(
+                    company_id,
+                    target_user_id,
+                    new_branch_ids,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+        else:
+            # Dropping both roles (or holding company admin, which ignores the list) clears it, so
+            # a stale list can never silently come back if the role is granted again later.
+            await self._apply_branches(
+                company_id,
+                target_user_id,
+                [],
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
         return role_codes
+
+    async def _apply_branches(
+        self,
+        company_id: UUID,
+        target_user_id: UUID,
+        branch_ids: list[UUID],
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        changed = await self._repo.replace_branch_access(
+            self._session,
+            company_id=company_id,
+            user_id=target_user_id,
+            branch_ids=set(branch_ids),
+            actor_user_id=actor_user_id,
+            now=datetime.now(UTC),
+        )
+        if changed:
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="USER_BRANCH_ACCESS_SET",
+                entity_type="user",
+                entity_id=target_user_id,
+                after={"branch_ids": sorted(str(b) for b in branch_ids)},
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
+    async def set_branches(
+        self,
+        company_id: UUID,
+        target_user_id: UUID,
+        branch_ids: list[UUID],
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> list[UUID]:
+        """`PUT /users/{user_id}/branches` — replaces the branches an HR / branch manager covers.
+        Only a user who holds one of those roles may have a list; at least one active branch of
+        this company is required (clearing the list means removing the roles); nobody edits their
+        own list."""
+        if target_user_id == actor_user_id:
+            raise SelfBranchChangeNotAllowedError()
+        membership = await self._identity_repo.get_user_company(
+            self._session, user_id=target_user_id, company_id=company_id
+        )
+        if membership is None:
+            raise NotFoundError("Resource not found")
+        role_codes = await self._repo.list_role_codes_for_user_company(
+            self._session, user_company_id=membership.id
+        )
+        if not set(role_codes) & set(BRANCH_ROLE_CODES):
+            raise BranchAccessNotApplicableError()
+        ids = await self._validated_branch_ids(company_id, branch_ids)
+        if not ids:
+            raise BranchAccessRequiredError()
+        await self._apply_branches(
+            company_id,
+            target_user_id,
+            ids,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return ids

@@ -1650,7 +1650,7 @@ async def cancel_regularization_request(
     on_behalf_scope = await rbac.resolve_data_scope(
         user.user_id, user.company_id, ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF
     )
-    combined_scope = DataScope(levels=self_scope.levels | on_behalf_scope.levels)
+    combined_scope = DataScope.union(self_scope, on_behalf_scope)
     if not combined_scope.levels:
         raise PermissionDeniedError(
             f"Permission {ATTENDANCE_REGULARIZATION_REQUEST} is required", code="PERMISSION_DENIED"
@@ -1888,7 +1888,7 @@ async def _attendance_view_scope(
     a VIEW_ALL grant below COMPANY stays below COMPANY. Neither held -> 403."""
     view = await rbac.resolve_data_scope(user.user_id, user.company_id, ATTENDANCE_VIEW)
     view_all = await rbac.resolve_data_scope(user.user_id, user.company_id, ATTENDANCE_VIEW_ALL)
-    combined = DataScope(levels=view.levels | view_all.levels)
+    combined = DataScope.union(view, view_all)
     if not combined.levels:
         raise PermissionDeniedError(
             f"Permission {ATTENDANCE_VIEW} is required", code="PERMISSION_DENIED"

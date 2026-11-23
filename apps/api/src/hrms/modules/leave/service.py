@@ -2542,6 +2542,22 @@ class LeaveApplicationService:
             company_id, scope, caller_employee_id
         )
 
+    async def _hr_stage_allowed(
+        self, company_id: UUID, employee_id: UUID, scope: DataScope
+    ) -> bool:
+        """A genuine `COMPANY` grant approves anyone. An HR whose `COMPANY` grant was narrowed to
+        assigned branches (`DataScope.company_grant_restricted`) approves only an employee placed
+        at one of them; a `BRANCH_MANAGER`'s narrowed grant is never accepted at the HR stage."""
+        if DataScopeLevel.COMPANY in scope.levels:
+            return True
+        if not scope.company_grant_restricted:
+            return False
+        from hrms.modules.employee.service import EmployeeService
+
+        return await EmployeeService(self._session).is_employee_in_assigned_branches(
+            company_id, employee_id, scope
+        )
+
     async def _ensure_employee_visible(
         self,
         company_id: UUID,
@@ -3441,9 +3457,10 @@ class LeaveApplicationService:
             if caller_employee_id is None or caller_employee_id != row.resolved_department_head_id:
                 raise LeaveApplicationApproverMismatchError()
         else:  # HR
-            if DataScopeLevel.COMPANY not in scope.levels:
+            if not await self._hr_stage_allowed(company_id, row.employee_id, scope):
                 raise LeaveApplicationApproverMismatchError(
-                    "HR-stage approval requires a company-wide LEAVE.APPLICATION_APPROVE grant"
+                    "HR-stage approval requires a company-wide LEAVE.APPLICATION_APPROVE grant, "
+                    "or the employee's branch among your assigned branches"
                 )
         return row
 
@@ -3639,7 +3656,7 @@ class LeaveApplicationService:
         re-resolution from the org chart happens, and afterwards only the newly assigned person
         can act on that stage (the stage check compares the caller to the snapshotted id this
         rewrites). Version-guarded, so a stale client gets the normal 409."""
-        if DataScopeLevel.COMPANY not in scope.levels:
+        if DataScopeLevel.COMPANY not in scope.levels and not scope.company_grant_restricted:
             raise PermissionDeniedError(
                 "Reassigning an approver requires a company-wide LEAVE.APPLICATION_REASSIGN grant"
             )
@@ -3648,6 +3665,11 @@ class LeaveApplicationService:
         )
         if row is None:
             raise LeaveApplicationNotFoundError()
+        if not await self._hr_stage_allowed(company_id, row.employee_id, scope):
+            raise PermissionDeniedError(
+                "Reassigning an approver requires the employee's branch among your assigned "
+                "branches"
+            )
         if row.status != "SUBMITTED" or row.approval_stage not in ("MANAGER", "HOD"):
             raise LeaveApproverReassignNotApplicableError()
         if row.version != expected_version:

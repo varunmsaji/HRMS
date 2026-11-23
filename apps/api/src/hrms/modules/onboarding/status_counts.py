@@ -14,15 +14,21 @@ class OnboardingStatusCounts(BaseModel):
 
 
 async def onboarding_status_counts(
-    session: AsyncSession, company_id: UUID
+    session: AsyncSession, company_id: UUID, *, branch_ids: frozenset[UUID] | None = None
 ) -> OnboardingStatusCounts:
+    """`branch_ids=None` counts every case; a set counts only cases in those branches (an empty
+    set counts nothing, and a case with no branch is never counted)."""
+    where = "company_id = :cid"
+    params: dict[str, object] = {"cid": company_id}
+    if branch_ids is not None:
+        where += " AND branch_id = ANY(:bids)"
+        params["bids"] = list(branch_ids)
     rows = (
         await session.execute(
             text(
-                "SELECT status, count(*) AS n FROM onboarding_case "
-                "WHERE company_id = :cid GROUP BY status"
-            ),
-            {"cid": company_id},
+                f"SELECT status, count(*) AS n FROM onboarding_case WHERE {where} GROUP BY status"
+            ),  # noqa: S608
+            params,
         )
     ).all()
     by_status = {r.status: int(r.n) for r in rows}

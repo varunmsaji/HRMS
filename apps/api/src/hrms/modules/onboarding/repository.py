@@ -55,7 +55,9 @@ class OnboardingCaseRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    def _list_conditions(self, *, company_id: UUID, status: str | None) -> list[Any]:
+    def _list_conditions(
+        self, *, company_id: UUID, status: str | None, branch_ids: frozenset[UUID] | None = None
+    ) -> list[Any]:
         """Shared WHERE predicates for `list_cases`/`count_cases` (FINDING-03) — kept identical
         between the two so pagination and the `total` it reports always agree."""
         conditions: list[Any] = [
@@ -64,6 +66,10 @@ class OnboardingCaseRepository:
         ]
         if status is not None:
             conditions.append(OnboardingCase.status == status)
+        if branch_ids is not None:
+            # `None` is "no filter"; an empty set matches nothing (and a case with no branch never
+            # matches, since NULL is in no set).
+            conditions.append(OnboardingCase.branch_id.in_(branch_ids))
         return conditions
 
     async def list_cases(
@@ -72,6 +78,7 @@ class OnboardingCaseRepository:
         *,
         company_id: UUID,
         status: str | None = None,
+        branch_ids: frozenset[UUID] | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[OnboardingCase]:
@@ -81,7 +88,9 @@ class OnboardingCaseRepository:
         Python list. `id` is a stable secondary key — `created_at` alone can tie for cases created
         in the same request burst (e.g. a bulk import), which would make page boundaries
         non-deterministic."""
-        conditions = self._list_conditions(company_id=company_id, status=status)
+        conditions = self._list_conditions(
+            company_id=company_id, status=status, branch_ids=branch_ids
+        )
         stmt = (
             select(OnboardingCase)
             .where(*conditions)
@@ -92,11 +101,18 @@ class OnboardingCaseRepository:
         return list((await session.execute(stmt)).scalars().all())
 
     async def count_cases(
-        self, session: AsyncSession, *, company_id: UUID, status: str | None = None
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        status: str | None = None,
+        branch_ids: frozenset[UUID] | None = None,
     ) -> int:
         """Same predicates as `list_cases`, no `ORDER BY`/`LIMIT` — the paired COUNT query for
         `GET /onboarding-cases`'s `pagination.total` (FINDING-03)."""
-        conditions = self._list_conditions(company_id=company_id, status=status)
+        conditions = self._list_conditions(
+            company_id=company_id, status=status, branch_ids=branch_ids
+        )
         stmt = select(func.count()).select_from(OnboardingCase).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 

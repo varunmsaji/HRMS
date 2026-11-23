@@ -521,7 +521,7 @@ async def _combined_balance_scope(user: AuthenticatedUser, rbac: RbacService) ->
     permission grants rather than a single static `require_permission` code."""
     self_scope = await rbac.resolve_data_scope(user.user_id, user.company_id, LEAVE_BALANCE_VIEW)
     all_scope = await rbac.resolve_data_scope(user.user_id, user.company_id, LEAVE_BALANCE_VIEW_ALL)
-    combined = DataScope(levels=self_scope.levels | all_scope.levels)
+    combined = DataScope.union(self_scope, all_scope)
     if not combined.levels:
         raise PermissionDeniedError(
             f"Permission {LEAVE_BALANCE_VIEW} is required", code="PERMISSION_DENIED"
@@ -812,9 +812,7 @@ async def cancel_leave_application(
     cancel_approved_scope = await rbac.resolve_data_scope(
         user.user_id, user.company_id, LEAVE_APPLICATION_CANCEL_APPROVED
     )
-    combined_scope = DataScope(
-        levels=self_scope.levels | on_behalf_scope.levels | cancel_approved_scope.levels
-    )
+    combined_scope = DataScope.union(self_scope, on_behalf_scope, cancel_approved_scope)
     if not combined_scope.levels:
         raise PermissionDeniedError(
             f"Permission {LEAVE_APPLICATION_SUBMIT} is required", code="PERMISSION_DENIED"
@@ -828,7 +826,10 @@ async def cancel_leave_application(
         actor_user_id=tenant.user_id,
         expected_version=parse_if_match(if_match),
         reason=body.reason if body else None,
-        can_cancel_approved=DataScopeLevel.COMPANY in cancel_approved_scope.levels,
+        can_cancel_approved=(
+            DataScopeLevel.COMPANY in cancel_approved_scope.levels
+            or cancel_approved_scope.company_grant_restricted
+        ),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

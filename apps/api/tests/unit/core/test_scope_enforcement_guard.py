@@ -151,6 +151,41 @@ async def checked(user, rbac, service):
     assert all(h.scope_params for h in handlers)
 
 
+def test_case_access_applies_the_scope_itself_and_is_not_flagged() -> None:
+    handlers = _scan(
+        """
+@router.get("/cases/{case_id}")
+async def get_case(
+    case_id,
+    _scope: Annotated[DataScope, Depends(case_access(ATTENDANCE_VIEW))],
+    service,
+):
+    return await service.get(case_id)
+"""
+    )
+    assert all(h.ignored == () for h in handlers)
+
+
+def test_case_access_does_not_hide_an_ignored_scope_elsewhere() -> None:
+    handlers = _scan(
+        """
+@router.get("/plain")
+async def plain(_scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))]):
+    return []
+
+@router.get("/mixed/{case_id}")
+async def mixed(
+    _case: Annotated[DataScope, Depends(case_access(ATTENDANCE_VIEW))],
+    _other: Annotated[DataScope, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+):
+    return []
+"""
+    )
+    ignored = {h.function: h.ignored for h in handlers}
+    assert ignored["plain"] == ("ATTENDANCE.VIEW",)
+    assert ignored["mixed"] == ("LEAVE.BALANCE_ADJUST",)
+
+
 # ------------------------------------------------------------------ the real repository
 
 

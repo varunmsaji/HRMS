@@ -2264,6 +2264,24 @@ async def _resolve_visible_employee_ids(
     )
 
 
+async def _hr_stage_allowed(
+    session: AsyncSession, company_id: UUID, employee_id: UUID, scope: DataScope
+) -> bool:
+    """HR-stage approval: a genuine `COMPANY` grant approves anyone in the company. An HR whose
+    `COMPANY` grant was narrowed to their assigned branches (`DataScope.company_grant_restricted`,
+    set only for `HR_ADMIN`) approves only an employee currently placed at one of those branches.
+    A `BRANCH_MANAGER`'s narrowed grant is never accepted at the HR stage."""
+    if DataScopeLevel.COMPANY in scope.levels:
+        return True
+    if not scope.company_grant_restricted:
+        return False
+    from hrms.modules.employee.service import EmployeeService
+
+    return await EmployeeService(session).is_employee_in_assigned_branches(
+        company_id, employee_id, scope
+    )
+
+
 async def _ensure_employee_visible(
     session: AsyncSession,
     company_id: UUID,
@@ -6529,10 +6547,12 @@ class RegularizationRequestService:
             if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
                 raise RegularizationApproverMismatchError()
         else:  # HR
-            # §14: "HR -> any user with ATTENDANCE.REGULARISE_APPROVE at COMPANY".
-            if DataScopeLevel.COMPANY not in scope.levels:
+            # §14: "HR -> any user with ATTENDANCE.REGULARISE_APPROVE at COMPANY" - or, for an HR
+            # assigned to branches, one whose assigned branches include the employee's branch.
+            if not await _hr_stage_allowed(self._session, company_id, row.employee_id, scope):
                 raise RegularizationApproverMismatchError(
-                    "HR-stage approval requires a company-wide REGULARIZATION_APPROVE grant"
+                    "HR-stage approval requires a company-wide REGULARIZATION_APPROVE grant, "
+                    "or the employee's branch among your assigned branches"
                 )
         return row
 
@@ -7110,9 +7130,10 @@ class OvertimeRecordService:
             if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
                 raise OvertimeApproverMismatchError()
         else:  # HR
-            if DataScopeLevel.COMPANY not in scope.levels:
+            if not await _hr_stage_allowed(self._session, company_id, row.employee_id, scope):
                 raise OvertimeApproverMismatchError(
-                    "HR-stage approval requires a company-wide OVERTIME_APPROVE grant"
+                    "HR-stage approval requires a company-wide OVERTIME_APPROVE grant, "
+                    "or the employee's branch among your assigned branches"
                 )
         return row
 

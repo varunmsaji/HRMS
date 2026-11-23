@@ -6,8 +6,9 @@ function, called by the owning service right after each state change, works out 
 from the row as it now stands:
 
 * still awaiting a decision -> the reviewer(s) of the current stage: the snapshotted manager or
-  department head, or for the HR stage everyone holding the module's approve permission
-  company-wide (the same people the API lets act on it);
+  department head, or for the HR stage everyone who can act on it: company-wide holders of the
+  module's approve permission, and HR limited to assigned branches when the employee is in one
+  of them (the same people the API lets act on it);
 * decided (approved / applied / rejected / cancelled) -> the employee.
 
 Earlier "awaiting your approval" notifications for the request are marked read first, so the
@@ -28,7 +29,7 @@ from hrms.modules.notification.producer import (
     employee_name,
     employee_user_id,
     notify,
-    permission_holder_user_ids,
+    reviewer_user_ids_for_employee,
     settle,
 )
 from hrms.modules.notification.types import (
@@ -140,8 +141,11 @@ async def _stage_reviewers(
         user_id = await employee_user_id(session, company_id, snapshot)
         if user_id is not None:
             return [user_id]
-    # HR stage, or a reviewer with no login: the people who can act on it company-wide.
-    return await permission_holder_user_ids(session, company_id, flow.approve_permission)
+    # HR stage, or a reviewer with no login: the people who can act on it - company-wide holders,
+    # and HR limited to the employee's branch.
+    return await reviewer_user_ids_for_employee(
+        session, company_id, flow.approve_permission, row.employee_id
+    )
 
 
 async def notify_approval_change(

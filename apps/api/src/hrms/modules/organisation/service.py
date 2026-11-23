@@ -1422,6 +1422,17 @@ class OrganisationService:
             raise NotFoundError("Resource not found")
         return branch_to_read(branch)
 
+    async def filter_active_branch_ids(
+        self, company_id: UUID, branch_ids: frozenset[UUID]
+    ) -> frozenset[UUID]:
+        """Of `branch_ids`, those that are live branches of this company (active, not deleted).
+        A deactivated or deleted branch drops out of an assigned-branch scope."""
+        return frozenset(
+            await self._repo.list_active_branch_ids(
+                self._session, company_id=company_id, branch_ids=branch_ids
+            )
+        )
+
     async def _assert_master_not_in_use(
         self, company_id: UUID, *, kind: str, column: str, master_id: UUID
     ) -> None:

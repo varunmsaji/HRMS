@@ -5,7 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 
+from hrms.core.errors.base import PermissionDeniedError
 from hrms.core.rbac.dependencies import require_permission
+from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.core.uploads import read_upload_bounded
@@ -23,11 +25,25 @@ from hrms.shared.pagination import DataEnvelope, ListEnvelope
 router = APIRouter(tags=["employee_import"])
 
 
+async def import_access(
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+) -> DataScope:
+    """A bulk import places employees in any branch of the company and reads back every row, so it
+    is company-wide only. A caller limited to assigned branches is refused rather than trusted to
+    stay inside them."""
+    if scope.is_branch_restricted:
+        raise PermissionDeniedError(
+            "Bulk import is not available for branch-restricted access",
+            code="BRANCH_RESTRICTED_IMPORT",
+        )
+    return scope
+
+
 @router.post("/employee-imports", status_code=status.HTTP_201_CREATED)
 async def create_employee_import(
     file: Annotated[UploadFile, File()],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+    _scope: Annotated[object, Depends(import_access)],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> DataEnvelope[EmployeeImportBatchRead]:
     # SEC-03 — bounded read, mirroring the onboarding public upload fix; see
@@ -45,7 +61,7 @@ async def create_employee_import(
 
 @router.get("/employee-imports/template", status_code=status.HTTP_200_OK)
 async def get_employee_import_template(
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+    _scope: Annotated[object, Depends(import_access)],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> Response:
     csv_text = service.get_template()
@@ -59,7 +75,7 @@ async def get_employee_import_template(
 @router.get("/employee-imports/reference-data", status_code=status.HTTP_200_OK)
 async def get_employee_import_reference_data(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+    _scope: Annotated[object, Depends(import_access)],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> DataEnvelope[dict[str, list[dict[str, str]]]]:
     data = await service.get_reference_data(tenant.company_id)
@@ -70,7 +86,7 @@ async def get_employee_import_reference_data(
 async def get_employee_import(
     batch_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+    _scope: Annotated[object, Depends(import_access)],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> DataEnvelope[EmployeeImportBatchRead]:
     data = await service.get_batch(tenant.company_id, batch_id)
@@ -81,7 +97,7 @@ async def get_employee_import(
 async def list_employee_import_errors(
     batch_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
+    _scope: Annotated[object, Depends(import_access)],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> ListEnvelope[EmployeeImportRowErrorRead]:
     data = await service.list_row_errors(tenant.company_id, batch_id)

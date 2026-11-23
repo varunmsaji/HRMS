@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, text
+from tests.integration.branch_access_support import make_branch
 
 from hrms.core.auth.passwords import verify_password
 from hrms.core.db.models.identity import User
@@ -119,6 +120,12 @@ async def _teardown(
         await set_rls_company_id(session, str(company_id))
         await session.execute(
             text("DELETE FROM account_invite WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.execute(
+            text("DELETE FROM branch WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.execute(
+            text("DELETE FROM legal_entity WHERE company_id = :cid"), {"cid": str(company_id)}
         )
         await session.execute(
             text("DELETE FROM employee WHERE company_id = :cid"), {"cid": str(company_id)}
@@ -233,7 +240,11 @@ async def test_invite_existing_account_resolve_flags_existing_account(
         second_invite = await client.post(
             "/v1/users/invite",
             headers=headers,
-            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+            json={
+                "email": invitee_email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(company_id))],
+            },
         )
         second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
 
@@ -276,7 +287,11 @@ async def test_invite_existing_account_invite_alone_cannot_authenticate(
         second_invite = await client.post(
             "/v1/users/invite",
             headers=headers,
-            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+            json={
+                "email": invitee_email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(company_id))],
+            },
         )
         second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
 
@@ -327,7 +342,11 @@ async def test_invite_existing_account_correct_password_accepts(
         second_invite = await client.post(
             "/v1/users/invite",
             headers=second_headers,
-            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+            json={
+                "email": invitee_email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(second_company_id))],
+            },
         )
         second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
 
@@ -531,7 +550,11 @@ async def test_invite_user_creates_second_admin_success(
         response = await client.post(
             "/v1/users/invite",
             headers=headers,
-            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+            json={
+                "email": invitee_email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(company_id))],
+            },
         )
         assert response.status_code == 201, response.text
         token = _token_from_invite_url(response.json()["data"]["invite_url"])
@@ -574,7 +597,11 @@ async def test_invite_user_email_already_in_company_rejected(
         second_invite = await client.post(
             "/v1/users/invite",
             headers=headers,
-            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+            json={
+                "email": invitee_email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(company_id))],
+            },
         )
         second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
         second_accept = await client.post(
