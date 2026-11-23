@@ -215,7 +215,7 @@ async def test_production_account_invite_link_uses_the_configured_origin() -> No
         organisation.return_value.get_company_profile = AsyncMock(return_value=company)
         read = await service.issue_for_user(
             uuid4(),
-            SimpleNamespace(email="ada@example.com", role_code="EMPLOYEE"),
+            SimpleNamespace(email="ada@example.com", role_code="EMPLOYEE", branch_ids=None),
             actor_user_id=uuid4(),
         )
     assert read.invite_url.startswith(f"{_PRODUCTION_ORIGIN}/accept-invite/")

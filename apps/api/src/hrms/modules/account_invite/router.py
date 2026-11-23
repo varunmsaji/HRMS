@@ -16,6 +16,7 @@ from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.account_invite.dependencies import get_account_invite_service
 from hrms.modules.account_invite.schemas import (
     AccountInviteRead,
+    BranchAccessRequest,
     RoleAssignmentRequest,
     UserInviteRequest,
     UserSummary,
@@ -108,4 +109,28 @@ async def assign_user_roles(
     )
     return DataEnvelope(
         data={"role_codes": role_codes}, meta=build_meta(current_request_id() or "unknown")
+    )
+
+
+@router.put("/users/{user_id}/branches", status_code=status.HTTP_200_OK)
+async def set_user_branches(
+    user_id: UUID,
+    body: BranchAccessRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[DataScope, Depends(require_permission(SETTINGS_USER_MANAGE))],
+    service: Annotated[AccountInviteService, Depends(get_account_invite_service)],
+) -> DataEnvelope[dict[str, list[UUID]]]:
+    """Replaces the branches an HR administrator / branch manager covers. Company admin only
+    (`SETTINGS.USER.MANAGE`)."""
+    branch_ids = await service.set_branches(
+        tenant.company_id,
+        user_id,
+        body.branch_ids,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(
+        data={"branch_ids": branch_ids}, meta=build_meta(current_request_id() or "unknown")
     )

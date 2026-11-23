@@ -710,6 +710,22 @@ class EmployeeAssignmentRepository:
         )
         return set((await session.execute(stmt)).scalars().all())
 
+    async def get_employee_ids_in_branches(
+        self, session: AsyncSession, *, company_id: UUID, branch_ids: frozenset[UUID]
+    ) -> set[UUID]:
+        """`ASSIGNED_BRANCHES` resolution — employees whose *current* assignment (`effective_to IS
+        NULL`, not deleted) is at one of `branch_ids`. An employee with no current branch is in
+        none of them. Same current-row-only posture as `get_branch_colleague_ids`."""
+        if not branch_ids:
+            return set()
+        stmt = select(EmployeeAssignment.employee_id).where(
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.branch_id.in_(branch_ids),
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+        )
+        return set((await session.execute(stmt)).scalars().all())
+
     async def get_current_assignment(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
     ) -> EmployeeAssignment | None:

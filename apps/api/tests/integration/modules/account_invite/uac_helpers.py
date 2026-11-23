@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import redis.asyncio as redis
 from httpx import AsyncClient
 from sqlalchemy import select, text
+from tests.integration.branch_access_support import make_branch
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import User
@@ -48,6 +49,8 @@ class Tenant:
     company_id: UUID
     admin_user_id: UUID | None
     emails: list[str]
+    #: A branch created on demand for HR / branch-manager invites (they must cover one).
+    branch_id: UUID | None = None
 
 
 @dataclass
@@ -88,11 +91,12 @@ async def onboard(
     removes the user row."""
     email = email or f"{role_code.lower()}-{uuid4().hex[:8]}@example.com"
     tenant.emails.append(email)
-    invite = await client.post(
-        "/v1/users/invite",
-        headers=tenant.headers,
-        json={"email": email, "role_code": role_code},
-    )
+    body: dict[str, Any] = {"email": email, "role_code": role_code}
+    if role_code in ("HR_ADMIN", "BRANCH_MANAGER"):
+        if tenant.branch_id is None:
+            tenant.branch_id = await make_branch(tenant.company_id)
+        body["branch_ids"] = [str(tenant.branch_id)]
+    invite = await client.post("/v1/users/invite", headers=tenant.headers, json=body)
     assert invite.status_code == 201, invite.text
     token = _token_from_invite_url(invite.json()["data"]["invite_url"])
     accept = await client.post(

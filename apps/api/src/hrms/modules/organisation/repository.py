@@ -468,6 +468,20 @@ class OrganisationRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_active_branch_ids(
+        self, session: AsyncSession, *, company_id: UUID, branch_ids: frozenset[UUID]
+    ) -> set[UUID]:
+        """Which of `branch_ids` are live branches of this company (active, not deleted)."""
+        if not branch_ids:
+            return set()
+        stmt = select(Branch.id).where(
+            Branch.id.in_(branch_ids),
+            Branch.company_id == company_id,
+            Branch.deleted_at.is_(None),
+            Branch.is_active.is_(True),
+        )
+        return set((await session.execute(stmt)).scalars().all())
+
     async def update_branch(
         self,
         session: AsyncSession,

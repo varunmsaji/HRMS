@@ -16,7 +16,7 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.locks import lock_employee_leave_dates, lock_reporting_hierarchy
 from hrms.core.db.repositories.identity import IdentityRepository
-from hrms.core.errors.base import NotFoundError
+from hrms.core.errors.base import NotFoundError, PermissionDeniedError
 from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.core.storage import DocumentStorageService
@@ -206,6 +206,17 @@ class EmployeeService:
 
         visible: set[UUID] = set()
 
+        if DataScopeLevel.ASSIGNED_BRANCHES in scope.levels:
+            # The admin-assigned branch list (`user_branch_access`), not the caller's own job
+            # branch, and independent of `caller_employee_id`: an HR with no employee row still
+            # sees these branches. A deactivated or deleted branch drops out; an empty list adds
+            # nobody (fails closed, never the whole company).
+            visible |= await self._assignment_repo.get_employee_ids_in_branches(
+                self._session,
+                company_id=company_id,
+                branch_ids=await self._live_branch_ids(company_id, scope.branch_ids),
+            )
+
         if DataScopeLevel.SELF in scope.levels and caller_employee_id is not None:
             visible.add(caller_employee_id)
 
@@ -237,6 +248,35 @@ class EmployeeService:
         # Employee record for this user — Decisions doc, Decision B edge case): every branch
         # above is skipped, `visible` stays empty — fails closed, never falls back to COMPANY.
         return frozenset(visible)
+
+    async def _live_branch_ids(
+        self, company_id: UUID, branch_ids: frozenset[UUID]
+    ) -> frozenset[UUID]:
+        if not branch_ids:
+            return frozenset()
+        from hrms.modules.organisation.service import OrganisationService
+
+        return await OrganisationService(self._session, self._settings).filter_active_branch_ids(
+            company_id, branch_ids
+        )
+
+    async def is_employee_in_assigned_branches(
+        self, company_id: UUID, employee_id: UUID, scope: DataScope
+    ) -> bool:
+        """Whether the employee's *current* branch is one of the caller's assigned, live branches.
+        HR-stage approvals use this for a caller whose `COMPANY` grant was narrowed to assigned
+        branches (`DataScope.company_grant_restricted`); an employee with no current branch is
+        in none."""
+        if not scope.branch_ids:
+            return False
+        assignment = await self._assignment_repo.get_current_assignment(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if assignment is None or assignment.branch_id not in scope.branch_ids:
+            return False
+        return assignment.branch_id in await self._live_branch_ids(
+            company_id, frozenset({assignment.branch_id})
+        )
 
     async def resolve_employee_id_for_user(self, company_id: UUID, user_id: UUID) -> UUID | None:
         """Resolves the `employee_id` claim that login/refresh embeds in the JWT
@@ -2005,6 +2045,25 @@ class EmployeeAssignmentService:
                 )
             current = assignment.reporting_manager_id
 
+    async def _assert_branch_assignable(
+        self, company_id: UUID, scope: DataScope | None, branch_id: UUID
+    ) -> None:
+        """A caller limited to their assigned branches may only place or move an employee into one
+        of those branches, and only while it is still live. Anyone with company-wide reach (and
+        callers that pass no scope: internal ones) is unaffected."""
+        if scope is None or not scope.is_branch_restricted:
+            return
+        from hrms.modules.organisation.service import OrganisationService
+
+        live = await OrganisationService(self._session, self._settings).filter_active_branch_ids(
+            company_id, scope.branch_ids
+        )
+        if branch_id not in live:
+            raise PermissionDeniedError(
+                "You can only place employees in the branches assigned to you",
+                code="BRANCH_NOT_ASSIGNED",
+            )
+
     async def create_assignment(
         self,
         company_id: UUID,
@@ -2021,6 +2080,10 @@ class EmployeeAssignmentService:
         await self._assert_employee_visible(
             company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
         )
+        # Only a branch the caller explicitly sent is checked: one carried forward from the old
+        # assignment is not their choice, and an unrelated edit must not start failing.
+        if body.branch_id is not None:
+            await self._assert_branch_assignable(company_id, scope, body.branch_id)
 
         covering_employment = await self._employment_repo.get_employment_as_of(
             self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from

@@ -174,7 +174,9 @@ async def test_hr_admin_runtime_access_and_limits(
         hr = await onboard(client, tenant, "HR_ADMIN")
         h = hr.headers
 
-        # onboarding: create / list / read
+        # onboarding: create / list / read. An HR administrator covers assigned branches, so the
+        # case names one of them (a case without a branch is refused, see
+        # `test_onboarding_branch_scope.py`).
         case = await client.post(
             "/v1/onboarding-cases",
             headers=h,
@@ -184,6 +186,7 @@ async def test_hr_admin_runtime_access_and_limits(
                 "personal_email": f"asha-{uuid4().hex[:8]}@personal.example",
                 "personal_mobile": "9876543210",
                 "proposed_joining_date": "2027-01-15",
+                "branch_id": str(tenant.branch_id),
             },
         )
         assert case.status_code == 201, case.text

@@ -111,16 +111,6 @@ kind = "company_level"
 reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
 
 [[permission]]
-code = "EMPLOYEE.BULK_IMPORT"
-kind = "company_level"
-reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
-
-[[permission]]
-code = "EMPLOYEE.CREATE"
-kind = "company_level"
-reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
-
-[[permission]]
 code = "PAYROLL.RUN_PROCESS"
 kind = "company_level"
 reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
@@ -149,31 +139,6 @@ reason = "Payroll is prepared, processed and approved company-wide (pay runs, st
 code = "PAYROLL.BANK_ADVICE_DOWNLOAD"
 kind = "company_level"
 reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
-
-[[permission]]
-code = "ONBOARDING.ACTIVATE"
-kind = "company_level"
-reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
-
-[[permission]]
-code = "ONBOARDING.CANCEL"
-kind = "company_level"
-reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (seeded in organisation/service.py via onboarding_permission_rows with DataScopeLevel.COMPANY)."
-
-[[permission]]
-code = "ONBOARDING.CREATE"
-kind = "company_level"
-reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
-
-[[permission]]
-code = "ONBOARDING.REVIEW"
-kind = "company_level"
-reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
-
-[[permission]]
-code = "ONBOARDING.VIEW"
-kind = "company_level"
-reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
 
 [[handler]]
 key = "hrms.modules.attendance.router:list_attendance_periods"

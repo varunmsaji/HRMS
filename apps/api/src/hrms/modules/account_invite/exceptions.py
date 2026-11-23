@@ -96,3 +96,79 @@ class AccountCreationConflictError(ConflictError):
         super().__init__(
             message, details=[{"field": "email", "code": self.code, "message": message}]
         )
+
+
+class BranchAccessRequiredError(ValidationError):
+    """An `HR_ADMIN` / `BRANCH_MANAGER` must cover at least one active branch; with none, they
+    would see and act on nobody. Saving either role, inviting either role, or removing the last
+    branch while the role remains is rejected."""
+
+    code = "BRANCH_ACCESS_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = "Choose at least one branch for an HR administrator or branch manager",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "branch_ids", "code": self.code, "message": message}]
+        )
+
+
+class BranchAccessNotApplicableError(ValidationError):
+    """A branch list belongs only to users who hold `HR_ADMIN` or `BRANCH_MANAGER`."""
+
+    code = "BRANCH_ACCESS_NOT_APPLICABLE"
+
+    def __init__(
+        self,
+        message: str = "Branches can be assigned only to an HR administrator or a branch manager",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "branch_ids", "code": self.code, "message": message}]
+        )
+
+
+class InactiveBranchError(ValidationError):
+    code = "INACTIVE_BRANCH"
+
+    def __init__(self, branch_id: object) -> None:
+        message = "An inactive branch cannot be assigned"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "branch_ids",
+                    "code": self.code,
+                    "message": message,
+                    "context": {"branch_id": str(branch_id)},
+                }
+            ],
+        )
+
+
+class SelfBranchChangeNotAllowedError(ConflictError):
+    code = "SELF_BRANCH_CHANGE_NOT_ALLOWED"
+
+    def __init__(self, message: str = "You cannot change your own branch assignment") -> None:
+        super().__init__(
+            message, details=[{"field": "user_id", "code": self.code, "message": message}]
+        )
+
+
+class InviteBranchesUnavailableError(ConflictError):
+    """Every branch the invite named has been deactivated or deleted since it was sent. Accepting
+    would create an HR / branch manager with no access, so nothing is created; the admin issues a
+    fresh invite."""
+
+    code = "INVITE_BRANCHES_UNAVAILABLE"
+
+    def __init__(
+        self,
+        message: str = (
+            "The branches for this invitation are no longer available. Ask your administrator "
+            "to send a new invitation."
+        ),
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "token", "code": self.code, "message": message}]
+        )

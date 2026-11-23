@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.core.db.models.identity import Role, User, UserCompany, UserRole
+from hrms.core.db.models.identity import Role, User, UserBranchAccess, UserCompany, UserRole
 from hrms.modules.account_invite.models import AccountInvite
 
 
@@ -128,3 +128,73 @@ class AccountInviteRepository:
         for role_id in role_ids:
             session.add(UserRole(id=uuid4(), user_company_id=user_company_id, role_id=role_id))
         await session.flush()
+
+    # --- Branch access (`user_branch_access`) --------------------------------------------------
+
+    async def list_live_branch_ids_for_users(
+        self, session: AsyncSession, *, company_id: UUID, user_ids: list[UUID]
+    ) -> dict[UUID, list[UUID]]:
+        """One query for a whole page of `GET /users`: user id -> live branch ids (sorted)."""
+        if not user_ids:
+            return {}
+        stmt = (
+            select(UserBranchAccess.user_id, UserBranchAccess.branch_id)
+            .where(
+                UserBranchAccess.company_id == company_id,
+                UserBranchAccess.user_id.in_(user_ids),
+                UserBranchAccess.deleted_at.is_(None),
+            )
+            .order_by(UserBranchAccess.branch_id)
+        )
+        out: dict[UUID, list[UUID]] = {}
+        for user_id, branch_id in (await session.execute(stmt)).all():
+            out.setdefault(user_id, []).append(branch_id)
+        return out
+
+    async def replace_branch_access(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        user_id: UUID,
+        branch_ids: set[UUID],
+        actor_user_id: UUID | None,
+        now: datetime,
+    ) -> bool:
+        """Makes the user's live rows exactly `branch_ids`: rows no longer wanted are
+        soft-deleted (history), new ones inserted. Returns whether anything changed."""
+        live = (
+            (
+                await session.execute(
+                    select(UserBranchAccess).where(
+                        UserBranchAccess.company_id == company_id,
+                        UserBranchAccess.user_id == user_id,
+                        UserBranchAccess.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        have = {row.branch_id for row in live}
+        changed = False
+        for row in live:
+            if row.branch_id not in branch_ids:
+                row.deleted_at = now
+                row.updated_at = now
+                changed = True
+        for branch_id in branch_ids - have:
+            session.add(
+                UserBranchAccess(
+                    id=uuid4(),
+                    company_id=company_id,
+                    user_id=user_id,
+                    branch_id=branch_id,
+                    created_by=actor_user_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            changed = True
+        await session.flush()
+        return changed

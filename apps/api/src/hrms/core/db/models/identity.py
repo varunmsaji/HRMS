@@ -178,6 +178,25 @@ class UserRole(Base):
     role_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("role.id"))
 
 
+class UserBranchAccess(Base, TimestampMixin):
+    """The branches a user covers, assigned by the company admin (migration
+    `20261122090000_user_branch_access`). Read for `HR_ADMIN` / `BRANCH_MANAGER` holders who do
+    not also hold `COMPANY_ADMIN`; a person's own job placement does not grant access. Soft-deleted
+    (`deleted_at`); at most one live row per (company, user, branch). The database also forces
+    `branch_id` to belong to `company_id`."""
+
+    __tablename__ = "user_branch_access"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("company.id"))
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
+    branch_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    created_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id"), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Session(Base):
     __tablename__ = "session"
 

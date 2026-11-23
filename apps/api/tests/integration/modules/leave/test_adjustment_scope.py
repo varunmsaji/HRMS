@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
+from tests.integration.branch_access_support import place_at_one_branch
 from tests.integration.modules.attendance.test_attendance_security import (
     _assign_branch,
     _cleanup_scoped_users,
@@ -220,6 +221,8 @@ async def test_in_scope_targets_still_work(
         assert (await _post(client, path, own, body_for(e["S"]), f"o-{uuid4()}")).status_code == 201
 
         # COMPANY (custom role and the real HR_ADMIN role): any employee of the company
+        # The HR covers the branch the employees sit at (an employee with no branch is invisible).
+        await place_at_one_branch(w.company_id, [UUID(e[k]) for k in ("M", "R", "S", "T")])
         hr = await _user_with_default_role(w.company_id, "HR_ADMIN", UUID(e["M"]))
         company = await _scoped(w, "COMPANY", None)
         for headers in (hr, company):

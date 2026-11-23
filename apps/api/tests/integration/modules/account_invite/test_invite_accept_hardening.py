@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, text
+from tests.integration.branch_access_support import make_branch
 
 from hrms.core.db.models.identity import User, UserCompany
 from hrms.core.db.session import get_session_factory, set_rls_company_id
@@ -29,9 +30,10 @@ pytestmark = pytest.mark.asyncio
 
 async def _invite(client: AsyncClient, tenant, email: str, role: str = "EMPLOYEE") -> str:
     tenant.emails.append(email)
-    r = await client.post(
-        "/v1/users/invite", headers=tenant.headers, json={"email": email, "role_code": role}
-    )
+    body: dict = {"email": email, "role_code": role}
+    if role in ("HR_ADMIN", "BRANCH_MANAGER"):
+        body["branch_ids"] = [str(await make_branch(tenant.company_id))]
+    r = await client.post("/v1/users/invite", headers=tenant.headers, json=body)
     assert r.status_code == 201, r.text
     return _token_from_invite_url(r.json()["data"]["invite_url"])
 
@@ -125,7 +127,11 @@ async def test_invite_stores_only_a_hash_and_response_never_exposes_it(
         r = await client.post(
             "/v1/users/invite",
             headers=tenant.headers,
-            json={"email": email, "role_code": "HR_ADMIN"},
+            json={
+                "email": email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(tenant.company_id))],
+            },
         )
         data = r.json()["data"]
         raw = _token_from_invite_url(data["invite_url"])
@@ -135,6 +141,7 @@ async def test_invite_stores_only_a_hash_and_response_never_exposes_it(
             "email",
             "role_code",
             "expires_at",
+            "branch_ids",  # additive: the branches an invited HR / branch manager will cover
             "invite_url",
             "email_sent",
             "email_queued",  # B13 additive fields; still no token hash or other secret
@@ -154,7 +161,11 @@ async def test_invite_stores_only_a_hash_and_response_never_exposes_it(
         again = await client.post(
             "/v1/users/invite",
             headers=tenant.headers,
-            json={"email": email, "role_code": "HR_ADMIN"},
+            json={
+                "email": email,
+                "role_code": "HR_ADMIN",
+                "branch_ids": [str(await make_branch(tenant.company_id))],
+            },
         )
         assert _token_from_invite_url(again.json()["data"]["invite_url"]) != raw
     finally:

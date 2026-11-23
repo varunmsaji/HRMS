@@ -8,12 +8,11 @@ since O1, unused until now). O6 adds `POST .../sections/{section}/review` and
 `OnboardingCaseDetailRead` (section data + review status) instead of the list-safe
 `OnboardingCaseRead`. O7 adds `POST .../activate` — the first real use of
 `ONBOARDING.ACTIVATE` (seeded/granted since O1, unused until now). No `DataScope` narrowing is
-applied on any of these —
-`require_permission`'s resolved scope is discarded, same posture as `EMPLOYEE.VIEW_STATUTORY`/
-`.VIEW_COMPENSATION` (module docstring, `hrms.modules.employee.router`): no source document
-proposes `SELF`/`REPORTEES`/`REPORTEE_TREE` visibility for onboarding cases, which have no
-employee yet to scope against. Tenant isolation is still fully enforced via `company_id` +
-Postgres RLS, same as every other route in this app."""
+applied on any of these for `SELF`/`REPORTEES`/`REPORTEE_TREE` — onboarding cases have no
+employee yet to scope against. The one exception is a caller limited to their assigned branches
+(`DataScope.is_branch_restricted`): they list, count and open only cases in those branches, and a
+case with no branch is hidden from them (see `onboarding/access.py`). Tenant isolation is still
+fully enforced via `company_id` + Postgres RLS, same as every other route in this app."""
 
 from collections.abc import Awaitable
 from typing import Annotated
@@ -30,9 +29,11 @@ from hrms.core.idempotency import (
     run_idempotent,
 )
 from hrms.core.rbac.dependencies import require_permission
+from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
+from hrms.modules.onboarding.access import case_access
 from hrms.modules.onboarding.dependencies import (
     get_onboarding_activation_service,
     get_onboarding_case_service,
@@ -93,7 +94,7 @@ async def create_onboarding_case(
     request: Request,
     response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    scope: Annotated[DataScope, Depends(require_permission(ONBOARDING_CREATE))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     idempotency_key: Annotated[str | None, Depends(optional_idempotency_key)],
@@ -105,6 +106,7 @@ async def create_onboarding_case(
             tenant.company_id,
             body,
             actor_user_id=tenant.user_id,
+            scope=scope,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("User-Agent"),
         )
@@ -130,12 +132,14 @@ async def create_onboarding_case(
 @router.get("/onboarding-cases", status_code=status.HTTP_200_OK)
 async def list_onboarding_cases(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    scope: Annotated[DataScope, Depends(require_permission(ONBOARDING_VIEW))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
     page: Annotated[PageParams, Depends(pagination_params)],
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[OnboardingCaseRead]:
-    data, total = await service.list_cases(tenant.company_id, status=status_filter, page=page)
+    data, total = await service.list_cases(
+        tenant.company_id, status=status_filter, page=page, scope=scope
+    )
     return ListEnvelope(
         data=data,
         pagination=build_pagination_meta(page, total=total),
@@ -146,10 +150,14 @@ async def list_onboarding_cases(
 @router.get("/onboarding-cases/status-counts", status_code=status.HTTP_200_OK)
 async def get_onboarding_status_counts(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    scope: Annotated[DataScope, Depends(require_permission(ONBOARDING_VIEW))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
 ) -> DataEnvelope[OnboardingStatusCounts]:
-    data = await onboarding_status_counts(service._session, tenant.company_id)  # noqa: SLF001
+    data = await onboarding_status_counts(
+        service._session,  # noqa: SLF001
+        tenant.company_id,
+        branch_ids=await service.visible_branch_ids(tenant.company_id, scope),
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -157,7 +165,7 @@ async def get_onboarding_status_counts(
 async def get_onboarding_case(
     case_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_VIEW))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
 ) -> DataEnvelope[OnboardingCaseDetailRead]:
     data = await service.get_case_detail(tenant.company_id, case_id)
@@ -169,7 +177,7 @@ async def send_onboarding_invite(
     case_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_CREATE))],
     service: Annotated[OnboardingTokenService, Depends(get_onboarding_token_service)],
     body: OnboardingInviteSendRequest | None = None,
 ) -> DataEnvelope[OnboardingInviteRead]:
@@ -194,7 +202,7 @@ async def send_onboarding_invite(
 async def get_invitation_compose(
     case_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_CREATE))],
     service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
 ) -> DataEnvelope[InvitationComposeRead]:
     """Defaults, recipient, resolved case facts and the placeholder catalogue for the editor."""
@@ -207,7 +215,7 @@ async def preview_invitation(
     case_id: UUID,
     body: InvitationPreviewRequest,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_CREATE))],
     service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
 ) -> DataEnvelope[InvitationPreviewRead]:
     """Renders exactly what `send-invite` would send, with an inert link. No side effects: no
@@ -222,7 +230,7 @@ async def preview_invitation(
 async def list_onboarding_messages(
     case_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_VIEW))],
     service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
 ) -> ListEnvelope[OnboardingMessageRead]:
     data = await service.list_messages(tenant.company_id, case_id)
@@ -233,7 +241,7 @@ async def list_onboarding_messages(
 async def list_onboarding_case_documents(
     case_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_VIEW))],
     service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
 ) -> ListEnvelope[OnboardingDocumentWithUrlRead]:
     data = await service.list_documents_with_urls(tenant.company_id, case_id)
@@ -249,7 +257,7 @@ async def review_onboarding_document(
     body: OnboardingDocumentReviewRequest,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_REVIEW))],
     service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
 ) -> DataEnvelope[OnboardingDocumentRead]:
     data = await service.review_document(
@@ -274,7 +282,7 @@ async def review_onboarding_section(
     body: OnboardingSectionReviewRequest,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_REVIEW))],
     service: Annotated[OnboardingReviewService, Depends(get_onboarding_review_service)],
 ) -> DataEnvelope[OnboardingSectionReviewRead]:
     """Records HR's verdict on one section — does not itself move the case to
@@ -298,7 +306,7 @@ async def request_onboarding_changes(
     case_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_REVIEW))],
     service: Annotated[OnboardingReviewService, Depends(get_onboarding_review_service)],
 ) -> DataEnvelope[OnboardingCaseRead]:
     data = await service.request_changes(
@@ -316,7 +324,7 @@ async def cancel_onboarding_case(
     case_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CANCEL))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_CANCEL))],
     service: Annotated[OnboardingTokenService, Depends(get_onboarding_token_service)],
     body: OnboardingCaseCancelRequest | None = None,
 ) -> DataEnvelope[OnboardingCaseRead]:
@@ -339,7 +347,7 @@ async def activate_onboarding_case(
     case_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ONBOARDING_ACTIVATE))],
+    _scope: Annotated[DataScope, Depends(case_access(ONBOARDING_ACTIVATE))],
     service: Annotated[OnboardingActivationService, Depends(get_onboarding_activation_service)],
 ) -> DataEnvelope[OnboardingCaseRead]:
     """The payoff of the whole module (plan §8.6) — creates the real Employee/Employment/

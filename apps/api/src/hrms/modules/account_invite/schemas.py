@@ -18,6 +18,8 @@ class AccountInviteRead(BaseModel):
     role_code: str
     expires_at: datetime
     invite_url: str
+    #: The branches an invited HR / branch manager gets on accepting; empty for other roles.
+    branch_ids: list[UUID] = Field(default_factory=list)
     #: DEPRECATED name, kept for existing clients. Since B12 it means "the e-mail was queued", NOT
     #: "the provider accepted it" (identical to `email_queued`); it never reports a delivery
     #: failure.
@@ -58,6 +60,9 @@ class UserInviteRequest(BaseModel):
 
     email: EmailStr
     role_code: str
+    #: Required (at least one) for `HR_ADMIN` / `BRANCH_MANAGER`, so such a user is never created
+    #: with no access; must be empty for every other role.
+    branch_ids: list[UUID] = Field(default_factory=list)
 
 
 class UserSummary(BaseModel):
@@ -70,6 +75,9 @@ class UserSummary(BaseModel):
     is_primary: bool
     status: str
     role_codes: list[str]
+    #: Live branches this user covers (`user_branch_access`); only meaningful for `HR_ADMIN` /
+    #: `BRANCH_MANAGER` without `COMPANY_ADMIN`, who see the whole company regardless.
+    branch_ids: list[UUID] = Field(default_factory=list)
 
 
 class RoleAssignmentRequest(BaseModel):
@@ -77,3 +85,13 @@ class RoleAssignmentRequest(BaseModel):
     `repository.replace_user_roles`)."""
 
     role_codes: list[str] = Field(default_factory=list)
+    #: Replaces the user's branches in the same transaction as the roles. Omit to keep the current
+    #: list; an `HR_ADMIN` / `BRANCH_MANAGER` (without `COMPANY_ADMIN`) must end up with at least
+    #: one. Dropping both roles clears the list.
+    branch_ids: list[UUID] | None = None
+
+
+class BranchAccessRequest(BaseModel):
+    """`PUT /users/{user_id}/branches` — replaces the user's whole branch list."""
+
+    branch_ids: list[UUID] = Field(default_factory=list)

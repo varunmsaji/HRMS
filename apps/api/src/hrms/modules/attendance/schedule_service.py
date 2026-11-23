@@ -31,7 +31,7 @@ from hrms.modules.notification.producer import (
     employee_name,
     employee_user_id,
     notify,
-    permission_holder_user_ids,
+    reviewer_user_ids_for_employee,
     settle,
 )
 from hrms.modules.notification.types import (
@@ -924,8 +924,11 @@ class RosterScheduleService:
                 await notify(
                     self._session,
                     **common,
-                    recipients=await permission_holder_user_ids(
-                        self._session, company_id, ATTENDANCE_ROSTER_MANAGE
+                    recipients=await reviewer_user_ids_for_employee(
+                        self._session,
+                        company_id,
+                        ATTENDANCE_ROSTER_MANAGE,
+                        swap.requester_employee_id,
                     ),
                     type=SHIFT_SWAP_REQUESTED,
                     title="Shift swap awaiting your approval",

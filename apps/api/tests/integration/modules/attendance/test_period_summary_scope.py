@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
+from tests.integration.branch_access_support import grant_all_branches
 
 from hrms.modules.attendance.permissions import ATTENDANCE_VIEW, ATTENDANCE_VIEW_ALL
 
@@ -193,6 +194,8 @@ async def test_hr_admin_reads_company_wide_summary_open_and_closed(
             headers=w.headers, company_id=w.company_id, admin_user_id=w.user_id, emails=w.emails
         )
         hr = await onboard(client, tenant, "HR_ADMIN")
+        # An HR who covers every branch (what the migration backfill gives an existing HR).
+        await grant_all_branches(w.company_id, hr.user_id)
         assert await _rows(client, w, hr.headers) == everyone  # live preview
 
         finalized = await client.post(

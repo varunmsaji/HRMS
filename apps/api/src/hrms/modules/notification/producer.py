@@ -94,6 +94,31 @@ async def permission_holder_user_ids(
     return list(rows.scalars().all())
 
 
+async def reviewer_user_ids_for_employee(
+    session: AsyncSession, company_id: UUID, permission_code: str, employee_id: UUID
+) -> list[UUID]:
+    """Of the company-wide holders of `permission_code`, those who can actually act on a request
+    from `employee_id`: a genuine `COMPANY` grant, or an HR whose grant was narrowed to assigned
+    branches when the employee is currently placed at one of them (the same rule the approval
+    endpoints apply, `_hr_stage_allowed`). A restricted HR for another branch, or for an employee
+    with no branch, is not told about work they cannot open."""
+    from hrms.core.rbac.service import RbacService
+    from hrms.core.rbac.types import DataScopeLevel
+    from hrms.modules.employee.service import EmployeeService
+
+    rbac = RbacService(session)
+    employees = EmployeeService(session)
+    reviewers: list[UUID] = []
+    for user_id in await permission_holder_user_ids(session, company_id, permission_code):
+        scope = await rbac.resolve_data_scope(user_id, company_id, permission_code)
+        if DataScopeLevel.COMPANY in scope.levels or (
+            scope.company_grant_restricted
+            and await employees.is_employee_in_assigned_branches(company_id, employee_id, scope)
+        ):
+            reviewers.append(user_id)
+    return reviewers
+
+
 async def notify(
     session: AsyncSession,
     *,

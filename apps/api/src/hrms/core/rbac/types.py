@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
+from uuid import UUID
 
 
 class DataScopeLevel(StrEnum):
@@ -13,12 +14,21 @@ class DataScopeLevel(StrEnum):
     holder's scope is always their own single branch — a manager responsible for more than one
     branch, or a branch with co-managers, is not expressible without a second role, the same
     accepted limitation Decision A already documents for `REPORTEES`/`REPORTEE_TREE`.
-    `DEPARTMENT`/`LEGAL_ENTITY`/`ALL_COMPANIES` remain out of scope."""
+    `DEPARTMENT`/`LEGAL_ENTITY`/`ALL_COMPANIES` remain out of scope.
+
+    `ASSIGNED_BRANCHES` (2026-11-22) is the admin-assigned form of branch access for `HR_ADMIN`
+    and `BRANCH_MANAGER`: the branches come from `user_branch_access` (carried on
+    `DataScope.branch_ids`), not from the holder's own job placement, and one holder may cover
+    several branches. `RbacService.resolve_data_scope` produces it by replacing those two roles'
+    `COMPANY` / `BRANCH` grants; a user who also holds `COMPANY_ADMIN` keeps `COMPANY`. The older
+    single-branch `BRANCH` level is no longer produced for those roles (see the addendum in
+    `docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md`)."""
 
     SELF = "SELF"
     REPORTEES = "REPORTEES"
     REPORTEE_TREE = "REPORTEE_TREE"
     BRANCH = "BRANCH"
+    ASSIGNED_BRANCHES = "ASSIGNED_BRANCHES"
     COMPANY = "COMPANY"
 
 
@@ -34,3 +44,32 @@ class DataScope:
     grant was found — fails closed, never implies `COMPANY`."""
 
     levels: frozenset[DataScopeLevel] = field(default_factory=frozenset)
+    #: Live `user_branch_access` branch ids of the caller. Meaningful only with
+    #: `ASSIGNED_BRANCHES` in `levels`; an empty set then means "no branch": fails closed.
+    branch_ids: frozenset[UUID] = field(default_factory=frozenset)
+    #: True when a `COMPANY` grant (the HR_ADMIN kind: approve, reassign, ...) was narrowed to the
+    #: assigned branches. HR-stage approvals accept the caller for an employee in `branch_ids`
+    #: only when this is set; a `BRANCH_MANAGER`'s narrowed grant never is.
+    company_grant_restricted: bool = False
+
+    @property
+    def is_branch_restricted(self) -> bool:
+        """The caller reaches only their assigned branches: `ASSIGNED_BRANCHES` without a
+        `COMPANY` grant. A company administrator is never restricted."""
+        return (
+            DataScopeLevel.ASSIGNED_BRANCHES in self.levels
+            and DataScopeLevel.COMPANY not in self.levels
+        )
+
+    @classmethod
+    def union(cls, *scopes: "DataScope") -> "DataScope":
+        """The combined scope of several permissions' scopes (a route that accepts either of two
+        permissions). Building `DataScope(levels=a.levels | b.levels)` by hand would drop
+        `branch_ids`, and an `ASSIGNED_BRANCHES` caller would then see nobody."""
+        levels: frozenset[DataScopeLevel] = frozenset().union(*(s.levels for s in scopes))
+        branch_ids: frozenset[UUID] = frozenset().union(*(s.branch_ids for s in scopes))
+        return cls(
+            levels=levels,
+            branch_ids=branch_ids,
+            company_grant_restricted=any(s.company_grant_restricted for s in scopes),
+        )
