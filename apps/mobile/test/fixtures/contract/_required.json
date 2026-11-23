@@ -10,6 +10,7 @@
   "invite_url",
   "role_code"
  ],
+ "account_invite.BranchAccessRequest": [],
  "account_invite.PublicAccountInviteRead": [
   "company_name",
   "email",

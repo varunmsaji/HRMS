@@ -1,4 +1,7 @@
 {
+ "branch_ids": [
+  "00000000-0000-0000-0000-000000001234"
+ ],
  "email": "x",
  "email_delivery_status": "QUEUED",
  "email_queued": true,
