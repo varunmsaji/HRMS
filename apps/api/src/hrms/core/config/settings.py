@@ -220,6 +220,16 @@ class Settings(BaseSettings):
     email_outbox_lease_seconds: int = Field(default=300, ge=30)
     email_outbox_batch_size: int = Field(default=10, ge=1, le=100)
 
+    # Mobile push notifications (`modules/notification/push.py`). `disabled` (the default) means a
+    # new in-app notification queues nothing: no task, no network call. `fcm` sends through
+    # Firebase Cloud Messaging HTTP v1 using a service-account key. The key is a secret: supply it
+    # as `FCM_SERVICE_ACCOUNT_JSON` (the JSON text) or `FCM_SERVICE_ACCOUNT_FILE` (a path mounted
+    # into the worker), never in the repository.
+    push_provider: Literal["disabled", "fcm"] = "disabled"
+    fcm_project_id: str = ""
+    fcm_service_account_json: str = ""
+    fcm_service_account_file: str = ""
+
     # Sender identity shown on outgoing email — shared by whichever provider is active (`"smtp"`
     # or `"mailtrap"`); not itself an SMTP protocol detail, despite the field name predating the
     # `"mailtrap"` option.

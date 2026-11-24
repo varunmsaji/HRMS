@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class NotificationRead(BaseModel):
@@ -30,3 +30,20 @@ class UnreadCountRead(BaseModel):
 class ReadAllRead(BaseModel):
     updated: int
     unread_count: int
+
+
+class DeviceRegister(BaseModel):
+    #: The FCM registration token the app got from Firebase.
+    token: str = Field(min_length=20, max_length=4096)
+    platform: Literal["android", "ios"]
+    app_version: str | None = Field(default=None, max_length=32)
+
+
+class DeviceUnregister(BaseModel):
+    token: str = Field(min_length=20, max_length=4096)
+
+
+class DeviceRead(BaseModel):
+    id: UUID
+    platform: str
+    last_seen_at: datetime

@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, func, or_, select, update
+from sqlalchemy import ColumnElement, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.notification.models import Notification
+from hrms.modules.notification.models import DeviceToken, Notification
 
 
 def _visible(company_id: UUID, user_id: UUID, now: datetime) -> list[ColumnElement[bool]]:
@@ -105,3 +105,61 @@ class NotificationRepository:
             .values(read_at=now)
         )
         return int(getattr(result, "rowcount", 0) or 0)
+
+
+class DeviceRepository:
+    """Device tokens, always scoped by company (and by user where a user is acting)."""
+
+    async def upsert(
+        self,
+        session: AsyncSession,
+        *,
+        values: dict[str, Any],
+    ) -> DeviceToken:
+        """Insert, or move an existing token to this user (a second person on the same phone)."""
+        stmt = (
+            pg_insert(DeviceToken)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[DeviceToken.company_id, DeviceToken.token],
+                set_={
+                    "user_id": values["user_id"],
+                    "platform": values["platform"],
+                    "app_version": values["app_version"],
+                    "last_seen_at": values["last_seen_at"],
+                    "updated_at": values["last_seen_at"],
+                },
+            )
+            .returning(DeviceToken)
+        )
+        return (await session.execute(stmt)).scalars().one()
+
+    async def delete_own(
+        self, session: AsyncSession, *, company_id: UUID, user_id: UUID, token: str
+    ) -> int:
+        result = await session.execute(
+            delete(DeviceToken).where(
+                DeviceToken.company_id == company_id,
+                DeviceToken.user_id == user_id,
+                DeviceToken.token == token,
+            )
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def for_user(
+        self, session: AsyncSession, *, company_id: UUID, user_id: UUID
+    ) -> list[DeviceToken]:
+        rows = await session.execute(
+            select(DeviceToken).where(
+                DeviceToken.company_id == company_id, DeviceToken.user_id == user_id
+            )
+        )
+        return list(rows.scalars().all())
+
+    async def delete_ids(self, session: AsyncSession, *, company_id: UUID, ids: list[UUID]) -> None:
+        if ids:
+            await session.execute(
+                delete(DeviceToken).where(
+                    DeviceToken.company_id == company_id, DeviceToken.id.in_(ids)
+                )
+            )

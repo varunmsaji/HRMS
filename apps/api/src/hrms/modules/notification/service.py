@@ -21,9 +21,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.config.settings import get_settings
+from hrms.core.db.post_commit import defer_until_commit
 from hrms.core.errors.base import NotFoundError, ValidationError
-from hrms.modules.notification.models import Notification
-from hrms.modules.notification.repository import NotificationRepository
+from hrms.modules.notification.models import DeviceToken, Notification
+from hrms.modules.notification.repository import DeviceRepository, NotificationRepository
 from hrms.modules.notification.schemas import NotificationRead
 from hrms.modules.notification.types import (
     FORBIDDEN_METADATA_KEY_PARTS,
@@ -84,6 +86,7 @@ class NotificationService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = NotificationRepository()
+        self._devices = DeviceRepository()
 
     # --- producer API (server-side callers only; there is no HTTP route for it) --------------
 
@@ -123,7 +126,7 @@ class NotificationService:
         ).first()
         if member is None:
             return None
-        return await self._repo.insert_once(
+        created = await self._repo.insert_once(
             self._session,
             values={
                 "id": uuid4(),
@@ -142,6 +145,54 @@ class NotificationService:
                 "dedupe_key": dedupe_key,
                 "expires_at": expires_at,
             },
+        )
+        if created is not None and get_settings().push_provider != "disabled":
+            self._queue_push(company_id, created.id)
+        return created
+
+    def _queue_push(self, company_id: UUID, notification_id: UUID) -> None:
+        """Hands delivery to the worker once the notification is durable. At-most-once and
+        best-effort (`core/db/post_commit.py`): the in-app notification is the record, the push
+        only a nudge, so a lost kick costs a missed buzz, never a missed notification."""
+
+        async def _kick() -> None:
+            from hrms.modules.notification.tasks import send_push
+
+            send_push.delay(str(company_id), str(notification_id))
+
+        defer_until_commit(self._session, _kick)
+
+    # --- devices (the caller's own phones) ---------------------------------------------------
+
+    async def register_device(
+        self,
+        company_id: UUID,
+        user_id: UUID,
+        *,
+        token: str,
+        platform: str,
+        app_version: str | None,
+    ) -> DeviceToken:
+        """Idempotent. A token already held by someone else in this company moves to the caller."""
+        now = datetime.now(UTC)
+        return await self._devices.upsert(
+            self._session,
+            values={
+                "id": uuid4(),
+                "company_id": company_id,
+                "user_id": user_id,
+                "token": token,
+                "platform": platform,
+                "app_version": app_version,
+                "last_seen_at": now,
+            },
+        )
+
+    async def unregister_device(self, company_id: UUID, user_id: UUID, *, token: str) -> None:
+        """Idempotent: removing a token the caller does not hold (or that is gone) is a no-op, and
+        never reveals whether someone else holds it."""
+        await self._devices.delete_own(
+            self._session, company_id=company_id, user_id=user_id, token=token
         )
 
     # --- consumer API (always the caller's own rows) -----------------------------------------
