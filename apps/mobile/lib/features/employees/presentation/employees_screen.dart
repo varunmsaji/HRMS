@@ -576,11 +576,25 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
       if (permissions.contains(employeeConfirm) && e.status == 'PROBATION') OutlinedButton(onPressed: _busy ? null : _confirmProbation, child: const Text('Confirm employment')),
       if (permissions.contains(employeeInvite)) OutlinedButton(onPressed: _busy ? null : _invite, child: const Text('Invite')),
     ];
+    // Three tabs, not thirteen: Overview, Attendance and Documents. Every other section of the
+    // record opens on its own screen from the Overview's "Records" card (audit MOB-UX-045).
+    final tabs = <(String, Widget)>[
+      for (final name in const ['Attendance', 'Documents'])
+        for (final x in extraTabs)
+          if (x.$1 == name) x,
+    ];
+    final screens = <String, Widget>{
+      for (final s in sections) s.title: EmployeeRecordPanel(employeeId: e.id, section: s),
+      for (final x in extraTabs)
+        if (x.$1 != 'Attendance' && x.$1 != 'Documents') x.$1: x.$2,
+    };
+    final tabTitles = ['Overview', for (final t in tabs) t.$1];
+    final who = e.fullName.isEmpty ? e.employeeCode : e.fullName;
     return DefaultTabController(
-      length: sections.length + extraTabs.length + 1,
+      length: tabTitles.length,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(e.fullName.isEmpty ? e.employeeCode : e.fullName),
+          title: Text(who),
           // Deactivating is kept away from Edit, in the overflow menu (audit MOB-UX-045). It still
           // asks before it acts.
           actions: [
@@ -592,14 +606,24 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
                 itemBuilder: (_) => [PopupMenuItem(value: 'active', child: Text(e.isActive ? 'Deactivate employee' : 'Reactivate employee'))],
               ),
           ],
-          bottom: TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            tabs: [const Tab(text: 'Overview'), for (final s in sections) Tab(text: s.title), for (final x in extraTabs) Tab(text: x.$1)],
-          ),
+          bottom: TabBar(tabs: [for (final t in tabTitles) Tab(text: t)]),
         ),
         body: Builder(builder: (tabContext) {
-          final tabTitles = ['Overview', for (final s in sections) s.title, for (final x in extraTabs) x.$1];
+          Future<void> openSection(String title) async {
+            final i = tabTitles.indexOf(title);
+            if (i >= 0) {
+              DefaultTabController.of(tabContext).animateTo(i);
+              return;
+            }
+            final body = screens[title];
+            if (body == null) return;
+            await Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => Scaffold(appBar: AppBar(title: Text('$title · $who')), body: body),
+            ));
+            // The section may have changed what the Overview shows.
+            if (mounted) _reload();
+          }
+
           return TabBarView(
             children: [
               RefreshIndicator(
@@ -613,16 +637,12 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
                     canViewAttendance: permissions.contains(attendanceView),
                     onEditDetails: _edit,
                     onChangeWork: (changeType) => openAssignmentChange(context, ref, employeeId: e.id, changeType: changeType),
-                    onOpenSection: (title) {
-                      final i = tabTitles.indexOf(title);
-                      if (i >= 0) DefaultTabController.of(tabContext).animateTo(i);
-                    },
-                    openableSections: tabTitles,
+                    onOpenSection: openSection,
+                    openableSections: [...tabTitles.skip(1), ...screens.keys],
                   ),
                 ),
               ),
-              for (final s in sections) EmployeeRecordPanel(employeeId: e.id, section: s),
-              for (final x in extraTabs) x.$2,
+              for (final t in tabs) t.$2,
             ],
           );
         }),

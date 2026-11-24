@@ -60,8 +60,12 @@ class OverviewActions {
   final List<String> openableSections;
 }
 
-/// The sections with their own editors, in the order web lists them under "More to edit".
-const _otherEditableSections = ['Compensation', 'Salary', 'Statutory', 'Banking', 'Identity', 'Experience', 'Education', 'Dependents', 'Documents'];
+/// Web's section navigation (`EMPLOYEE_SECTION_GROUPS`): every section of the record, by area.
+const _sectionGroups = [
+  ('Work', ['Employment', 'Assignment', 'Attendance']),
+  ('Pay', ['Compensation', 'Salary', 'Statutory', 'Banking']),
+  ('Profile', ['Identity', 'Experience', 'Education', 'Dependents', 'Documents']),
+];
 
 /// The Overview of an employee record — shared by My Profile and the manager view. Mirrors
 /// `apps/web/src/components/employee/employee-overview.tsx`.
@@ -252,22 +256,31 @@ class _EmployeeOverviewState extends ConsumerState<EmployeeOverview> {
     );
   }
 
-  /// Web's "More to edit": a link to each section with its own editor.
+  /// A link to every record section, grouped as web's section navigation is (Work, Pay, Profile),
+  /// so the record needs only three tabs: each section opens on its own screen (MOB-UX-045). What
+  /// the viewer can change inside a section depends on their access.
   Widget _moreToEdit(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final o = _o!;
-    final links = [for (final t in _otherEditableSections) if (o.openableSections.contains(t)) t];
-    if (links.isEmpty) return const SizedBox.shrink();
+    final groups = [
+      for (final (label, titles) in _sectionGroups)
+        (label, [for (final t in titles) if (o.openableSections.contains(t)) t]),
+    ].where((g) => g.$2.isNotEmpty).toList();
+    if (groups.isEmpty) return const SizedBox.shrink();
     return AppCard(
       key: const Key('overview-more-to-edit'),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('More to edit', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        const Text('Records', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
         const SizedBox(height: 2),
         Text('Each opens its own section. What you can change there depends on your access.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-        const SizedBox(height: 10),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final t in links) ActionChip(label: Text(t), avatar: const Icon(Icons.arrow_forward_rounded, size: 16), onPressed: () => o.onOpenSection(t)),
-        ]),
+        for (final (label, titles) in groups) ...[
+          const SizedBox(height: 12),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final t in titles) ActionChip(label: Text(t), avatar: const Icon(Icons.arrow_forward_rounded, size: 16), onPressed: () => o.onOpenSection(t)),
+          ]),
+        ],
       ]),
     );
   }
