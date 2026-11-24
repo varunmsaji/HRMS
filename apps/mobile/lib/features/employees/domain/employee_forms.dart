@@ -1,4 +1,5 @@
 import '../../../core/forms/form_spec.dart';
+import '../../../core/forms/regions.dart';
 
 /// Form specs for the employee record — each mirrors a `*Create`/`*Update` schema in
 /// `apps/api/.../employee/schemas.py` (and the matching web form under
@@ -9,39 +10,46 @@ const maritalStatusOptions = ['Single', 'Married', 'Divorced', 'Widowed'];
 
 const _same = '!permanent_same_as_present';
 
+
 /// `EmployeeCreate` / `EmployeeUpdate`.
 const employeeSpec = FormSpec(
   name: 'employee',
   label: 'Employee',
   defaults: {'permanent_same_as_present': true},
   fields: [
+    // Four sections on a phone instead of one 28-field scroll. The first is open; the rest open
+    // with a tap, or by themselves when a field in them needs fixing (audit MOB-UX-029).
+    FieldSpec('section_basics', 'Basics', kind: FieldKind.section, hint: 'Name, contact, date of birth'),
     FieldSpec('first_name', 'First name', required: true),
     FieldSpec('middle_name', 'Middle name'),
     FieldSpec('last_name', 'Last name'),
-    FieldSpec('date_of_birth', 'Date of birth', kind: FieldKind.date),
-    FieldSpec('gender', 'Gender', kind: FieldKind.select, options: genderOptions),
-    FieldSpec('blood_group', 'Blood group'),
-    FieldSpec('marital_status', 'Marital status', kind: FieldKind.select, options: maritalStatusOptions),
-    FieldSpec('nationality', 'Nationality'),
-    FieldSpec('father_or_husband_name', "Father's / husband's name"),
     FieldSpec('personal_email', 'Personal email', kind: FieldKind.email),
     FieldSpec('personal_mobile', 'Personal mobile', kind: FieldKind.phone),
+    FieldSpec('date_of_birth', 'Date of birth', kind: FieldKind.date),
+    FieldSpec('gender', 'Gender', kind: FieldKind.select, options: genderOptions),
+    FieldSpec('section_address', 'Address', kind: FieldKind.section, hint: 'Present and permanent'),
     FieldSpec('present_address_line1', 'Present address line 1'),
     FieldSpec('present_address_line2', 'Present address line 2'),
     FieldSpec('present_city', 'City'),
-    FieldSpec('present_state_code', 'State code'),
+    FieldSpec('present_state_code', 'State', kind: FieldKind.select, options: indiaStateOptions, optionLabels: indiaStateLabels),
     FieldSpec('present_pincode', 'Pincode', kind: FieldKind.pincode),
-    FieldSpec('present_country_code', 'Country code', kind: FieldKind.upper, exactLength: 2, hint: '2 letters, e.g. IN'),
+    FieldSpec('present_country_code', 'Country', kind: FieldKind.select, options: countryOptions, optionLabels: countryLabels),
     FieldSpec('permanent_same_as_present', 'Permanent address is the same as present', kind: FieldKind.toggle),
     FieldSpec('permanent_address_line1', 'Permanent address line 1', showWhen: _same),
     FieldSpec('permanent_address_line2', 'Permanent address line 2', showWhen: _same),
     FieldSpec('permanent_city', 'Permanent city', showWhen: _same),
-    FieldSpec('permanent_state_code', 'Permanent state code', showWhen: _same),
+    FieldSpec('permanent_state_code', 'Permanent state', kind: FieldKind.select, options: indiaStateOptions, optionLabels: indiaStateLabels, showWhen: _same),
     FieldSpec('permanent_pincode', 'Permanent pincode', kind: FieldKind.pincode, showWhen: _same),
-    FieldSpec('permanent_country_code', 'Permanent country code', kind: FieldKind.upper, exactLength: 2, showWhen: _same),
+    FieldSpec('permanent_country_code', 'Permanent country', kind: FieldKind.select, options: countryOptions, optionLabels: countryLabels, showWhen: _same),
+    FieldSpec('section_emergency', 'Emergency contact', kind: FieldKind.section, hint: 'Who to call'),
     FieldSpec('emergency_contact_name', 'Emergency contact name'),
     FieldSpec('emergency_contact_relationship', 'Emergency contact relationship'),
     FieldSpec('emergency_contact_phone', 'Emergency contact phone', kind: FieldKind.phone),
+    FieldSpec('section_more', 'More details', kind: FieldKind.section, hint: 'Blood group, marital status, nationality'),
+    FieldSpec('blood_group', 'Blood group'),
+    FieldSpec('marital_status', 'Marital status', kind: FieldKind.select, options: maritalStatusOptions),
+    FieldSpec('nationality', 'Nationality'),
+    FieldSpec('father_or_husband_name', "Father's / husband's name"),
     FieldSpec('photo_url', 'Photo URL', kind: FieldKind.hidden),
   ],
 );
