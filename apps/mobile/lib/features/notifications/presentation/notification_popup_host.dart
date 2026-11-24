@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../auth/state/auth_controller.dart';
+import '../../auth/state/auth_state.dart';
+import '../data/notification_repository.dart';
 import '../domain/app_notification.dart';
+import '../push/push_messaging.dart';
 import '../state/notification_popups.dart';
 
 const _notificationsPath = '/app/notifications';
@@ -26,6 +30,11 @@ class NotificationPopupHost extends ConsumerStatefulWidget {
 class _NotificationPopupHostState extends ConsumerState<NotificationPopupHost> with WidgetsBindingObserver {
   Timer? _poll;
   Timer? _autoHide;
+  StreamSubscription<PushTap>? _tapSub;
+  StreamSubscription<void>? _foregroundSub;
+
+  /// A tapped push waiting for sign-in to finish (a cold start from a push lands here first).
+  PushTap? _pendingTap;
 
   @override
   void initState() {
@@ -33,12 +42,38 @@ class _NotificationPopupHostState extends ConsumerState<NotificationPopupHost> w
     WidgetsBinding.instance.addObserver(this);
     _startPolling();
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+    final push = ref.read(pushMessagingProvider);
+    _tapSub = push.onTap.listen(_onPushTap);
+    // A push while the app is open shows no system alert: refresh now rather than at the next poll.
+    _foregroundSub = push.onForegroundMessage.listen((_) => _check());
+    unawaited(push.launchTap().then((t) {
+      if (t != null) _onPushTap(t);
+    }));
+  }
+
+  void _onPushTap(PushTap tap) {
+    if (!mounted) return;
+    _pendingTap = tap;
+    _openPendingTap();
+  }
+
+  /// Opens the tapped push's screen once the user is signed in; until then it waits.
+  void _openPendingTap() {
+    final tap = _pendingTap;
+    if (tap == null || ref.read(authControllerProvider).status != AuthStatus.authenticated) return;
+    _pendingTap = null;
+    final id = tap.notificationId;
+    if (id != null) unawaited(ref.read(notificationRepositoryProvider).markRead(id).catchError((_) {}));
+    widget.router.push(safeNotificationPath(tap.actionUrl) ?? _notificationsPath);
+    _check();
   }
 
   @override
   void dispose() {
     _poll?.cancel();
     _autoHide?.cancel();
+    _tapSub?.cancel();
+    _foregroundSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -88,6 +123,7 @@ class _NotificationPopupHostState extends ConsumerState<NotificationPopupHost> w
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authControllerProvider, (_, __) => _openPendingTap());
     // A new user (login/logout) gets a new controller; check for them straight away.
     ref.listen(notificationPopupProvider.notifier, (_, __) => WidgetsBinding.instance.addPostFrameCallback((_) => _check()));
     ref.listen<NotificationPopup?>(notificationPopupProvider, (_, next) {

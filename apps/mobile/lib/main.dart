@@ -9,6 +9,8 @@ import 'core/router/app_router.dart';
 import 'core/theme/theme_selection.dart';
 import 'features/auth/state/auth_controller.dart';
 import 'features/notifications/presentation/notification_popup_host.dart';
+import 'features/notifications/push/push_messaging.dart';
+import 'features/notifications/push/push_registration.dart';
 import 'core/auth/surface.dart';
 import 'core/time.dart';
 
@@ -17,9 +19,11 @@ Future<void> main() async {
   installGlobalErrorHandlers();
   initTimeZones();
   final apiClient = await ApiClient.getInstance();
+  // A no-op instance when this build has no Firebase config, so the app always starts.
+  final push = await FirebasePushMessaging.tryCreate();
   runApp(
     ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(apiClient)],
+      overrides: [apiClientProvider.overrideWithValue(apiClient), pushMessagingProvider.overrideWithValue(push)],
       child: const HrmsApp(),
     ),
   );
@@ -31,6 +35,8 @@ class HrmsApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    // Registers this phone for push whenever someone is signed in.
+    ref.watch(pushLifecycleProvider);
     // Only the employee/administrator split matters here, so rebuild on that, not on every
     // profile refresh. Administrators and signed-out screens keep the system-themed app.
     final employee = ref.watch(authControllerProvider.select((s) => usesEmployeeSurface(s.user)));

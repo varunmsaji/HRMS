@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/auth/auth_types.dart';
 import '../../../core/auth/token_storage.dart';
 import '../../../core/providers.dart';
+import '../../notifications/push/push_registration.dart';
 import '../data/auth_repository.dart';
 import 'auth_state.dart';
 
@@ -13,7 +14,7 @@ import 'auth_state.dart';
 /// `TokenStorage`'s session-expired signal (the mobile equivalent of the web
 /// client's `window.dispatchEvent(SESSION_EXPIRED_EVENT)`).
 class AuthController extends StateNotifier<AuthState> {
-  AuthController(this._repository) : super(AuthState.initial) {
+  AuthController(this._repository, {Future<void> Function()? beforeLogout}) : _beforeLogout = beforeLogout, super(AuthState.initial) {
     _sessionExpiredSubscription = TokenStorage.instance.onSessionExpired.listen((_) {
       state = AuthState(status: AuthStatus.unauthenticated, sessionExpired: true, expiredUserId: state.user?.id);
     });
@@ -21,6 +22,10 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   final AuthRepository _repository;
+
+  /// Runs while the session is still valid, just before sign-out (e.g. to stop push to this phone).
+  /// Never allowed to block or fail the sign-out.
+  final Future<void> Function()? _beforeLogout;
   late final StreamSubscription<void> _sessionExpiredSubscription;
 
   Future<void> _init() async {
@@ -77,6 +82,9 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     try {
+      await _beforeLogout?.call();
+    } catch (_) {}
+    try {
       await _repository.logout();
     } catch (_) {
       // Best-effort server-side revoke — the client-side session is cleared regardless.
@@ -98,5 +106,9 @@ final authRepositoryProvider = Provider<AuthRepository>(
 );
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
-  (ref) => AuthController(ref.watch(authRepositoryProvider)),
+  (ref) => AuthController(
+    ref.watch(authRepositoryProvider),
+    // Read lazily, at sign-out, so this provider does not depend on push at start-up.
+    beforeLogout: () => ref.read(pushRegistrationProvider).unregister(),
+  ),
 );
