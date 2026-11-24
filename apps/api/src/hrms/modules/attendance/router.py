@@ -69,6 +69,7 @@ from hrms.modules.attendance.face_rate_limit import (
 )
 from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
 from hrms.modules.attendance.geofence_form import parse_form_location
+from hrms.modules.attendance.muster_export import MusterExportService
 from hrms.modules.attendance.overview import AttendanceOverviewService
 from hrms.modules.attendance.overview_schemas import AttendanceOverviewRead
 from hrms.modules.attendance.permissions import (
@@ -97,6 +98,7 @@ from hrms.modules.attendance.regularization_decision_center import (
     RegularizationTab,
     build_regularization_decision_center,
 )
+from hrms.modules.attendance.report_export import ReportExportService, ReportName
 from hrms.modules.attendance.schemas import (
     FACE_IMAGE_MAX_BYTES,
     FACE_LIVENESS_FRAME_MAX_BYTES,
@@ -1182,6 +1184,117 @@ async def get_attendance_summary(
         ),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance/export/muster", status_code=status.HTTP_200_OK)
+async def export_muster_register(
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query()],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    branch_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+) -> Response:
+    """The muster register as a CSV file for up to a year: one row per employee, one column per
+    date. Same population, filters and day rules as `/attendance/summary`, limited to the
+    employees the caller's attendance scope can see. Each download is audited."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    filename, content = await MusterExportService(session).build(
+        tenant.company_id,
+        actor_user_id=tenant.user_id,
+        date_from=date_from,
+        date_to=date_to,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+        today=business_today(company.timezone),
+        timezone=company.timezone,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/attendance/reports/{report}/export", status_code=status.HTTP_200_OK)
+async def export_attendance_report(
+    report: ReportName,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query()],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    branch_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+) -> Response:
+    """One Reports-tab report as a CSV file for up to a year: `daily`, `present-absent`,
+    `late-early`, `hours` or `overtime`. Same population, filters and day rules as
+    `/attendance/summary`, limited to the employees the caller's attendance scope can see. Each
+    download is audited."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    filename, content = await ReportExportService(session).build(
+        tenant.company_id,
+        report,
+        actor_user_id=tenant.user_id,
+        date_from=date_from,
+        date_to=date_to,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+        today=business_today(company.timezone),
+        timezone=company.timezone,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/attendance/days/{attendance_day_id}", status_code=status.HTTP_200_OK)
