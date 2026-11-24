@@ -30,6 +30,7 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
       forbiddenMessage: 'You do not have permission to review leave requests.',
       narrowHint: 'Use Team to filter further.',
       emptyIcon: Icons.event_busy_outlined,
+      pendingHint: _swipeHint,
       stats: (d) {
         final byType = d.onLeaveTodayByType.map((t) => '${t.$2} ${t.$1.replaceFirst(RegExp(r' Leave$'), '')}').join(', ');
         return [
@@ -43,6 +44,8 @@ class LeaveDecisionCenterPanel extends ConsumerWidget {
     );
   }
 }
+
+const _swipeHint = 'Tip: swipe a request right to approve or left to reject. You are asked to confirm first.';
 
 class _LeaveCard extends StatelessWidget {
   const _LeaveCard({required this.item, required this.canReview, required this.now, required this.reload});
@@ -89,7 +92,13 @@ class _LeaveCard extends StatelessWidget {
             Text(value, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
           ]),
         );
-    return AppCard(
+    return SwipeToDecide(
+      id: item.id,
+      enabled: item.isPending && canReview,
+      approveLabel: 'Approve leave',
+      onApprove: () => _decide(context, approve: true),
+      onReject: () => _decide(context, approve: false),
+      child: AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         DecisionCardHeader(
           name: item.employeeName,
@@ -132,6 +141,7 @@ class _LeaveCard extends StatelessWidget {
           onApprove: item.isPending && canReview ? () => _decide(context, approve: true) : null,
         ),
       ]),
+      ),
     );
   }
 }
