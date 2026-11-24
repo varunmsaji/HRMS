@@ -75,20 +75,19 @@ def build_fcm_body(token: str, message: PushMessage) -> dict[str, Any]:
 
 
 def _is_invalid_token(status: int, payload: Any) -> bool:
-    """FCM's "this registration token is dead" answers: 404 / NOT_FOUND / UNREGISTERED, or a 400
-    INVALID_ARGUMENT that names the token (the only per-call argument we vary)."""
-    if status == 404:
-        return True
-    if status != 400 or not isinstance(payload, dict):
+    """FCM's "this registration token is dead" answers: the specific `UNREGISTERED` error code, or
+    a 400 INVALID_ARGUMENT that names the token (the only per-call argument we vary). A bare 404
+    or NOT_FOUND is not enough: a wrong `FCM_PROJECT_ID` also answers 404, and treating that as a
+    dead token would delete every registration until the configuration is fixed."""
+    if status not in (400, 404) or not isinstance(payload, dict):
         return False
     error = payload.get("error") or {}
-    if error.get("status") == "NOT_FOUND":
-        return True
     codes = {d.get("errorCode") for d in error.get("details") or [] if isinstance(d, dict)}
     if "UNREGISTERED" in codes:
         return True
     return (
-        error.get("status") == "INVALID_ARGUMENT"
+        status == 400
+        and error.get("status") == "INVALID_ARGUMENT"
         and "token" in str(error.get("message", "")).lower()
     )
 

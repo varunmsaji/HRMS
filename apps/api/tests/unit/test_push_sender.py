@@ -30,9 +30,16 @@ def test_body_is_string_only_and_truncated() -> None:
 @pytest.mark.parametrize(
     ("status", "payload", "dead"),
     [
-        (404, None, True),
-        (400, {"error": {"status": "NOT_FOUND"}}, True),
+        (404, {"error": {"status": "NOT_FOUND", "details": [{"errorCode": "UNREGISTERED"}]}}, True),
         (400, {"error": {"details": [{"errorCode": "UNREGISTERED"}]}}, True),
+        # a wrong project id or other resource-level 404 must not delete device registrations
+        (404, None, False),
+        (
+            404,
+            {"error": {"status": "NOT_FOUND", "message": "Requested entity was not found."}},
+            False,
+        ),
+        (400, {"error": {"status": "NOT_FOUND"}}, False),
         (
             400,
             {
@@ -87,8 +94,17 @@ async def test_sent_and_headers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_unregistered_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    dead = _sender(httpx.MockTransport(lambda r: httpx.Response(404, json={})), monkeypatch)
+    unregistered = {"error": {"status": "NOT_FOUND", "details": [{"errorCode": "UNREGISTERED"}]}}
+    dead = _sender(
+        httpx.MockTransport(lambda r: httpx.Response(404, json=unregistered)), monkeypatch
+    )
     assert await dead.send("tok", MSG) is PushResult.INVALID_TOKEN
+
+    # a wrong project id also answers 404: keep the registration
+    wrong_project = _sender(
+        httpx.MockTransport(lambda r: httpx.Response(404, json={})), monkeypatch
+    )
+    assert await wrong_project.send("tok", MSG) is PushResult.FAILED
 
     def boom(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
