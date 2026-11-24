@@ -19,6 +19,7 @@ import {
   eachDate,
   formatPct,
   hasActiveFilters,
+  inLateBand,
   indexEmployees,
   isEmployedOn,
   monthGrid,
@@ -33,6 +34,8 @@ import {
   sumPeriodSummary,
   summarizeMonth,
   summarizeOvertime,
+  weekdayIndex,
+  weekdayLabel,
   summarizeWorkHours,
   weekStart,
   windowRange,
@@ -601,5 +604,61 @@ describe("department and branch filters", () => {
     // Neither has a row yet; only A is in Engineering.
     const missing = employeesWithoutRecord([], employees, filters, TODAY, directory);
     expect(missing.map((e) => e.id)).toEqual(["a"]);
+  });
+});
+
+
+describe("late bands and weekdays (chart click-through)", () => {
+  const complete = { is_late: true, actual_first_in: "2026-10-12T04:00:00Z", actual_last_out: "2026-10-12T12:00:00Z" };
+
+  it("puts a late day in the same band the backend counts it in, at the edges too", () => {
+    const at = (minutes: number) => makeDay({ ...complete, late_minutes: minutes });
+    expect(inLateBand(at(1), "1_15")).toBe(true);
+    expect(inLateBand(at(15), "1_15")).toBe(true);
+    expect(inLateBand(at(16), "16_30")).toBe(true);
+    expect(inLateBand(at(30), "16_30")).toBe(true);
+    expect(inLateBand(at(31), "31_60")).toBe(true);
+    expect(inLateBand(at(60), "31_60")).toBe(true);
+    expect(inLateBand(at(61), "60_plus")).toBe(true);
+    expect(inLateBand(at(600), "60_plus")).toBe(true);
+    expect(inLateBand(at(16), "1_15")).toBe(false);
+  });
+
+  it("counts a late day with no minutes recorded as one minute, as the backend does", () => {
+    expect(inLateBand(makeDay({ ...complete, late_minutes: 0 }), "1_15")).toBe(true);
+  });
+
+  it("leaves out a day that is not late, or has no check-out yet (not judged)", () => {
+    expect(inLateBand(makeDay({ ...complete, is_late: false, late_minutes: 20 }), "16_30")).toBe(false);
+    expect(inLateBand(makeDay({ ...complete, late_minutes: 20, actual_last_out: null }), "16_30")).toBe(false);
+    expect(inLateBand(makeDay({ ...complete, late_minutes: 20, actual_first_in: null }), "16_30")).toBe(false);
+  });
+
+  it("numbers weekdays from Monday, and names them", () => {
+    expect(weekdayIndex("2026-10-12")).toBe(0); // a Monday
+    expect(weekdayIndex("2026-10-18")).toBe(6); // the Sunday after
+    expect(weekdayLabel("0")).toBe("Mondays");
+  });
+
+  it("drills a late band and a weekday's absences", () => {
+    const days = [
+      makeDay({ id: "a", attendance_date: "2026-10-12", ...complete, late_minutes: 20 }),
+      makeDay({ id: "b", attendance_date: "2026-10-12", ...complete, late_minutes: 5 }),
+      makeAbsentDay({ id: "c", attendance_date: "2026-10-12" }),
+      makeAbsentDay({ id: "d", attendance_date: "2026-10-13" }),
+    ];
+    const band = { ...DEFAULT_FILTERS, flag: "late" as const, lateBand: "16_30" as const };
+    expect(applyDrillFilters(days, band).map((d) => d.id)).toEqual(["a"]);
+    const monday = { ...DEFAULT_FILTERS, bucket: "ABSENT" as const, weekday: "0" as const };
+    expect(applyDrillFilters(days, monday).map((d) => d.id)).toEqual(["c"]);
+  });
+
+  it("round-trips through the URL and drops tampered values", () => {
+    const filters = { ...DEFAULT_FILTERS, flag: "late" as const, scope: "window" as const, lateBand: "31_60" as const };
+    expect(parseFilters(serializeFilters(filters))).toEqual(filters);
+    const monday = { ...DEFAULT_FILTERS, bucket: "ABSENT" as const, scope: "window" as const, weekday: "4" as const };
+    expect(parseFilters(serializeFilters(monday))).toEqual(monday);
+    const bad = parseFilters(new URLSearchParams("lateband=drop&weekday=9&scope=everything"));
+    expect([bad.lateBand, bad.weekday, bad.scope]).toEqual(["", "", ""]);
   });
 });

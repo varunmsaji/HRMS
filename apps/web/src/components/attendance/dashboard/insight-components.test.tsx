@@ -189,11 +189,51 @@ describe("PunctualityPanel", () => {
   });
 });
 
+describe("PunctualityPanel late bands", () => {
+  const employees = new Map<string, { id: string; first_name: string; last_name: string; employee_code: string }>();
+  const withBands = (counts: number[]) =>
+    toPunctuality({
+      ...makeSummary(TODAY, TODAY).punctuality,
+      checked_in: 10,
+      late: counts.reduce((a, b) => a + b, 0),
+      on_time: 5,
+      bands: ["1_15", "16_30", "31_60", "60_plus"].map((key, i) => ({ key, label: `Band ${key}`, count: counts[i] })),
+    });
+
+  it("opens the late arrivals of the band that was clicked, and leaves an empty band as a plain bar", async () => {
+    const onViewBand = vi.fn();
+    render(
+      <PunctualityPanel summary={withBands([3, 2, 0, 0])} frequent={[]} employeesById={employees} onViewLate={vi.fn()} onViewBand={onViewBand} />,
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: /Band 16_30: 2 late arrivals. Show these days/ }));
+    expect(onViewBand).toHaveBeenCalledWith("16_30");
+    expect(screen.getByRole("button", { name: /Band 1_15: 3 late arrivals/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Band 31_60/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Band 31_60")).toBeInTheDocument();
+  });
+
+  it("shows plain bars when nothing is wired to open them", () => {
+    render(<PunctualityPanel summary={withBands([3, 2, 1, 1])} frequent={[]} employeesById={employees} onViewLate={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /Show these days/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("WeekdayPanel", () => {
   it("names the weekday with the highest absence", () => {
     render(<WeekdayPanel stats={makeWeekdays({ 0: [2, 1], 1: [1, 0] })} />);
     expect(screen.getByText(/Mons have the highest absence — 50.0% of expected days/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Absence rate by weekday" })).toBeInTheDocument();
+  });
+
+  it("opens the absences on a weekday, only for weekdays that have some", async () => {
+    const onSelectWeekday = vi.fn();
+    render(<WeekdayPanel stats={makeWeekdays({ 0: [2, 1], 1: [1, 0] })} onSelectWeekday={onSelectWeekday} />);
+    // Clickable bars cannot sit inside an image, which hides its children from assistive technology.
+    expect(screen.queryByRole("img", { name: "Absence rate by weekday" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Absence rate by weekday" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: /Mon: 1 absent days. Show these days/ }));
+    expect(onSelectWeekday).toHaveBeenCalledWith(0);
+    expect(screen.getAllByRole("button")).toHaveLength(1); // Tuesday has no absences
   });
 
   it("does not invent a pattern when there are no absences, or no working days at all", () => {

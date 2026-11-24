@@ -1,7 +1,12 @@
 "use client";
 
+import { Download } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+
+import { useToast } from "@/components/common/toast";
+import { apiClient } from "@/lib/api/client";
+import { describeApiError } from "@/lib/api/errors";
 
 import { Button } from "@/components/ui/button";
 
@@ -14,18 +19,38 @@ import {
   formatShortDate,
   type Muster,
 } from "@/lib/attendance/dashboard";
+import { musterRegisterPath, saveDownloadedFile } from "@/lib/attendance/export";
 import { cn } from "@/lib/utils";
 
 const PAGE_ROWS = 25;
 
 /** Organisation heatmap / muster: one row per employee, one column per day, each cell the day's
  * status. Every cell carries a letter code and a text label as well as colour. */
-export function MusterHeatmap({ muster }: { muster: Muster }) {
+export function MusterHeatmap({ muster, exportQuery }: { muster: Muster; exportQuery: Record<string, string> }) {
+  const { toast } = useToast();
+  const [exporting, setExporting] = useState(false);
+  async function exportRegister() {
+    setExporting(true);
+    try {
+      const file = await apiClient.download(musterRegisterPath(exportQuery));
+      saveDownloadedFile(file, `muster-register_${exportQuery.date_from}_${exportQuery.date_to}.csv`);
+    } catch (err) {
+      toast({ title: "Could not export the register", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setExporting(false);
+    }
+  }
   // 25 employees × ~30 days is already 750 cells; render more only when asked.
   const [visible, setVisible] = useState(PAGE_ROWS);
   const rows = muster.rows.slice(0, visible);
   return (
     <div className="space-y-3">
+      <div className="flex justify-end">
+        <Button type="button" size="sm" variant="outline" disabled={muster.rows.length === 0 || exporting} onClick={exportRegister}>
+          <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
+          {exporting ? "Preparing…" : "Export muster register"}
+        </Button>
+      </div>
       <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-foreground-secondary" aria-label="Legend">
         {DAY_BUCKETS.filter((b) => b !== "NOT_EMPLOYED" && b !== "CONFIG_ERROR").map((bucket) => (
           <li key={bucket} className="flex items-center gap-1.5">

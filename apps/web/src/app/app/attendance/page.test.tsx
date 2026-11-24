@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,7 +25,7 @@ vi.mock("@/components/common/toast", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn(), download: vi.fn() },
 }));
 
 import AttendanceDashboardPage from "@/app/app/attendance/page";
@@ -33,7 +33,7 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
 import { fakeSummary, type FakeOrg } from "@/lib/attendance/__fixtures__/fake-summary";
-import { addDays, type EmployeeLite } from "@/lib/attendance/dashboard";
+import { addDays, weekdayIndex, type EmployeeLite } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
 
@@ -90,6 +90,8 @@ interface Overrides {
   orgs?: ReturnType<typeof dirRow>[];
   /** Makes `GET /attendance/summary` fail with this error. */
   summaryError?: Error;
+  /** How many people report to the caller (`GET /employees/{id}/direct-reports`); omitted = none. */
+  directReports?: number | Error;
 }
 
 function mockApi(o: Overrides = {}) {
@@ -122,6 +124,15 @@ function mockApi(o: Overrides = {}) {
     return Promise.reject(new Error(`Unexpected GET ${path}`));
   });
   mockedGetList.mockImplementation((path: string, query?: Record<string, unknown>) => {
+    if (/^\/employees\/[^/]+\/direct-reports$/.test(path)) {
+      if (o.directReports instanceof Error) return Promise.reject(o.directReports);
+      const total = o.directReports ?? 0;
+      return Promise.resolve({
+        data: total > 0 ? [{ id: "report-1" }] : [],
+        pagination: { page: 1, per_page: 1, total, total_pages: Math.max(1, total) },
+        meta: { request_id: "r1" },
+      });
+    }
     if (path === "/attendance/days") {
       if (days instanceof Error) return Promise.reject(days);
       // Pages like the API: `per_page` rows at a time, newest first is irrelevant to the totals.
@@ -272,6 +283,72 @@ describe("AttendanceDashboardPage", () => {
       searchParams = new URLSearchParams("view=trends");
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/you do not have permission to view this section/i)).toBeInTheDocument();
+    });
+
+    it("opens the Today list for a day when its trend point is clicked", async () => {
+      mockApi({ days: sampleDays() });
+      searchParams = new URLSearchParams("view=trends");
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      const trend = (await screen.findByRole("heading", { name: "Attendance trend" })).closest("[id='att-trend']") as HTMLElement;
+      const points = await within(trend).findAllByRole("button", { name: /Show these days/ });
+      await user.click(points[points.length - 1]);
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Today", selected: true })).toBeInTheDocument());
+      const url = replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0] as string;
+      expect(url).toMatch(/range=custom/);
+      expect(url).toMatch(/from=(\d{4}-\d{2}-\d{2})&to=\1/);
+    });
+
+    it("opens the late arrivals of one band from the punctuality chart, matching the count clicked", async () => {
+      const yesterday = addDays(TODAY, -1);
+      mockApi({
+        days: [
+          makeDay({ employee_id: "emp-1", attendance_date: TODAY, is_late: true, late_minutes: 20 }),
+          makeDay({ employee_id: "emp-2", attendance_date: yesterday, is_late: true, late_minutes: 5 }),
+          makeDay({ employee_id: "emp-3", attendance_date: yesterday }),
+        ],
+      });
+      searchParams = new URLSearchParams("view=trends");
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await user.click(await screen.findByRole("button", { name: /16–30 min: 1 late arrivals\. Show these days/ }));
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Today", selected: true })).toBeInTheDocument());
+      // The one late arrival in that band, from before today too: the list covers the chart's window.
+      expect((await inList().findAllByText("Asha Rao")).length).toBeGreaterThan(0);
+      expect(inList().queryAllByText("Ben Iyer")).toHaveLength(0);
+      expect(inList().queryAllByText("Chitra Nair")).toHaveLength(0);
+      const url = replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0] as string;
+      expect(url).toMatch(/flag=late/);
+      expect(url).toMatch(/lateband=16_30/);
+      expect(url).toMatch(/scope=window/);
+      expect(screen.getByText("Late 16–30 min")).toBeInTheDocument();
+
+      // Clicking the band's chip away puts the list back.
+      await user.click(screen.getByRole("button", { name: /remove filter late 16–30 min/i }));
+      expect(replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0]).not.toMatch(/lateband/);
+    });
+
+    it("opens the absences on one weekday from the weekday chart", async () => {
+      const yesterday = addDays(TODAY, -1);
+      const label = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][weekdayIndex(yesterday)];
+      mockApi({
+        days: [
+          makeDay({ employee_id: "emp-1", attendance_date: yesterday }),
+          makeAbsentDay({ employee_id: "emp-3", attendance_date: yesterday }),
+          makeAbsentDay({ employee_id: "emp-2", attendance_date: TODAY }),
+        ],
+      });
+      searchParams = new URLSearchParams("view=trends");
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await user.click(await screen.findByRole("button", { name: new RegExp(`^${label}: 1 absent days\\. Show these days`) }));
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Today", selected: true })).toBeInTheDocument());
+      expect((await inList().findAllByText("Chitra Nair")).length).toBeGreaterThan(0);
+      expect(inList().queryAllByText("Asha Rao")).toHaveLength(0);
+      expect(inList().queryAllByText("Ben Iyer")).toHaveLength(0); // absent on another weekday
+      const url = replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0] as string;
+      expect(url).toMatch(new RegExp(`weekday=${weekdayIndex(yesterday)}`));
+      expect(url).toMatch(/bucket=ABSENT/);
     });
 
     it("shows an honest empty message for overtime instead of a bare zero", async () => {
@@ -948,6 +1025,49 @@ describe("AttendanceDashboardPage", () => {
       expect(mockedGetList.mock.calls.map((c) => c[0]).filter((p) => p !== "/attendance/days")).toEqual([]);
     });
 
+    it("knows a manager from their direct reports, before any team rows load, and says what the page covers", async () => {
+      authUser = { employee_id: "emp-mgr", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW", "EMPLOYEE.VIEW"] };
+      // Only the manager's own day is in range, so the rows alone would read as "self".
+      mockApi({ days: [makeDay({ employee_id: "emp-mgr", attendance_date: TODAY })], directReports: 4 });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByTestId("team-scope")).toHaveTextContent(/4 people report to you/i);
+      expect(screen.getByText(/your team: who is working/i)).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "This month" })).not.toBeInTheDocument();
+    });
+
+    it("keeps a caller with no direct reports on their own dashboard", async () => {
+      authUser = { employee_id: "emp-1", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW", "ATTENDANCE.PUNCH", "EMPLOYEE.VIEW"] };
+      mockApi({ days: [makeDay({ employee_id: "emp-1", attendance_date: TODAY })], directReports: 0 });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByRole("heading", { name: "This month" })).toBeInTheDocument();
+      expect(screen.queryByTestId("team-scope")).not.toBeInTheDocument();
+    });
+
+    it("falls back to the rows when the direct-reports lookup fails", async () => {
+      authUser = { employee_id: "emp-mgr", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW", "EMPLOYEE.VIEW"] };
+      mockApi({ days: sampleDays(), directReports: new ApiError({ status: 500, code: "BOOM", message: "x" }) });
+      render(<AttendanceDashboardPage />);
+      expect(await findKpi(/^Present: 2\./)).toBeInTheDocument();
+      expect(screen.getByTestId("team-scope")).toHaveTextContent(/showing the people you can see/i);
+    });
+
+    it("offers the payroll report to HR but not to a manager", async () => {
+      authUser = { employee_id: "emp-mgr", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW"] };
+      mockApi({ days: sampleDays() });
+      searchParams = new URLSearchParams("view=reports");
+      const { unmount } = render(<AttendanceDashboardPage />);
+      const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      expect(within(reports).getByRole("tab", { name: "Daily attendance" })).toBeInTheDocument();
+      expect(within(reports).queryByRole("tab", { name: "Payroll attendance" })).not.toBeInTheDocument();
+      unmount();
+
+      authUser = { employee_id: "emp-hr", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW", "ATTENDANCE.VIEW_ALL"] };
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      const hr = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      expect(within(hr).getByRole("tab", { name: "Payroll attendance" })).toBeInTheDocument();
+    });
+
     it("only offers Record punch to a caller who can punch", async () => {
       authUser = { employee_id: "emp-mgr", company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW", "ATTENDANCE.VIEW_ALL"] };
       mockApi({ days: sampleDays() });
@@ -992,7 +1112,7 @@ describe("AttendanceDashboardPage", () => {
   });
 
   describe("reports", () => {
-    it("switches between reports built from existing data and offers no export controls", async () => {
+    it("switches between reports built from existing data and offers a CSV export", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
       searchParams = new URLSearchParams("view=reports");
@@ -1005,8 +1125,53 @@ describe("AttendanceDashboardPage", () => {
       expect(within(reports).getByText("Ben Iyer")).toBeInTheDocument();
       expect(within(reports).queryByText("Asha Rao")).not.toBeInTheDocument();
 
-      expect(within(reports).queryByRole("button", { name: /export|csv|pdf|excel/i })).not.toBeInTheDocument();
-      expect(within(reports).queryByText(/export .* is not available yet/i)).not.toBeInTheDocument();
+      // CSV only: no PDF or Excel control is offered, and the button is live for a report with rows.
+      expect(within(reports).getByRole("button", { name: "Export CSV" })).toBeEnabled();
+      expect(within(reports).queryByRole("button", { name: /pdf|excel/i })).not.toBeInTheDocument();
+    });
+
+    it("opens the person and the day from a report row", async () => {
+      mockApi({ days: sampleDays() });
+      searchParams = new URLSearchParams("view=reports");
+      render(<AttendanceDashboardPage />);
+      const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      const person = within(reports).getAllByRole("link", { name: "Asha Rao" })[0];
+      expect(person.getAttribute("href")).toMatch(/^\/app\/attendance\/employee\/.+/);
+      const day = within(reports).getAllByRole("link", { name: /^Open Asha Rao on / })[0];
+      expect(day.getAttribute("href")).toMatch(/^\/app\/attendance\/(?!employee).+/);
+    });
+
+    it("exports a longer period from the server with the dashboard's filters", async () => {
+      mockApi({ days: sampleDays() });
+      vi.mocked(apiClient.download).mockResolvedValue({ blob: new Blob(["x"]), filename: "daily_a_b.csv" });
+      URL.createObjectURL = vi.fn(() => "blob:x");
+      URL.revokeObjectURL = vi.fn();
+      searchParams = new URLSearchParams("view=reports");
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      const group = within(reports).getByRole("group", { name: /Export Daily attendance for a period/ });
+      await user.click(within(group).getByRole("button", { name: "Export period (CSV)" }));
+      await waitFor(() => expect(apiClient.download).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(apiClient.download).mock.calls[0][0]).toMatch(
+        /^\/attendance\/reports\/daily\/export\?date_from=\d{4}-\d{2}-\d{2}&date_to=\d{4}-\d{2}-\d{2}/,
+      );
+
+      await user.click(within(reports).getByRole("tab", { name: "Late / early" }));
+      expect(within(reports).getByRole("group", { name: /Export Late \/ early for a period/ })).toBeInTheDocument();
+      await user.click(within(reports).getByRole("tab", { name: "Payroll attendance" }));
+      expect(within(reports).queryByRole("group", { name: /for a period/ })).not.toBeInTheDocument();
+    });
+
+    it("will not export a period over a year", async () => {
+      mockApi({ days: sampleDays() });
+      searchParams = new URLSearchParams("view=reports");
+      render(<AttendanceDashboardPage />);
+      const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      const group = within(reports).getByRole("group", { name: /for a period/ });
+      fireEvent.change(within(group).getByLabelText("From"), { target: { value: "2020-01-01" } });
+      expect(within(group).getByRole("alert")).toHaveTextContent(/at most 366 days/i);
+      expect(within(group).getByRole("button", { name: "Export period (CSV)" })).toBeDisabled();
     });
 
     it("searches within a report", async () => {

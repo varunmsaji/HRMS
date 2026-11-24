@@ -21,6 +21,8 @@ interface LineChartProps {
   format: (value: number) => string;
   /** Fix the top of the y axis (e.g. 100 for percentages). */
   yMax?: number;
+  /** Makes each point a button that reports its `key`: the way into the rows behind it. */
+  onSelectPoint?: (key: string) => void;
   className?: string;
 }
 
@@ -36,7 +38,7 @@ function niceMax(max: number): number {
   return nice * pow;
 }
 
-export function LineChart({ points, ariaLabel, format, yMax, className }: LineChartProps) {
+export function LineChart({ points, ariaLabel, format, yMax, onSelectPoint, className }: LineChartProps) {
   const values = points.map((p) => p.value).filter((v): v is number => v !== null);
   const top = yMax ?? niceMax(Math.max(0, ...values));
   const innerW = W - PAD.left - PAD.right;
@@ -82,7 +84,27 @@ export function LineChart({ points, ariaLabel, format, yMax, className }: LineCh
           <path key={d} d={d} fill="none" className="stroke-primary" strokeWidth={2} strokeLinejoin="round" />
         ))}
         {points.map((p, i) =>
-          p.value === null ? null : (
+          p.value === null ? null : onSelectPoint ? (
+            <g
+              key={p.key}
+              role="button"
+              tabIndex={0}
+              aria-label={`${p.label}: ${format(p.value)}. Show these days`}
+              className="cursor-pointer outline-none focus-visible:[&>circle:last-child]:stroke-foreground"
+              onClick={() => onSelectPoint(p.key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectPoint(p.key);
+                }
+              }}
+            >
+              <circle cx={x(i)} cy={y(p.value)} r={10} className="fill-transparent" />
+              <circle cx={x(i)} cy={y(p.value)} r={3.5} className="fill-primary" strokeWidth={2} stroke="transparent">
+                <title>{`${p.label}: ${format(p.value)}`}</title>
+              </circle>
+            </g>
+          ) : (
             <circle key={p.key} cx={x(i)} cy={y(p.value)} r={3} className="fill-primary">
               <title>{`${p.label}: ${format(p.value)}`}</title>
             </circle>

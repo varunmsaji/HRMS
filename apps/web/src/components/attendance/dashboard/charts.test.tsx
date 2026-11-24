@@ -1,6 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import { ToastProvider } from "@/components/common/toast";
 
 import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
 import { makeSummaryDay } from "@/lib/attendance/__fixtures__/summary";
@@ -84,6 +86,33 @@ describe("TrendChart", () => {
     expect(within(screen.getByRole("table", { name: /average hours/i })).getByText("9.0h")).toBeInTheDocument();
   });
 
+  it("opens the day behind a point, by click or keyboard", async () => {
+    const user = userEvent.setup();
+    const onSelectPeriod = vi.fn();
+    render(<TrendChart days={days} range={range} onSelectPeriod={onSelectPeriod} />);
+    const point = screen.getByRole("button", { name: /01 Oct: 50.0%/ });
+    await user.click(point);
+    expect(onSelectPeriod).toHaveBeenLastCalledWith({ from: "2026-10-01", to: "2026-10-01" });
+    point.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelectPeriod).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the week behind a weekly point, never past the end of the range", async () => {
+    const user = userEvent.setup();
+    const onSelectPeriod = vi.fn();
+    render(<TrendChart days={days} range={range} onSelectPeriod={onSelectPeriod} />);
+    await user.click(screen.getByRole("button", { name: "weekly" }));
+    await user.click(screen.getAllByRole("button", { name: /Show these days/ })[0]);
+    const { from, to } = onSelectPeriod.mock.calls[0][0];
+    expect(from >= range.from && to <= range.to && from <= to).toBe(true);
+  });
+
+  it("has no point buttons when nothing is wired to open them", () => {
+    render(<TrendChart days={days} range={range} />);
+    expect(screen.queryByRole("button", { name: /Show these days/ })).not.toBeInTheDocument();
+  });
+
   it("offers weekly aggregation only when the range is long enough, and says when there's no data", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<TrendChart days={days} range={{ from: "2026-10-01", to: "2026-10-05" }} />);
@@ -109,7 +138,11 @@ describe("MusterHeatmap", () => {
   );
 
   it("never relies on colour alone: each cell has a glyph and a spoken status, and links to the day", () => {
-    render(<MusterHeatmap muster={muster} />);
+    render(
+      <ToastProvider>
+        <MusterHeatmap muster={muster} exportQuery={{ date_from: "2026-10-05", date_to: "2026-10-07" }} />
+      </ToastProvider>,
+    );
     const grid = screen.getByRole("table", { name: /attendance status by employee and day/i });
     expect(within(grid).getByText("05 Oct: Present")).toBeInTheDocument();
     expect(within(grid).getByText("06 Oct: Absent")).toBeInTheDocument();
