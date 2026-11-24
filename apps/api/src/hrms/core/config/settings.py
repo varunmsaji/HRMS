@@ -476,6 +476,12 @@ class Settings(BaseSettings):
     # period's end until it is closed; HR gets a matching digest.
     attendance_incomplete_reminder_lead_days: int = 3
 
+    # Attendance digest emails: a weekday-morning note to each manager whose team has absences,
+    # late arrivals, missing punches or requests waiting (`attendance/digests.py`), and a Monday
+    # summary of last week to HR. Off by default: turning it on starts mailing people who did not
+    # ask for it, so it is an operator's decision, made per deployment.
+    attendance_digests_enabled: bool = False
+
     # Initial-release product rule: a tenant has exactly one company (the `legal_entity` table)
     # with any number of branches under it. `0` removes the cap (multi-company), which is what the
     # test-suite sets so its multi-entity scenarios keep working.

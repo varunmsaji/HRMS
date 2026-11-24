@@ -327,6 +327,80 @@ def run_incomplete_reminders() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Attendance digest emails (`digests.py`)
+# ---------------------------------------------------------------------------
+
+
+async def _send_digests_async(company_id: UUID, kind: str) -> int:
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.attendance.digests import (
+        HR_WEEKLY,
+        HrWeeklyDigestService,
+        ManagerDailyDigestService,
+    )
+    from hrms.modules.onboarding.email_sender import get_email_sender
+    from hrms.modules.organisation.service import OrganisationService
+
+    settings = get_settings()
+    if not settings.attendance_digests_enabled:
+        return 0
+    async with session_scope(company_id=str(company_id)) as session:
+        company = await OrganisationService(session).get_company_profile(company_id)
+        service_class = HrWeeklyDigestService if kind == HR_WEEKLY else ManagerDailyDigestService
+        result = await service_class(
+            session, settings, get_email_sender(settings)
+        ).send_for_company(
+            company_id, today=business_today(company.timezone), timezone=company.timezone
+        )
+    _logger.info(
+        "attendance_digest_finished",
+        company_id=str(company_id),
+        kind=kind,
+        skipped_already_sent=result.skipped_already_sent,
+        recipients=result.recipients,
+        sent=result.sent,
+        send_failures=result.send_failures,
+    )
+    return result.sent
+
+
+@celery_app.task(name="attendance.send_manager_daily_digest_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def send_manager_daily_digest_company(company_id: str) -> int:
+    return run_task(_send_digests_async(UUID(company_id), "manager_daily"))
+
+
+@celery_app.task(name="attendance.send_hr_weekly_digest_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def send_hr_weekly_digest_company(company_id: str) -> int:
+    return run_task(_send_digests_async(UUID(company_id), "hr_weekly"))
+
+
+def _digests_enabled() -> bool:
+    from hrms.core.config.settings import get_settings
+
+    return get_settings().attendance_digests_enabled
+
+
+@celery_app.task(name="attendance.run_manager_daily_digest", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def run_manager_daily_digest() -> int:
+    """Beat-scheduled, weekday mornings, after the 09:30 calculation has refreshed today. A no-op
+    unless `ATTENDANCE_DIGESTS_ENABLED`."""
+    if not _digests_enabled():
+        return 0
+    return dispatch_per_company(
+        send_manager_daily_digest_company, run_task(_list_active_company_ids())
+    )
+
+
+@celery_app.task(name="attendance.run_hr_weekly_digest", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def run_hr_weekly_digest() -> int:
+    """Beat-scheduled, Monday morning: last week's summary. A no-op unless
+    `ATTENDANCE_DIGESTS_ENABLED`."""
+    if not _digests_enabled():
+        return 0
+    return dispatch_per_company(send_hr_weekly_digest_company, run_task(_list_active_company_ids()))
+
+
+# ---------------------------------------------------------------------------
 # Face-record retention (`face_cleanup.py`)
 # ---------------------------------------------------------------------------
 

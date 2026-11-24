@@ -126,6 +126,18 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_incomplete_reminders",
                 "schedule": crontab(minute=0, hour=10),
             },
+            # Attendance digests (`attendance/digests.py`) - both no-ops unless
+            # ATTENDANCE_DIGESTS_ENABLED. 11:00 is after the 09:30 calculation and the 10:00
+            # reminders, so "not checked in" is read after the working day has begun; each run is
+            # recorded per business date, so a repeated firing sends nothing twice.
+            "attendance-run-manager-daily-digest": {
+                "task": "attendance.run_manager_daily_digest",
+                "schedule": crontab(minute=0, hour=11, day_of_week="mon-fri"),
+            },
+            "attendance-run-hr-weekly-digest": {
+                "task": "attendance.run_hr_weekly_digest",
+                "schedule": crontab(minute=30, hour=10, day_of_week="mon"),
+            },
             # Face-record retention. A no-op until retention periods are configured (a privacy/legal
             # decision, none defaulted) and report-only until FACE_CLEANUP_DRY_RUN=false. Idempotent
             # and bounded per run, so a missed or repeated firing is harmless.
