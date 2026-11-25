@@ -15,7 +15,10 @@ def assert_error(response: Response, status: int, code: str | None = None) -> di
     body = response.json()
     assert set(body) == {"error"}, body
     err = body["error"]
-    assert set(err) == ERROR_KEYS, err
+    # `reference` (the short `ERR-…` support code) exists only on a 5xx; every other error body
+    # has exactly ERROR_KEYS.
+    assert set(err) - {"reference"} == ERROR_KEYS, err
+    assert ("reference" in err) == (status >= 500), err
     assert isinstance(err["details"], list)
     assert err["request_id"] and err["request_id"] == response.headers["x-request-id"]
     if code is not None:

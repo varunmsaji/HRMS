@@ -85,7 +85,7 @@ async def test_4xx_app_error_keeps_its_curated_message_and_has_no_reference() ->
     r = await _get(_Nope("Already exists"))
     err = r.json()["error"]
     assert err["message"] == "Already exists"
-    assert err["reference"] is None
+    assert "reference" not in err  # the key exists only on a 5xx
 
 
 async def test_unhandled_exception_has_generic_text_and_a_reference() -> None:

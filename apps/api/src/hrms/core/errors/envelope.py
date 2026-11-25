@@ -1,6 +1,7 @@
 import hashlib
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 
 def error_reference(request_id: str) -> str:
@@ -25,6 +26,15 @@ class ErrorBody(BaseModel):
     #: Present on 5xx only: what the user quotes to support; searchable in the server log.
     reference: str | None = None
     documentation_url: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_reference(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """The key exists only on a 5xx. Every other error body keeps exactly the shape it had
+        before `reference` was added, so a client written against that shape still holds."""
+        data: dict[str, Any] = handler(self)
+        if data.get("reference") is None:
+            data.pop("reference", None)
+        return data
 
 
 class ErrorEnvelope(BaseModel):
