@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeError } from "@/lib/api/errors";
 import {
   coveragePath,
   coverageRowKey,
@@ -109,7 +109,7 @@ export function CompanyFollowsSummary({
         message={
           result.error?.status === 403
             ? "You do not have permission to see who follows which policies."
-            : (result.error?.message ?? "Something went wrong.")
+            : describeError(result.error, "Something went wrong.")
         }
         onRetry={() => {
           setResult(null);

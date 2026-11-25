@@ -43,6 +43,7 @@ import {
   type TerminateFormValues,
 } from "@/lib/employee/validate-employment";
 import type { LegalEntity } from "@/lib/legal-entity/types";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 interface EmploymentPanelProps {
   employeeId: string;
@@ -82,7 +83,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
     try {
       const [employmentData, legalEntityData] = await Promise.all([
         apiClient.get<Employment[]>(`/employees/${employeeId}/employments`),
-        apiClient.get<LegalEntity[]>("/legal-entities").catch(() => []),
+        apiClient.get<LegalEntity[]>("/legal-entities").catch(reportedFallback([])),
       ]);
       setEmployments(employmentData);
       setLegalEntities(legalEntityData);

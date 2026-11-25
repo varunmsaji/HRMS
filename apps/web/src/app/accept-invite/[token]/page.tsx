@@ -10,7 +10,7 @@ import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError, getFieldError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { landingPathFor } from "@/lib/auth/landing";
 import type { TokenResponseData } from "@/lib/auth/types";
@@ -135,7 +135,7 @@ export default function AcceptInvitePage() {
         <p className="text-center text-sm text-foreground-secondary">
           {loadError?.status === 404
             ? "This invite link is invalid or has expired. Please ask your admin to send a new one."
-            : (loadError?.message ?? "Something went wrong.")}
+            : describeError(loadError, "Something went wrong.")}
         </p>
       </AuthLayout>
     );

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiClient } from "@/lib/api/client";
 import type { ShiftBreak, ShiftVersion } from "@/lib/shift/types";
 import { cn } from "@/lib/utils";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 /** Shared look for shift cards across the roster views (grid, schedule, board, calendar): a
  * soft tinted card with a coloured left bar, the time range, shift name and break length. All
@@ -107,7 +108,7 @@ export function useShiftSchedules(
         apiClient
           .get<ShiftVersion>(`/shifts/${id}/versions/resolve?as_of=${asOf}`)
           .then((v) => [id, scheduleOf(v)] as const)
-          .catch(() => null),
+          .catch(reportedFallback(null)),
       ),
     ).then((pairs) => {
       if (cancelled) return;

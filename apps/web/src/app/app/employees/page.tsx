@@ -59,6 +59,7 @@ import {
   type EmployeeFormErrors,
   type EmployeeFormValues,
 } from "@/lib/employee/validate-employee";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 function employeeName(employee: Employee): string {
   return employeeFullName(employee);
@@ -147,7 +148,7 @@ export default function EmployeesPage() {
     apiClient
       .get<DirectorySummary>("/employees/directory/summary")
       .then((d) => !cancelled && setSummary(d))
-      .catch(() => {});
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };

@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import {
   IDENTITY_DISPLAY,
@@ -116,7 +116,7 @@ export function IdentityPanel({ employeeId }: { employeeId: string }) {
               message={
                 error?.status === 403
                   ? "You do not have permission to view this employee's identity documents."
-                  : (error?.message ?? "This section is not available.")
+                  : describeError(error, "This section is not available.")
               }
               onRetry={retry}
             />

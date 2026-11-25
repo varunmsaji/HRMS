@@ -192,6 +192,7 @@ async function call<T>(
       code: envelope?.error?.code ?? "UNKNOWN_ERROR",
       message: envelope?.error?.message ?? "Something went wrong. Please try again.",
       details: envelope?.error?.details ?? [],
+      reference: envelope?.error?.reference ?? null,
       requestId: envelope?.error?.request_id ?? response.headers.get("X-Request-Id") ?? requestId,
     });
   }

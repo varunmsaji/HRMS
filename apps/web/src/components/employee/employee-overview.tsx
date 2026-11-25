@@ -10,7 +10,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { AssignmentChangeType, Employee } from "@/lib/employee/types";
 import { PAY_BASIS_LABELS, type PayBasis } from "@/lib/employee/types";
 import type { EmployeeWorkSummary } from "@/lib/employee/use-employee-work-summary";
@@ -231,7 +231,7 @@ export function EmployeeOverview({
               message={
                 workError.status === 403
                   ? "You do not have permission to view this employee's work information."
-                  : workError.message
+                  : describeApiError(workError)
               }
             />
           ) : null}

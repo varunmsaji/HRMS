@@ -88,6 +88,24 @@ export function reportClientError(error: unknown, kind: ClientErrorReport["kind"
   }
 }
 
+/**
+ * For a request whose failure the screen deliberately tolerates (a decorative lookup, a side
+ * card): the UI degrades quietly, but a server failure or a bug inside the `.then` callback is
+ * still reported for the developer. Expected outcomes (a 4xx, no connection, a cancelled request)
+ * are not, so this is quiet for the normal "not allowed / offline" cases.
+ */
+export function reportHandledError(error: unknown): void {
+  reportClientError(error, "handled");
+}
+
+/** `.catch(reportedFallback(null))` - reports like {@link reportHandledError}, then yields `value`. */
+export function reportedFallback<T>(value: T): (error: unknown) => T {
+  return (error) => {
+    reportHandledError(error);
+    return value;
+  };
+}
+
 /** Test hook: forget what was already reported. */
 export function resetReportedErrors(): void {
   seen.clear();

@@ -59,6 +59,7 @@ import {
   type OnboardingCaseFormErrors,
   type OnboardingCaseFormValues,
 } from "@/lib/onboarding/validate-onboarding";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 /** Tab strip over the case list; each tab is one server-side status filter ("Verified & ready" is
  * the VERIFIED status, ready to activate). */
@@ -122,7 +123,7 @@ export default function OnboardingPage() {
     apiClient
       .get<OnboardingStatusCounts>("/onboarding-cases/status-counts")
       .then((d) => !cancelled && typeof d?.total === "number" && setStatusCounts(d))
-      .catch(() => {});
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };

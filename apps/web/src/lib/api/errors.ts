@@ -124,6 +124,12 @@ export function describeApiError(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+/** {@link describeApiError} for an error state that may be empty: the fallback when there is no
+ * error, otherwise the safe text (with the support reference for a server failure). */
+export function describeError(error: ApiError | null | undefined, fallback: string): string {
+  return error ? describeApiError(error) : fallback;
+}
+
 /**
  * Human-readable text for the employee-lifecycle rejections: an assignment pointing at an
  * inactive master record (`INACTIVE_<KIND>`, 422), deactivating a master record active employees
@@ -155,5 +161,5 @@ export function describeLifecycleError(error: unknown): string {
       : "Compensation must be in the company's currency.";
   }
   if (error.status === 422 && detail?.message) return detail.message;
-  return error.message;
+  return describeApiError(error);
 }

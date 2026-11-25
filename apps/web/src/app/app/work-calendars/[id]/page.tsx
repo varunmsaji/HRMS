@@ -618,7 +618,7 @@ export default function WorkCalendarDetailPage() {
                     message={
                       monthError.status === 403
                         ? "You do not have permission to view this calendar."
-                        : monthError.message
+                        : describeApiError(monthError)
                     }
                     onRetry={() => void loadMonth()}
                   />

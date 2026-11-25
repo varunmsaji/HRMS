@@ -23,6 +23,7 @@ import type { Assignment, AssignmentChangeType } from "@/lib/employee/types";
 import { CHANGE_TYPE_LABELS } from "@/lib/employee/validate-assignment";
 import type { Grade } from "@/lib/grade/types";
 import type { Shift } from "@/lib/shift/types";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 interface AssignmentPanelProps {
   employeeId: string;
@@ -54,11 +55,11 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
     try {
       const [assignmentData, branches, departments, designations, grades, shifts] = await Promise.all([
         apiClient.get<Assignment[]>(`/employees/${employeeId}/assignments`),
-        apiClient.get<Branch[]>("/branches").catch(() => []),
-        apiClient.get<Department[]>("/departments").catch(() => []),
-        apiClient.get<Designation[]>("/designations").catch(() => []),
-        apiClient.get<Grade[]>("/grades").catch(() => []),
-        apiClient.get<Shift[]>("/shifts").catch(() => []),
+        apiClient.get<Branch[]>("/branches").catch(reportedFallback([])),
+        apiClient.get<Department[]>("/departments").catch(reportedFallback([])),
+        apiClient.get<Designation[]>("/designations").catch(reportedFallback([])),
+        apiClient.get<Grade[]>("/grades").catch(reportedFallback([])),
+        apiClient.get<Shift[]>("/shifts").catch(reportedFallback([])),
       ]);
 
       setAssignments(assignmentData);

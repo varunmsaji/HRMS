@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -34,6 +34,7 @@ import {
 } from "@/lib/employee/validate-assignment";
 import type { Grade } from "@/lib/grade/types";
 import type { Shift } from "@/lib/shift/types";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 interface ReferenceData {
   branches: Branch[];
@@ -98,11 +99,11 @@ export function AssignmentChangeDialog({
     try {
       const [assignmentData, branches, departments, designations, grades, shifts] = await Promise.all([
         apiClient.get<Assignment[]>(`/employees/${employeeId}/assignments`),
-        apiClient.get<Branch[]>("/branches").catch(() => []),
-        apiClient.get<Department[]>("/departments").catch(() => []),
-        apiClient.get<Designation[]>("/designations").catch(() => []),
-        apiClient.get<Grade[]>("/grades").catch(() => []),
-        apiClient.get<Shift[]>("/shifts").catch(() => []),
+        apiClient.get<Branch[]>("/branches").catch(reportedFallback([])),
+        apiClient.get<Department[]>("/departments").catch(reportedFallback([])),
+        apiClient.get<Designation[]>("/designations").catch(reportedFallback([])),
+        apiClient.get<Grade[]>("/grades").catch(reportedFallback([])),
+        apiClient.get<Shift[]>("/shifts").catch(reportedFallback([])),
       ]);
       setAssignments(assignmentData);
       setRefs({ branches, departments, designations, grades, shifts });
@@ -298,7 +299,7 @@ export function AssignmentChangeDialog({
               message={
                 loadError.status === 403
                   ? "You do not have permission to view or change this employee's assignment."
-                  : loadError.message
+                  : describeApiError(loadError)
               }
               onRetry={() => void load()}
             />

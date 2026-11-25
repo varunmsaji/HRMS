@@ -7,6 +7,7 @@ import { useNotifications } from "@/components/notifications/notifications-provi
 import { markNotificationRead } from "@/lib/notifications/api";
 import { safeActionPath } from "@/lib/notifications/format";
 import type { AppNotification } from "@/lib/notifications/types";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 /** Click behaviour shared by the bell and the notification centre: persist "read" on the server,
  * then follow the (app-relative) action link. Navigation never waits on, or fails because of,
@@ -25,7 +26,7 @@ export function useOpenNotification(onRead?: (updated: AppNotification) => void)
               onRead?.(updated);
               setUnreadCount(Math.max(0, unreadCount - 1));
             })
-            .catch(() => {})
+            .catch(reportHandledError)
             .finally(() => void refreshUnread());
       if (path) router.push(path);
       await read;

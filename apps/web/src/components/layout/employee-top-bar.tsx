@@ -16,6 +16,7 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
 import type { Employee } from "@/lib/employee/types";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 /** Personal-view top bar: search, notifications, and the signed-in person's name and role. */
 export function EmployeeTopBar({ onOpenNav }: { onOpenNav: () => void }) {
@@ -34,7 +35,7 @@ export function EmployeeTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       .then((e) => {
         if (!cancelled) setName(e.display_name ?? e.first_name);
       })
-      .catch(() => {});
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };
