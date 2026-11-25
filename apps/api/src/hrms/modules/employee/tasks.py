@@ -18,6 +18,7 @@ from sqlalchemy import select
 from hrms.core.celery_app import (
     COMPANY_TASK_LIMITS,
     FANOUT_TASK_LIMITS,
+    IDEMPOTENT_TASK_OPTIONS,
     celery_app,
     dispatch_per_company,
 )
@@ -38,7 +39,9 @@ async def _enforce_company_async(company_id: UUID) -> int:
         return await EmploymentService(session).enforce_elapsed_terminations(company_id)
 
 
-@celery_app.task(name="employee.enforce_terminations_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="employee.enforce_terminations_company", **IDEMPOTENT_TASK_OPTIONS, **COMPANY_TASK_LIMITS
+)
 def enforce_terminations_company(company_id: str) -> int:
     return run_task(_enforce_company_async(UUID(company_id)))
 

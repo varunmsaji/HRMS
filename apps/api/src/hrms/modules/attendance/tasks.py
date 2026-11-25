@@ -38,6 +38,7 @@ from sqlalchemy import select
 from hrms.core.celery_app import (
     COMPANY_TASK_LIMITS,
     FANOUT_TASK_LIMITS,
+    IDEMPOTENT_TASK_OPTIONS,
     celery_app,
     dispatch_per_company,
 )
@@ -158,7 +159,9 @@ async def _calculate_company_async(company_id: UUID) -> int:
     return totals["calculated"]
 
 
-@celery_app.task(name="attendance.calculate_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="attendance.calculate_company", **IDEMPOTENT_TASK_OPTIONS, **COMPANY_TASK_LIMITS
+)
 def calculate_company(company_id: str) -> int:
     return run_task(_calculate_company_async(UUID(company_id)))
 
@@ -244,7 +247,9 @@ async def _calculate_range_async(
     return counts
 
 
-@celery_app.task(name="attendance.calculate_range", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="attendance.calculate_range", **IDEMPOTENT_TASK_OPTIONS, **COMPANY_TASK_LIMITS
+)
 def calculate_range(
     company_id: str,
     date_from: str,
@@ -270,7 +275,11 @@ def calculate_range(
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(name="attendance.process_recalc_requests_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="attendance.process_recalc_requests_company",
+    **IDEMPOTENT_TASK_OPTIONS,
+    **COMPANY_TASK_LIMITS,
+)
 def process_recalc_requests_company(company_id: str) -> dict[str, int]:
     from hrms.modules.attendance.recalc import process_company_requests
 
@@ -432,7 +441,11 @@ def run_face_cleanup() -> int:
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(name="attendance.process_face_deletions_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="attendance.process_face_deletions_company",
+    **IDEMPOTENT_TASK_OPTIONS,
+    **COMPANY_TASK_LIMITS,
+)
 def process_face_deletions_company(company_id: str) -> dict[str, object]:
     from dataclasses import asdict
 
