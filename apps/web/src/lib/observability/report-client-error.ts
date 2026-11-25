@@ -6,12 +6,11 @@ import { isApiError } from "@/lib/api/errors";
  * user input or internals): only the error's class name, the top stack locations, the route
  * template-ish path without query/hash, and the build.
  *
- * Off by default. The ingestion endpoint (`POST /v1/client-errors`) is a separate, later change;
- * until then enabling this would only produce 404s. Turn it on with
- * `NEXT_PUBLIC_CLIENT_ERROR_REPORTING=true` once the endpoint exists.
+ * On by default; it only talks to our own API (`POST /v1/client-errors`). Set
+ * `NEXT_PUBLIC_CLIENT_ERROR_REPORTING=false` at build time to turn it off.
  */
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const ENABLED = process.env.NEXT_PUBLIC_CLIENT_ERROR_REPORTING === "true";
+const ENABLED = process.env.NEXT_PUBLIC_CLIENT_ERROR_REPORTING !== "false";
 
 /** At most this many reports per page load, and never the same failure twice, so a render loop
  * cannot flood the API. */

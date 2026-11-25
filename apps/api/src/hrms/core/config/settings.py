@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     log_file_max_bytes: int = Field(default=10 * 1024 * 1024, ge=0)
     log_file_backup_count: int = Field(default=5, ge=0, le=100)
     # Age limit for *rotated* backups, in days; 0 = keep by count only.
-    log_retention_days: int = Field(default=0, ge=0)
+    log_retention_days: int = Field(default=30, ge=0)
     # true = refuse to start when the log directory is unusable; false = stdout-only fallback.
     log_files_required: bool = False
     # Prometheus scrape endpoint (`GET /metrics`, docs/architecture/OBSERVABILITY_ARCHITECTURE.md).

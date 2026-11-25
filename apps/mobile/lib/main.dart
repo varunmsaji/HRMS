@@ -21,7 +21,7 @@ Future<void> main() async {
   installGlobalErrorHandlers();
   initTimeZones();
   final apiClient = await ApiClient.getInstance();
-  if (const bool.fromEnvironment('CLIENT_ERROR_REPORTING')) {
+  if (const bool.fromEnvironment('CLIENT_ERROR_REPORTING', defaultValue: true)) {
     AppDiagnostics.instance.sink = (entry) => unawaited(
       apiClient
           .post<void>('/client-errors', body: entry.toReport(), parse: (_) {}, authenticated: false)

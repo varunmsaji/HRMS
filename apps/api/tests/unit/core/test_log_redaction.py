@@ -341,3 +341,35 @@ def test_digit_runs_inside_identifiers_are_not_phone_numbers(raw: str) -> None:
 def test_phone_numbers_in_text_are_still_redacted(raw: str) -> None:
     out = _redact(message=raw)["message"]
     assert "[PHONE]" in out and "98765" not in out
+
+
+# --- EH-S-01 / EH-S-02 ---------------------------------------------------------------------------
+
+
+def test_free_text_reason_is_masked_but_a_reason_code_is_kept() -> None:
+    from hrms.core.observability.redaction import REDACTED, redact_event
+
+    out = redact_event(
+        None,
+        "error",
+        {
+            "event": "x",
+            "leave_reason": "fever, doctor said rest",
+            "skip_reason": "outside_window",
+            "nested": {"reject_reason": "personal medical issue"},
+        },
+    )
+    assert out["leave_reason"] == REDACTED
+    assert out["skip_reason"] == "outside_window"
+    assert out["nested"]["reject_reason"] == REDACTED
+
+
+def test_aadhaar_numbers_in_text_are_masked_but_ids_and_epochs_are_not() -> None:
+    from hrms.core.observability.redaction import redact_text
+
+    assert "2345 6789 0123" not in redact_text("Aadhaar 2345 6789 0123 rejected")
+    assert "234567890123" not in redact_text("uid=234567890123.")
+    uuid = "0b6f2c1e-4d3a-4e5f-8a9b-234567890123"
+    assert redact_text(f"id {uuid}") == f"id {uuid}"
+    assert redact_text("at 1700000000000 ms") == "at 1700000000000 ms"
+    assert redact_text("order 123456789012") == "order 123456789012"  # first digit 1: not Aadhaar

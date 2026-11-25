@@ -11,6 +11,10 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.registry import EncryptionKeyRegistry
 from hrms.core.db.session import dispose_engine, get_engine, session_scope
 from hrms.core.errors.handlers import register_exception_handlers
+from hrms.core.observability.client_errors_router import (
+    MAX_CLIENT_ERROR_BODY_BYTES,
+)
+from hrms.core.observability.client_errors_router import router as client_errors_router
 from hrms.core.observability.logging import configure_logging
 from hrms.core.observability.metrics_router import router as metrics_router
 from hrms.core.observability.request_context import RequestContextMiddleware
@@ -167,6 +171,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # document names a number for this endpoint; see the report's §4 for the reasoning and the
     # explicit call-out that this needs product/security sign-off, not a claim that it already has
     # it.
+    # EH-W-02 — the client-error ingestion endpoint is unauthenticated, so its body is capped
+    # before parsing; a report is a few hundred bytes.
+    app.add_middleware(
+        MaxUploadSizeMiddleware,
+        max_bytes=MAX_CLIENT_ERROR_BODY_BYTES,
+        path_prefixes=("/v1/client-errors",),
+    )
     app.add_middleware(
         OnboardingUploadRateLimitMiddleware,
         ip_limit=30,
@@ -219,6 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(client_errors_router, prefix="/v1")
     app.include_router(identity_router, prefix="/v1")
     app.include_router(organisation_router, prefix="/v1")
     app.include_router(employee_router, prefix="/v1")

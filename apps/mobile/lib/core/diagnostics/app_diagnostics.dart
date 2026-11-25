@@ -66,8 +66,8 @@ class AppDiagnostics {
   final Queue<DiagnosticEntry> _entries = Queue();
 
   /// Where reportable entries are sent (`POST /v1/client-errors`). Null until `main` installs it,
-  /// and only installed when the build opts in with `--dart-define=CLIENT_ERROR_REPORTING=true`,
-  /// so a default build sends nothing anywhere.
+  /// and installed unless the build opts out with `--dart-define=CLIENT_ERROR_REPORTING=false`.
+  /// Reports go only to our own API and carry no message text.
   void Function(DiagnosticEntry entry)? sink;
 
   /// At most this many reports per app session, and never the same failure twice, so a render
