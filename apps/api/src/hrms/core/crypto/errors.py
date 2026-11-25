@@ -12,6 +12,7 @@ class EncryptionUnavailableError(AppError):
 
     code = "ENCRYPTION_UNAVAILABLE"
     status_code = 503
+    public_message = "The service is temporarily unavailable. Please try again shortly."
 
 
 class DecryptionUnavailableError(AppError):
@@ -20,6 +21,7 @@ class DecryptionUnavailableError(AppError):
 
     code = "DECRYPTION_UNAVAILABLE"
     status_code = 503
+    public_message = "The service is temporarily unavailable. Please try again shortly."
 
 
 class DecryptionFailedError(AppError):
@@ -53,3 +55,4 @@ class NoActiveEncryptionKeyError(AppError):
 
     code = "NO_ACTIVE_ENCRYPTION_KEY"
     status_code = 503
+    public_message = "The service is temporarily unavailable. Please try again shortly."

@@ -275,6 +275,8 @@ def test_5xx_app_errors_are_logged_once(
     assert entry["request_id"] == f"req-{kind}"
     assert entry["http_path"] == "/__t/app-error/{kind}"  # route template, not the raw path
     assert entry["cause_type"] == cause_type
+    # EH-B-03 — the reference the user is shown is the one the log record carries.
+    assert entry["reference"] == r.json()["error"]["reference"]
     assert ("exception" in entry) is has_traceback
     assert "unhandled_exception" not in {e["event"] for e in events}
 

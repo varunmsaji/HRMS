@@ -89,6 +89,7 @@ class ImportQueueUnavailableError(AppError):
 
     code = "IMPORT_QUEUE_UNAVAILABLE"
     status_code = 503
+    public_message = "The import could not be queued; no data was imported. Try again shortly"
 
     def __init__(
         self,
