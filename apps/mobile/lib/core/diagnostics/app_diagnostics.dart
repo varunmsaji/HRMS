@@ -16,6 +16,7 @@ class DiagnosticEntry {
     this.requestId,
     this.status,
     this.code,
+    this.reference,
   });
 
   final DateTime at;
@@ -30,6 +31,9 @@ class DiagnosticEntry {
   final int? status;
   final String? code;
 
+  /// The `ERR-…` reference the user was shown for this failure, when the server gave one.
+  final String? reference;
+
   /// The scrubbed payload for `POST /v1/client-errors`: class, status/code, request id and code
   /// locations — never a message, a token, a body or employee data.
   Map<String, Object?> toReport() => {
@@ -38,6 +42,7 @@ class DiagnosticEntry {
     'error_class': type,
     'frames': location?.split(' < ') ?? const <String>[],
     'request_id': requestId,
+    'reference': reference,
     'status': status,
     'code': code,
   };
@@ -48,7 +53,7 @@ class DiagnosticEntry {
     type,
     if (code != null) code!,
     if (status != null) 'HTTP $status',
-    if (requestId != null) 'ref $requestId',
+    if (reference != null) 'ref $reference' else if (requestId != null) 'ref $requestId',
     if (location != null) '@ $location',
   ].join(' | ');
 }
@@ -133,6 +138,7 @@ class AppDiagnostics {
           requestId: error.requestId,
           status: error.status,
           code: error.code,
+          reference: error.reference,
         ),
       );
     } catch (_) {}

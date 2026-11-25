@@ -84,3 +84,8 @@ String describeApiError(Object error) {
   }
   return 'Something went wrong. Please try again.';
 }
+
+/// [describeApiError] for an error that may be absent: [fallback] when there is none, otherwise
+/// the safe text (with the support reference for a server failure).
+String describeError(ApiError? error, String fallback) =>
+    error == null ? fallback : describeApiError(error);

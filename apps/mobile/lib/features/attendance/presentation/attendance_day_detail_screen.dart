@@ -28,6 +28,7 @@ import 'mismatch_fixes.dart' show askKeepLeaveReason;
 import 'raise_correction.dart';
 import 'employee_attendance_profile_screen.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
 /// who and which shift, previous/next day, the punch timeline (web `day-timeline.tsx`), schedule,
@@ -85,8 +86,9 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       var projections = const <LeaveDayProjection>[];
       try {
         projections = await _repo.listLeaveProjections(employeeId: day.employeeId, dateFrom: day.attendanceDate, dateTo: day.attendanceDate);
-      } catch (_) {
+      } catch (e, s) {
         // Best effort — a caller without projection visibility just sees no overlay.
+        AppDiagnostics.instance.recordHandled(e, s);
       }
       if (mounted) {
         setState(() {
@@ -406,7 +408,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     if (day == null && _loading) {
       body = const ListSkeleton();
     } else if (day == null) {
-      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this day", message: _error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this day", message: _error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : describeError(_error, 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
     } else {
       final r = day.raw;
       final tz = day.timezone;

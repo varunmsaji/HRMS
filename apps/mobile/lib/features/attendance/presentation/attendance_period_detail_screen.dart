@@ -261,7 +261,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
     if (p == null && _loading) {
       body = const ListSkeleton();
     } else if (p == null) {
-      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this period", message: _error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this period", message: _error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : describeError(_error, 'Something went wrong.'), actionLabel: 'Try again', onAction: _load);
     } else {
       final open = p['status'] == 'OPEN';
       final actions = ((p['actions'] as List?) ?? const []).cast<Rec>();

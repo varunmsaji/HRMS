@@ -179,8 +179,9 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     try {
       final fresh = await ref.read(leaveRepositoryProvider).getLeaveApplication(id);
       if (mounted) setState(() => _rows = [for (final r in _rows) r.id == id ? fresh : r]);
-    } catch (_) {
+    } catch (e, s) {
       // Keep the row as it was; pull to refresh reloads everything.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

@@ -87,8 +87,9 @@ class AuthController extends StateNotifier<AuthState> {
     } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     try {
       await _repository.logout();
-    } catch (_) {
+    } catch (e, s) {
       // Best-effort server-side revoke — the client-side session is cleared regardless.
+      AppDiagnostics.instance.recordHandled(e, s);
     } finally {
       await TokenStorage.instance.clear();
       state = const AuthState(status: AuthStatus.unauthenticated);

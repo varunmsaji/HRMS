@@ -5,6 +5,7 @@ import '../../../core/api/api_error.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/leave_repository.dart' show leaveRepositoryProvider;
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const _leaveYearTypes = ['CALENDAR', 'FINANCIAL', 'CUSTOM', 'ANNIVERSARY'];
 
@@ -41,8 +42,9 @@ class _LeaveYearSettingScreenState extends ConsumerState<LeaveYearSettingScreen>
           _startDay.text = setting.startDay?.toString() ?? '';
         });
       }
-    } catch (_) {
+    } catch (e, s) {
       // Not configured yet — leave the CALENDAR default.
+      AppDiagnostics.instance.recordHandled(e, s);
     } finally {
       if (mounted) setState(() => _loading = false);
     }

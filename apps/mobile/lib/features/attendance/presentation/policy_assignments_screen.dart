@@ -105,7 +105,8 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
           _hasMore = r.more;
         });
       }
-    } catch (_) {
+    } catch (e, s) {
+      AppDiagnostics.instance.recordHandled(e, s);
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }

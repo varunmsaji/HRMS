@@ -298,7 +298,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
         icon: _error?.status == 403 ? Icons.lock_outline_rounded : Icons.error_outline_rounded,
         tone: Tone.danger,
         title: _error?.status == 403 ? 'No access' : 'Couldn\'t load pay run',
-        message: _error?.status == 403 ? 'You do not have permission to view pay runs.' : (_error?.message ?? 'Pay run not found.'),
+        message: _error?.status == 403 ? 'You do not have permission to view pay runs.' : describeError(_error, 'Pay run not found.'),
         actionLabel: 'Retry',
         onAction: _load,
       );

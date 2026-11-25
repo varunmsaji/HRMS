@@ -11,6 +11,7 @@ import '../../attendance/presentation/employee_insights.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../leave/data/leave_repository.dart';
 import '../data/employee_repository.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 import 'profile_screen.dart' show employeeRepositoryProvider;
 
 const _workLocationLabels = {'OFFICE': 'Office', 'WFH': 'Work from home', 'HYBRID': 'Hybrid', 'FIELD': 'Field'};
@@ -128,14 +129,14 @@ class _EmployeeOverviewState extends ConsumerState<EmployeeOverview> {
     });
     leave.listLeaveBalances(id).then((b) {
       if (mounted && id == employee.id) setState(() => _balances = b);
-    }).catchError((Object _) {});
+    }).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); });
     leave.listLeaveApplicationsPage(employeeId: id, dateFrom: today, status: 'APPROVED').then((env) {
       final upcoming = env.data.where((a) => a.endDate.compareTo(today) >= 0).toList()..sort((a, b) => a.startDate.compareTo(b.startDate));
       if (mounted && id == employee.id) setState(() => _nextLeave = upcoming.firstOrNull);
-    }).catchError((Object _) {});
+    }).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); });
     repo.listDocuments(id).then((d) {
       if (mounted && id == employee.id) setState(() => _documents = d);
-    }).catchError((Object _) {});
+    }).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); });
   }
 
   @override
@@ -391,7 +392,7 @@ class _EmployeeOverviewState extends ConsumerState<EmployeeOverview> {
       body = const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator(strokeWidth: 2, key: Key('overview-work-loading'))));
     } else if (_workError != null || work == null) {
       body = Text(
-        _workError?.status == 403 ? "You do not have permission to view this employee's work information." : (_workError?.message ?? 'Could not load work information.'),
+        _workError?.status == 403 ? "You do not have permission to view this employee's work information." : describeError(_workError, 'Could not load work information.'),
         key: const Key('overview-work-error'),
         style: TextStyle(color: scheme.error),
       );

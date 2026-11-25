@@ -4,6 +4,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/notification_repository.dart';
 import '../domain/app_notification.dart';
 import 'unread_count.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// How often the app checks for new notifications while it is in the foreground. A backgrounded
 /// app is never polled; it checks again as soon as it returns to the foreground.
@@ -58,8 +59,9 @@ class NotificationPopupController extends StateNotifier<NotificationPopup?> {
         state = NotificationPopup(fresh.first, others: fresh.length - 1);
       }
       _primed = true;
-    } catch (_) {
+    } catch (e, s) {
       // A background check must never surface an error; the next one retries.
+      AppDiagnostics.instance.recordHandled(e, s);
     } finally {
       _checking = false;
     }

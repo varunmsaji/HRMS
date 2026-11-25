@@ -10,6 +10,7 @@ import '../data/notification_repository.dart';
 import '../domain/app_notification.dart';
 import '../push/push_messaging.dart';
 import '../state/notification_popups.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const _notificationsPath = '/app/notifications';
 
@@ -63,7 +64,7 @@ class _NotificationPopupHostState extends ConsumerState<NotificationPopupHost> w
     if (tap == null || ref.read(authControllerProvider).status != AuthStatus.authenticated) return;
     _pendingTap = null;
     final id = tap.notificationId;
-    if (id != null) unawaited(ref.read(notificationRepositoryProvider).markRead(id).catchError((_) {}));
+    if (id != null) unawaited(ref.read(notificationRepositoryProvider).markRead(id).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); }));
     widget.router.push(safeNotificationPath(tap.actionUrl) ?? _notificationsPath);
     _check();
   }

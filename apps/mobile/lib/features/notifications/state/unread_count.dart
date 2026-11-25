@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/state/auth_controller.dart';
 import '../data/notification_repository.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// The bell's unread badge. The count always comes from the server; it is fetched when the
 /// signed-in user changes (app start, login), and re-fetched by [refresh] (app resume, opening the
@@ -23,8 +24,9 @@ class UnreadCountNotifier extends StateNotifier<int> {
     try {
       final count = await repo.unreadCount();
       if (!_disposed) state = count;
-    } catch (_) {
+    } catch (e, s) {
       // A badge read must never break the screen it sits on.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

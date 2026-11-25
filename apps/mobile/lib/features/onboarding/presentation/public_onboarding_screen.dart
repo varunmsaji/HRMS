@@ -179,7 +179,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
         title: 'Link not available',
         message: _loadError?.status == 404
             ? 'This onboarding link is invalid or has expired. Please contact HR for a new one.'
-            : (_loadError?.message ?? 'Something went wrong.'),
+            : describeError(_loadError, 'Something went wrong.'),
         onRetry: _loadError?.status == 404 ? null : _load,
       );
     }

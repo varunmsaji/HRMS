@@ -35,6 +35,7 @@ import '../state/home_stats.dart';
 import '../../notifications/presentation/notification_bell.dart';
 import '../../notifications/state/unread_count.dart';
 import 'dashboard_design.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// The employee's face-enrollment status, read once for Home so the punch control knows whether
 /// to offer a plain or a face punch before it offers anything (spec S10: disabled until known).
@@ -142,7 +143,10 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
               child: RefreshIndicator(
                 onRefresh: () async {
                   _refreshAll(employeeId, key);
-                  await ref.read(todayDataProvider(key).future).catchError((_) => TodayData(punches: null, days: null, today: businessToday(zone)));
+                  await ref.read(todayDataProvider(key).future).catchError((Object e, StackTrace s) {
+                    AppDiagnostics.instance.recordHandled(e, s);
+                    return TodayData(punches: null, days: null, today: businessToday(zone));
+                  });
                 },
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),

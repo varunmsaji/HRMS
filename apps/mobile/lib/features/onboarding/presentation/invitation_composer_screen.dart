@@ -144,7 +144,7 @@ class _InvitationComposerScreenState extends ConsumerState<InvitationComposerScr
                 icon: Icons.error_outline_rounded,
                 tone: Tone.danger,
                 title: "Couldn't load the invitation",
-                message: _loadError!.status == 403 ? "You don't have permission to send invitations." : _loadError!.message,
+                message: _loadError!.status == 403 ? "You don't have permission to send invitations." : describeApiError(_loadError!),
                 actionLabel: _loadError!.status == 403 ? null : 'Retry',
                 onAction: _load,
               )

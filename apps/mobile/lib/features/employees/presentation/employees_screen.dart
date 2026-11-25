@@ -74,8 +74,9 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     try {
       final summary = await _repo.directorySummary();
       if (mounted) setState(() => _summary = summary);
-    } catch (_) {
+    } catch (e, s) {
       // The cards are extra context; the directory works without them (as on web).
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

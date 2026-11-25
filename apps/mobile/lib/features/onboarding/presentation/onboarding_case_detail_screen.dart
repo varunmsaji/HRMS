@@ -460,7 +460,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         icon: _error?.status == 403 ? Icons.lock_outline_rounded : Icons.error_outline_rounded,
         tone: Tone.danger,
         title: _error?.status == 403 ? 'No access' : 'Couldn\'t load case',
-        message: _error?.status == 403 ? 'You do not have permission to view this onboarding case.' : (_error?.message ?? 'Something went wrong.'),
+        message: _error?.status == 403 ? 'You do not have permission to view this onboarding case.' : describeError(_error, 'Something went wrong.'),
         actionLabel: 'Retry',
         onAction: _load,
       );

@@ -11,6 +11,7 @@ import '../../auth/state/auth_controller.dart';
 import '../domain/payroll_resources.dart';
 import 'salary_breakup_view.dart';
 import 'structure_lines_editor.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// The versions of a salary structure — mirrors `apps/web/src/app/app/payroll/salary-structures/[id]/page.tsx`:
 /// published versions are read-only; "Edit (new draft)" copies the current version into a draft,
@@ -101,8 +102,9 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
     try {
       final page = await ref.read(apiClientProvider).getList<Rec>('/payroll/salary-components', parseItem: (d) => d as Rec);
       if (mounted) setState(() => _components = page.data);
-    } catch (_) {
+    } catch (e, s) {
       // The editor still shows the lines by name; adding a component needs the list.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

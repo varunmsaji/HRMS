@@ -127,7 +127,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
         _page += 1;
       });
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_wrap(e).message)));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(describeApiError(_wrap(e)))));
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }

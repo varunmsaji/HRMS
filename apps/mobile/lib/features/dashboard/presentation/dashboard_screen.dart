@@ -15,6 +15,7 @@ import '../../../core/widgets/ui.dart';
 import '../../../features/shell/more_action.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/dashboard_repository.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepository>(
   (ref) => DashboardRepository(ref.watch(apiClientProvider)),
@@ -216,8 +217,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     CompanyInsights? insights;
     try {
       insights = await ref.read(dashboardRepositoryProvider).getInsights(leaveScope: scope, branchId: _branchId);
-    } catch (_) {
+    } catch (e, s) {
       // Keep the figures already shown; the switch shows the period they cover.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
     if (!mounted || scope != _leaveScope) return;
     setState(() {

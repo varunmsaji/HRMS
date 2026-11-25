@@ -194,7 +194,7 @@ class ApprovalsRepository {
       for (final id in ids)
         _client.get('/employees/$id', parse: (d) => Employee.fromJson(d as Map<String, dynamic>)).then((e) {
           out[id] = e.fullName.isEmpty ? e.employeeCode : e.fullName;
-        }).catchError((_) {}),
+        }).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); }),
     ]);
     return out;
   }

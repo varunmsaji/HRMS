@@ -41,8 +41,9 @@ class PushRegistration {
       if (token == null || token.length < 20) return;
       await _send(token);
       _refresh ??= _push.onTokenRefresh.listen((t) => unawaited(_send(t)));
-    } catch (_) {
+    } catch (e, s) {
       // Offline or the API refused: the next sign-in or app start tries again.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

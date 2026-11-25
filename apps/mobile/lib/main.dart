@@ -67,31 +67,33 @@ class HrmsApp extends ConsumerWidget {
 /// error in a release build showed a grey box. Errors are recorded locally (`AppDiagnostics`,
 /// no message text, nothing sent off-device), still printed in debug, and a broken widget shows
 /// a readable placeholder instead of a blank or grey screen.
-void installGlobalErrorHandlers() {
+void installGlobalErrorHandlers({bool release = kReleaseMode, bool debug = kDebugMode}) {
   final previousOnError = FlutterError.onError;
   FlutterError.onError = (details) {
     // Recorded (and reported when enabled) in every build mode; only *shown* in debug.
     AppDiagnostics.instance.recordError(details.exception, details.stack, source: 'flutter');
-    if (kDebugMode) {
+    if (debug) {
       (previousOnError ?? FlutterError.presentError)(details);
     }
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     AppDiagnostics.instance.recordError(error, stack, source: 'platform');
-    if (kDebugMode) debugPrint('Uncaught error: $error');
+    if (debug) debugPrint('Uncaught error: $error');
     return true; // handled: do not crash the app over an unawaited failure
   };
-  if (kReleaseMode) {
-    ErrorWidget.builder = (details) => const Material(
-          child: Center(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: Text(
-                'This part of the screen could not be displayed. Go back and try again.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-        );
-  }
+  if (release) ErrorWidget.builder = releaseErrorPlaceholder;
 }
+
+/// What replaces a widget that failed to build in a release build: fixed text, never the
+/// exception (and never the grey box / red screen with a stack trace).
+Widget releaseErrorPlaceholder(FlutterErrorDetails details) => const Material(
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'This part of the screen could not be displayed. Go back and try again.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );

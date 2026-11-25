@@ -1,4 +1,5 @@
 import '../../../core/api/api_client.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 import '../../profile/data/employee_repository.dart' show Employee;
 
 class DashboardSetupProgress {
@@ -340,7 +341,7 @@ class DashboardRepository {
       for (final id in ids.toSet())
         _client.get('/employees/$id', parse: (d) => Employee.fromJson(d as Map<String, dynamic>)).then((e) {
           out[id] = e.fullName.isEmpty ? e.employeeCode : e.fullName;
-        }).catchError((_) {}),
+        }).catchError((Object e, StackTrace s) { AppDiagnostics.instance.recordHandled(e, s); }),
     ]);
     return out;
   }

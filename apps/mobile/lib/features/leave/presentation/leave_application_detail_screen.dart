@@ -153,7 +153,7 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
         icon: _error?.status == 404 ? Icons.search_off_rounded : Icons.error_outline_rounded,
         tone: _error?.status == 404 ? Tone.neutral : Tone.danger,
         title: _error?.status == 404 ? 'Not found' : 'Couldn\'t load application',
-        message: _error?.status == 404 ? "This leave application was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'),
+        message: _error?.status == 404 ? "This leave application was not found, or you don't have access to it." : describeError(_error, 'Something went wrong.'),
         actionLabel: 'Retry',
         onAction: _load,
       );

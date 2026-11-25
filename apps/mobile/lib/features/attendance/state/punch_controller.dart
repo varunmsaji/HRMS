@@ -12,6 +12,7 @@ import '../domain/punch_location.dart';
 import '../domain/punch_warning.dart';
 import '../presentation/punch_location_flow.dart';
 import 'active_liveness_config.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Where a face punch is in its flow (drives the face card's sentence and disables its buttons).
 enum FacePhase { idle, locating, challenge, capturing, verifying }
@@ -199,8 +200,9 @@ class PunchController extends StateNotifier<PunchState> {
       var policy = GeofencePolicyMe.disabled;
       try {
         policy = await repository.getMyGeofencePolicy();
-      } catch (_) {
+      } catch (e, s) {
         // Offline / unknown: attempt the punch; the server enforces and will say if it needed one.
+        AppDiagnostics.instance.recordHandled(e, s);
       }
       if (!policy.isDisabled) {
         final location = _ref.read(locationCaptureProvider);

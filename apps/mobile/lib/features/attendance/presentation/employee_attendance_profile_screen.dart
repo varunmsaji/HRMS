@@ -20,6 +20,7 @@ import 'attendance_day_detail_screen.dart';
 import 'attendance_month_card.dart';
 import 'attendance_summary.dart';
 import 'employee_attendance_panel.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -83,8 +84,9 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
       var punches = const <Punch>[];
       try {
         punches = await repo.listPunches(employeeId: widget.employeeId, dateFrom: today, dateTo: today);
-      } catch (_) {
+      } catch (e, s) {
         // The punch chips are a nicety; the day row says what matters.
+        AppDiagnostics.instance.recordHandled(e, s);
       }
       if (mounted) {
         setState(() {
@@ -169,8 +171,9 @@ class _EmployeeAttendanceProfileScreenState extends ConsumerState<EmployeeAttend
     try {
       final rows = await ref.read(attendanceRepositoryProvider).monthPayroll(month: month, employeeIds: [widget.employeeId]);
       if (mounted && _month == month) setState(() => _payroll = rows.isEmpty ? null : rows.first);
-    } catch (_) {
+    } catch (e, s) {
       // Best effort: the day counts below stand on their own.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 

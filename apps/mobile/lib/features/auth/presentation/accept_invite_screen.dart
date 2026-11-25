@@ -145,7 +145,7 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
         child: Text(
           _loadError?.status == 404
               ? 'This invite link is invalid or has expired. Please ask your admin to send a new one.'
-              : (_loadError?.message ?? 'Something went wrong.'),
+              : describeError(_loadError, 'Something went wrong.'),
           textAlign: TextAlign.center,
         ),
       );
