@@ -135,13 +135,14 @@ describe("new attendance policy", () => {
   });
 
   it("says nothing was saved when publishing fails, and stays on the page", async () => {
+    // A non-API error never shows its own message (EH-W-01), so "Boom" must not reach the page.
     mockedPost.mockRejectedValue(new Error("Boom"));
     const user = userEvent.setup();
     render(<NewAttendancePolicyPage />);
     await user.click(screen.getByRole("button", { name: /Save & publish/ }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-    expect(await within(dialog).findByText("Nothing was saved. Boom")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Nothing was saved. Something went wrong. Please try again.")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 });
