@@ -113,7 +113,7 @@ export function describeApiError(error: unknown): string {
     const reference = errorReference(error);
     return reference ? `${error.message} (Reference: ${reference})` : error.message;
   }
-  if (error instanceof Error) return error.message;
+  // Never the message of a non-API error (a TypeError, a library failure): it can hold internals.
   return "Something went wrong. Please try again.";
 }
 

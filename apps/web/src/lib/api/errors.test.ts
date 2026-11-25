@@ -85,6 +85,12 @@ describe("support references and retryability", () => {
     expect(describeApiError(noId)).toBe("Boom");
   });
 
+  it("never shows the message of a non-API error", () => {
+    const text = describeApiError(new TypeError("Cannot read properties of undefined (reading 'secret')"));
+    expect(text).toBe("Something went wrong. Please try again.");
+    expect(describeApiError("raw string")).toBe("Something went wrong. Please try again.");
+  });
+
   it("only treats no-response, gateway and rate-limit failures as retryable", () => {
     const make = (status: number) => new ApiError({ status, code: "X", message: "x" });
     expect(isRetryableError(new NetworkError())).toBe(true);

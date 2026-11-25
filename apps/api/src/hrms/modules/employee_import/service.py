@@ -581,7 +581,19 @@ class EmployeeImportService:
             message = exc.message
         else:
             code = "IMPORT_ROW_FAILED"
-            message = str(exc)
+            # Never `str(exc)`: this text is stored and returned by the `/errors` endpoint, and an
+            # unexpected exception (e.g. a database error) can carry SQL and schema names. The
+            # detail goes to the server log only, with the traceback.
+            message = "This row could not be imported because of an unexpected problem."
+            safe_log(
+                _logger.error,
+                "employee_import.row.unexpected_failure",
+                exc_info=exc,
+                company_id=str(company_id),
+                batch_id=str(batch_id),
+                row_number=row_number,
+                **safe_error(exc),
+            )
 
         await self._repo.insert_row_error(
             self._session,

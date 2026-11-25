@@ -18,6 +18,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from hrms.core.config.settings import Settings
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.exceptions import (
     FaceConsentRequiredError,
@@ -32,6 +33,8 @@ from hrms.modules.attendance.service import (
     _resolve_visible_employee_ids,
 )
 from hrms.shared.pagination import PageParams
+
+_logger = get_logger(__name__)
 
 MAX_SHADOW_PHOTOS = 8
 
@@ -267,8 +270,8 @@ class FaceComparisonAdminService:
     async def _discard(provider: FaceVerificationProvider, person_id: str) -> None:
         try:
             await provider.delete_person(person_id=person_id)
-        except Exception:  # noqa: BLE001 - best-effort cleanup of a half-made enrollment
-            pass
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup of a half-made enrollment
+            safe_log(_logger.warning, "face_shadow_discard_failed", **safe_error(exc))
 
     @staticmethod
     def _enrollment_read(row: FaceShadowEnrollment) -> ShadowEnrollmentRead:
