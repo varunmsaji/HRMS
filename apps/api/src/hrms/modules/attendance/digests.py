@@ -33,12 +33,14 @@ from hrms.core.observability.logging import get_logger
 from hrms.core.rbac.service import RbacRepository, RbacService
 from hrms.core.rbac.types import DataScopeLevel
 from hrms.modules.attendance.day_classification import is_expected
+from hrms.modules.attendance.digest_settings import DigestSettingsService
 from hrms.modules.attendance.email_templates import (
     build_hr_weekly_digest_email,
     build_manager_daily_digest_email,
 )
 from hrms.modules.attendance.models import AttendanceRegularizationRequest, OvertimeRecord
 from hrms.modules.attendance.muster_export import display_name
+from hrms.modules.attendance.patterns import PatternAlertService, describe_alert
 from hrms.modules.attendance.permissions import ATTENDANCE_VIEW_ALL
 from hrms.modules.attendance.summary import AttendanceSummaryService, SummaryFilters
 from hrms.modules.employee.models import Employee, EmployeeAssignment
@@ -57,6 +59,8 @@ _TEAM_ROW_LIMIT = 5_000
 class DigestResult:
     kind: str
     skipped_already_sent: bool = False
+    #: The company has switched this digest off (`digest_settings.py`).
+    skipped_opted_out: bool = False
     recipients: int = 0
     sent: int = 0
     send_failures: int = 0
@@ -71,6 +75,11 @@ class _DigestBase:
     @property
     def _app_url(self) -> str:
         return f"{self._settings.web_app_base_url.rstrip('/')}/app/attendance"
+
+    async def _opted_out(self, company_id: UUID, kind: str) -> bool:
+        return not await DigestSettingsService(
+            self._session, deployment_enabled=self._settings.attendance_digests_enabled
+        ).is_enabled(company_id, kind)
 
     async def _already_sent(self, company_id: UUID, kind: str, as_of: date) -> bool:
         stmt = select(AuditLog.id).where(
@@ -155,6 +164,9 @@ class ManagerDailyDigestService(_DigestBase):
         self, company_id: UUID, *, today: date, timezone: str
     ) -> DigestResult:
         result = DigestResult(kind=MANAGER_DAILY)
+        if await self._opted_out(company_id, MANAGER_DAILY):
+            result.skipped_opted_out = True
+            return result
         if await self._already_sent(company_id, MANAGER_DAILY, today):
             result.skipped_already_sent = True
             return result
@@ -276,6 +288,9 @@ class HrWeeklyDigestService(_DigestBase):
         self, company_id: UUID, *, today: date, timezone: str
     ) -> DigestResult:
         result = DigestResult(kind=HR_WEEKLY)
+        if await self._opted_out(company_id, HR_WEEKLY):
+            result.skipped_opted_out = True
+            return result
         # The week that has just ended, whichever day of the week this runs on.
         week_to = today - timedelta(days=today.weekday() + 1)
         week_from = week_to - timedelta(days=6)
@@ -342,7 +357,23 @@ class HrWeeklyDigestService(_DigestBase):
             timezone=timezone,
         )
         regularizations, overtime = await self._pending_counts(company_id, None)
-        names = await self._names(company_id, {f.employee_id for f in week.frequent_late})
+        pattern_result = await PatternAlertService(self._session, self._settings).alerts(
+            company_id,
+            as_of=week_to,
+            filters=SummaryFilters(),
+            today=today,
+            timezone=timezone,
+        )
+        names = await self._names(
+            company_id,
+            {f.employee_id for f in week.frequent_late}
+            | {a.employee_id for a in pattern_result.alerts},
+        )
+        patterns = [
+            f"{names[a.employee_id]} ({describe_alert(a, pattern_result.thresholds)})"
+            for a in pattern_result.alerts
+            if a.employee_id in names
+        ]
         return build_hr_weekly_digest_email(
             week_from=week_from,
             week_to=week_to,
@@ -358,6 +389,7 @@ class HrWeeklyDigestService(_DigestBase):
             pending_regularizations=regularizations,
             pending_overtime=overtime,
             app_url=self._app_url,
+            patterns=patterns,
         )
 
 

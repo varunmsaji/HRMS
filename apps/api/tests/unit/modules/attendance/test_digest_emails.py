@@ -87,3 +87,19 @@ def test_hr_digest_handles_a_drop_a_level_week_and_a_missing_week() -> None:
     assert "no earlier week to compare with" in _hr(previous_rate=None)[2]
     subject, _, text = _hr(rate=None, previous_rate=None, frequent_late=[])
     assert subject == "Attendance last week: n/a" and "Late more than once" not in text
+
+
+def test_hr_digest_lists_the_patterns_when_there_are_any_and_omits_the_line_otherwise() -> None:
+    _, html, text = _hr(
+        patterns=[
+            "Asha (late on 6 days in the last 30)",
+            "Bala (absent on 3 Mondays in the last 56 days)",
+        ]
+    )
+    assert (
+        "Patterns to look at: Asha (late on 6 days in the last 30), Bala (absent on 3 Mondays"
+        in text
+    )
+    assert "Patterns to look at" in html
+    assert "Patterns to look at" not in _hr(patterns=[])[2]
+    assert "Patterns to look at" not in _hr()[2]

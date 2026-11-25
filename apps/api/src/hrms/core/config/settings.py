@@ -482,6 +482,19 @@ class Settings(BaseSettings):
     # ask for it, so it is an operator's decision, made per deployment.
     attendance_digests_enabled: bool = False
 
+    # Pattern alerts (`attendance/patterns.py`): who keeps being late or absent. An employee is
+    # flagged when, within the last `attendance_pattern_window_days`, they were late on at least
+    # `attendance_pattern_late_days` days, absent on `attendance_pattern_absent_days`, or missing
+    # a punch on `attendance_pattern_incomplete_days`; or, within the last
+    # `attendance_pattern_weekday_window_days`, absent on the same weekday
+    # `attendance_pattern_weekday_absences` times. The same numbers for every company.
+    attendance_pattern_window_days: int = 30
+    attendance_pattern_weekday_window_days: int = 56
+    attendance_pattern_late_days: int = 5
+    attendance_pattern_absent_days: int = 4
+    attendance_pattern_incomplete_days: int = 3
+    attendance_pattern_weekday_absences: int = 3
+
     # Initial-release product rule: a tenant has exactly one company (the `legal_entity` table)
     # with any number of branches under it. `0` removes the cap (multi-company), which is what the
     # test-suite sets so its multi-entity scenarios keep working.

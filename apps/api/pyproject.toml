@@ -39,6 +39,11 @@ dependencies = [
     # Observability: Prometheus-format metrics (docs/architecture/OBSERVABILITY_ARCHITECTURE.md).
     # Pure Python, no agent/daemon; multiprocess mode aggregates gunicorn + Celery workers.
     "prometheus-client>=0.21.0",
+    # Excel (.xlsx) and PDF output of the attendance reports and the employee monthly statement
+    # (`modules/attendance/documents.py`). Both are pure-Python builders run on the server, so
+    # a file comes from the same scoped, audited data as the CSV exports.
+    "openpyxl>=3.1.5,<4",
+    "reportlab>=4.2,<6",
 ]
 
 [project.optional-dependencies]
@@ -81,7 +86,7 @@ packages = ["hrms"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "aioboto3.*"]
+module = ["celery.*", "aioboto3.*", "reportlab.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

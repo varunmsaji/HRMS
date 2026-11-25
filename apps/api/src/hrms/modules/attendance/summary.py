@@ -269,6 +269,23 @@ class AttendanceSummaryService:
         )
         return list(result)
 
+    def population(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date,
+        date_to: date,
+        filters: SummaryFilters,
+        today: date,
+        timezone: str,
+        now: datetime | None = None,
+    ) -> Any:
+        """The attendance days of the window after the filters, as a subquery with the dashboard's
+        own columns (`bucket`, `is_late`, `checked_in`, ...). For callers that add their own
+        grouping over exactly the population the dashboard counts."""
+        clock = self._export_clock(date_from, date_to, today, timezone, now)
+        return self._rows(company_id, filters, date_from, date_to, clock=clock)
+
     async def muster_cells(
         self,
         company_id: UUID,

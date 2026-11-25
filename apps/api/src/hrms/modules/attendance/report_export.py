@@ -1,4 +1,4 @@
-"""The Reports tab as CSV files over a window of up to a year.
+"""The Reports tab as CSV, Excel or PDF files over a window of up to a year.
 
 Five reports: daily attendance, present / absent, late / early, work hours and overtime. They read
 the same population, filters and day rules as `/attendance/summary` (`summary.py`), so a file never
@@ -7,8 +7,6 @@ Payroll attendance is not here: it is the attendance period's own summary. Minut
 whole numbers, so a spreadsheet can add them. Every download is audited.
 """
 
-import csv
-import io
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -22,7 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import ValidationError
-from hrms.modules.attendance.muster_export import BUCKET_LABELS, csv_text, display_name
+from hrms.modules.attendance.documents import ExportFile, ExportFormat, Table, render
+from hrms.modules.attendance.muster_export import BUCKET_LABELS, display_name
 from hrms.modules.attendance.summary import AttendanceSummaryService, SummaryFilters
 from hrms.modules.employee.models import Employee
 from hrms.shared.timezone import resolve_zoneinfo
@@ -40,6 +39,13 @@ REPORT_NAMES: tuple[ReportName, ...] = (
 MAX_REPORT_ROWS = 200_000
 
 _PRESENT = frozenset({"PRESENT", "REMOTE", "ON_DUTY"})
+REPORT_TITLES: dict[str, str] = {
+    "daily": "Daily attendance",
+    "present-absent": "Present and absent",
+    "late-early": "Late arrivals and early departures",
+    "hours": "Work hours",
+    "overtime": "Overtime",
+}
 OVERTIME_STATUS_LABELS = {
     "PENDING": "Pending",
     "AUTO_APPROVED": "Auto-approved",
@@ -97,8 +103,9 @@ class ReportExportService:
         ip: str | None = None,
         user_agent: str | None = None,
         now: datetime | None = None,
-    ) -> tuple[str, str]:
-        """The file name and the CSV text (BOM first, so Excel reads UTF-8)."""
+        fmt: ExportFormat = "csv",
+    ) -> ExportFile:
+        """The report as a CSV, Excel or PDF file."""
         service = AttendanceSummaryService(self._session)
         window: dict[str, Any] = {
             "date_from": date_from,
@@ -120,10 +127,15 @@ class ReportExportService:
         tz = resolve_zoneinfo(timezone)
         header, body = _REPORTS[report](rows, people, tz)
 
-        out = io.StringIO()
-        writer = csv.writer(out, lineterminator="\r\n")
-        writer.writerow(header)
-        writer.writerows(body)
+        table = Table(
+            title=REPORT_TITLES[report],
+            subtitle=f"{date_from.isoformat()} to {date_to.isoformat()}",
+            headers=header,
+            rows=body,
+        )
+        # Render before auditing: a file that cannot be built (too large for a PDF) is not a
+        # download, and must not be recorded as one.
+        file = render(table, fmt, f"{report}_{date_from.isoformat()}_{date_to.isoformat()}")
 
         await AuditService().record(
             self._session,
@@ -136,16 +148,14 @@ class ReportExportService:
                 "date_from": date_from.isoformat(),
                 "date_to": date_to.isoformat(),
                 "rows": len(body),
+                "format": fmt,
                 "department_id": str(filters.department_id) if filters.department_id else None,
                 "branch_id": str(filters.branch_id) if filters.branch_id else None,
             },
             ip=ip,
             user_agent=user_agent,
         )
-        return (
-            f"{report}_{date_from.isoformat()}_{date_to.isoformat()}.csv",
-            "﻿" + out.getvalue(),
-        )
+        return file
 
     async def _people(self, company_id: UUID, ids: set[UUID]) -> dict[UUID, _Person]:
         if not ids:
@@ -172,7 +182,7 @@ class ReportExportService:
 
 def _who(people: dict[UUID, _Person], employee_id: UUID) -> tuple[str, str]:
     person = people.get(employee_id)
-    return (csv_text(person.name), csv_text(person.code)) if person else ("", "")
+    return (person.name, person.code) if person else ("", "")
 
 
 def _daily(

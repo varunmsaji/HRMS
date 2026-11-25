@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
+from openpyxl import load_workbook
 from sqlalchemy import text
 from tests.integration.modules.attendance.test_attendance_day import _cleanup_attendance_day
 from tests.integration.modules.attendance.test_attendance_summary import (
@@ -168,6 +169,60 @@ async def test_each_report_has_its_columns_and_figures(
         assert rows[0]["Status"] == "Pending"
     finally:
         await _cleanup_overtime(ctx["company_id"])
+        await _cleanup_attendance_day(company_id=ctx["company_id"])
+
+
+@pytest.mark.asyncio
+async def test_excel_and_pdf_hold_the_same_rows_as_the_csv(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    ctx = await _company(client)
+    params = {"date_from": ctx["week_ago"].isoformat(), "date_to": ctx["today"].isoformat()}
+    try:
+        _, csv_rows = _table(await client.get(_url("daily"), headers=ctx["headers"], params=params))
+
+        xlsx = await client.get(
+            _url("daily"), headers=ctx["headers"], params={**params, "format": "xlsx"}
+        )
+        assert xlsx.status_code == 200, xlsx.text
+        assert xlsx.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert xlsx.headers["content-disposition"].endswith('.xlsx"')
+        sheet = load_workbook(io.BytesIO(xlsx.content)).active
+        assert sheet is not None
+        # Title, subtitle and a gap, then the header, then one row per csv row.
+        assert [c.value for c in sheet[4]][:3] == ["Date", "Employee", "Code"]
+        assert sheet.max_row == 4 + len(csv_rows)
+        assert {sheet.cell(row=r, column=2).value for r in range(5, sheet.max_row + 1)} == {
+            r["Employee"] for r in csv_rows
+        }
+
+        pdf = await client.get(
+            _url("daily"), headers=ctx["headers"], params={**params, "format": "pdf"}
+        )
+        assert pdf.status_code == 200, pdf.text
+        assert pdf.headers["content-type"] == "application/pdf"
+        assert pdf.content.startswith(b"%PDF") and pdf.headers["cache-control"] == "no-store"
+
+        bad = await client.get(
+            _url("daily"), headers=ctx["headers"], params={**params, "format": "docx"}
+        )
+        assert bad.status_code == 422
+
+        async with get_session_factory()() as session:
+            await set_rls_company_id(session, str(ctx["company_id"]))
+            formats = (
+                await session.execute(
+                    text(
+                        "SELECT array_agg(DISTINCT after_json->>'format') FROM audit_log "
+                        "WHERE company_id = :c AND action = 'ATTENDANCE_REPORT_EXPORTED'"
+                    ),
+                    {"c": ctx["company_id"]},
+                )
+            ).scalar_one()
+        assert set(formats) == {"csv", "xlsx", "pdf"}
+    finally:
         await _cleanup_attendance_day(company_id=ctx["company_id"])
 
 

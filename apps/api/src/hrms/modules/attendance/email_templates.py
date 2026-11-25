@@ -192,6 +192,7 @@ def build_hr_weekly_digest_email(
     pending_regularizations: int,
     pending_overtime: int,
     app_url: str,
+    patterns: list[str] | None = None,
 ) -> tuple[str, str, str]:
     """Monday digest to people who see the whole company: last week against the week before."""
     span = f"{_format_date(week_from)} to {_format_date(week_to)}"
@@ -213,6 +214,8 @@ def build_hr_weekly_digest_email(
     ]
     if frequent_late:
         lines.append(f"Late more than once: {_names(frequent_late, 5)}.")
+    if patterns:
+        lines.append(f"Patterns to look at: {_names(patterns, 5)}.")
     lines.append(
         f"Waiting for a decision: {pending_regularizations} regularization "
         f"{'request' if pending_regularizations == 1 else 'requests'}, "

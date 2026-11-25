@@ -559,6 +559,7 @@ async def _send_digests_async(company_id: UUID, kind: str) -> int:
         company_id=str(company_id),
         kind=kind,
         skipped_already_sent=result.skipped_already_sent,
+        skipped_opted_out=result.skipped_opted_out,
         recipients=result.recipients,
         sent=result.sent,
         send_failures=result.send_failures,

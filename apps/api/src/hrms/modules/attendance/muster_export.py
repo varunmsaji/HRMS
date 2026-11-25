@@ -1,4 +1,4 @@
-"""The muster register as a CSV file: one row per employee, one column per date.
+"""The muster register as a CSV, Excel or PDF file: one row per employee, one column per date.
 
 The cells are the same buckets the Attendance page shows (`day_classification`), read over the same
 population and filters as `/attendance/summary`, so a register and the dashboard never disagree and
@@ -7,8 +7,6 @@ blank, never written as absent. Every download is audited: the register lists na
 attendance, which is personal data.
 """
 
-import csv
-import io
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from uuid import UUID
@@ -18,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import ValidationError
+from hrms.modules.attendance.documents import Cell, ExportFile, ExportFormat, Table, render
 from hrms.modules.attendance.summary import AttendanceSummaryService, SummaryFilters
 from hrms.modules.employee.models import Employee
 
@@ -56,14 +55,23 @@ BUCKET_LABELS: dict[str, str] = {
     "NOT_CHECKED_IN": "Not checked in yet",
 }
 _PRESENT = frozenset({"PRESENT", "REMOTE", "ON_DUTY"})
-_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def csv_text(value: object) -> str:
-    """A cell as text. One that starts like a spreadsheet formula gets a leading apostrophe, so a
-    name an employee typed can never run as one."""
-    text = "" if value is None else str(value)
-    return f"'{text}" if text.startswith(_FORMULA_START) else text
+#: Status code to cell colour, for the Excel and PDF registers (hex without the #).
+CODE_COLOURS: dict[str, str] = {
+    "P": "C6EFCE",
+    "R": "DDEBF7",
+    "OD": "DDEBF7",
+    "HD": "FFEB9C",
+    "A": "FFC7CE",
+    "L": "E4DFEC",
+    "!": "F8CBAD",
+    "E": "F8CBAD",
+    "H": "D9D9D9",
+    "W": "EDEDED",
+    "NW": "EDEDED",
+    "NC": "FFF2CC",
+}
+#: A PDF register is a page of columns; beyond this many days it cannot be read.
+MAX_PDF_DAYS = 62
 
 
 def display_name(first: str, middle: str | None, last: str | None, shown: str | None) -> str:
@@ -87,8 +95,9 @@ class MusterExportService:
         ip: str | None = None,
         user_agent: str | None = None,
         now: datetime | None = None,
-    ) -> tuple[str, str]:
-        """The file name and the CSV text (BOM first, so Excel reads UTF-8)."""
+        fmt: ExportFormat = "csv",
+    ) -> ExportFile:
+        """The register as a CSV, Excel or PDF file."""
         cells = await AttendanceSummaryService(self._session).muster_cells(
             company_id,
             date_from=date_from,
@@ -108,18 +117,27 @@ class MusterExportService:
         people = await self._people(company_id, list(by_employee))
         dates = [date_from + timedelta(days=i) for i in range(days)]
 
-        out = io.StringIO()
-        writer = csv.writer(out, lineterminator="\r\n")
-        writer.writerow(
-            ["Employee", "Code", *(d.isoformat() for d in dates)]
-            + ["Present", "Half day", "Absent", "Leave", "Weekly off", "Holiday", "Incomplete"]
-        )
+        if fmt == "pdf" and days > MAX_PDF_DAYS:
+            raise ValidationError(
+                f"A PDF register can cover at most {MAX_PDF_DAYS} days. "
+                "Choose a shorter period, or use the CSV or Excel file."
+            )
+        headers: list[str] = ["Employee", "Code", *(d.isoformat() for d in dates)] + [
+            "Present",
+            "Half day",
+            "Absent",
+            "Leave",
+            "Weekly off",
+            "Holiday",
+            "Incomplete",
+        ]
+        body: list[list[Cell]] = []
         for employee_id in sorted(by_employee, key=lambda e: (people[e][0].lower(), str(e))):
             name, code = people[employee_id]
             row = by_employee[employee_id]
             counts = [row.get(d) for d in dates]
-            writer.writerow(
-                [csv_text(name), csv_text(code)]
+            body.append(
+                [name, code]
                 + [BUCKET_CODES.get(b, "") if b else "" for b in counts]
                 + [
                     sum(1 for b in counts if b in _PRESENT),
@@ -131,10 +149,15 @@ class MusterExportService:
                     counts.count("INCOMPLETE"),
                 ]
             )
-        writer.writerow([])
-        writer.writerow(["Legend"])
-        for bucket, code in BUCKET_CODES.items():
-            writer.writerow([code, BUCKET_LABELS[bucket]])
+        table = Table(
+            title="Muster register",
+            subtitle=f"{date_from.isoformat()} to {date_to.isoformat()}",
+            headers=headers,
+            rows=body,
+            notes=["Legend"] + [f"{code} = {BUCKET_LABELS[b]}" for b, code in BUCKET_CODES.items()],
+            highlight=CODE_COLOURS,
+            highlight_from=2,
+        )
 
         await AuditService().record(
             self._session,
@@ -146,16 +169,14 @@ class MusterExportService:
                 "date_from": date_from.isoformat(),
                 "date_to": date_to.isoformat(),
                 "employees": len(by_employee),
+                "format": fmt,
                 "department_id": str(filters.department_id) if filters.department_id else None,
                 "branch_id": str(filters.branch_id) if filters.branch_id else None,
             },
             ip=ip,
             user_agent=user_agent,
         )
-        return (
-            f"muster-register_{date_from.isoformat()}_{date_to.isoformat()}.csv",
-            "﻿" + out.getvalue(),
-        )
+        return render(table, fmt, f"muster-register_{date_from.isoformat()}_{date_to.isoformat()}")
 
     async def _people(self, company_id: UUID, ids: list[UUID]) -> dict[UUID, tuple[str, str]]:
         if not ids:

@@ -14,6 +14,7 @@ from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+from openpyxl import load_workbook
 from sqlalchemy import text
 from tests.integration.modules.attendance.test_attendance_day import _cleanup_attendance_day
 from tests.integration.modules.attendance.test_attendance_summary import (
@@ -24,7 +25,7 @@ from tests.integration.modules.attendance.test_company_attendance_overview impor
 from tests.integration.modules.leave.test_leave_notifications import _login_for
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
-from hrms.modules.attendance.muster_export import csv_text
+from hrms.modules.attendance.documents import csv_text
 from hrms.modules.attendance.permissions import ATTENDANCE_VIEW
 from hrms.shared.business_time import business_today
 
@@ -82,6 +83,39 @@ async def test_the_register_lists_one_row_per_employee(
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_the_register_as_excel_and_pdf(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    ctx = await _company(client)
+    window = {"date_from": ctx["week_ago"].isoformat(), "date_to": ctx["today"].isoformat()}
+    try:
+        xlsx = await client.get(URL, headers=ctx["headers"], params={**window, "format": "xlsx"})
+        assert xlsx.status_code == 200, xlsx.text
+        sheet = load_workbook(io.BytesIO(xlsx.content)).active
+        assert sheet is not None
+        header = [c.value for c in sheet[4]]
+        assert header[:3] == ["Employee", "Code", ctx["week_ago"].isoformat()]
+        names = {sheet.cell(row=r, column=1).value for r in range(5, 9)}
+        assert names == {"Asha", "Bala", "Chitra", "Dev"}
+        # An absence is filled, so a register reads at a glance.
+        bala = next(r for r in range(5, 9) if sheet.cell(row=r, column=1).value == "Bala")
+        assert sheet.cell(row=bala, column=3).value == "A"
+        assert sheet.cell(row=bala, column=3).fill.start_color.rgb.endswith("FFC7CE")
+
+        pdf = await client.get(URL, headers=ctx["headers"], params={**window, "format": "pdf"})
+        assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+        assert pdf.headers["content-type"] == "application/pdf"
+
+        today = business_today(TZ)
+        long = {"date_from": (today - timedelta(days=62)).isoformat(), "date_to": today.isoformat()}
+        too_wide = await client.get(URL, headers=ctx["headers"], params={**long, "format": "pdf"})
+        assert too_wide.status_code == 422  # 63 days: a PDF register cannot be read
+        assert (await client.get(URL, headers=ctx["headers"], params=long)).status_code == 200
+    finally:
+        await _cleanup_attendance_day(company_id=ctx["company_id"])
+
+
 async def test_filters_window_scope_tenant_and_audit(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
