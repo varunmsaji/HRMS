@@ -17,6 +17,7 @@ import '../data/payroll_repository.dart';
 import 'pay_run_employee_screen.dart';
 import 'pay_runs_screen.dart' show payrollRepositoryProvider;
 import 'payslip_screen.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Mirrors `apps/web/src/app/app/payroll/pay-runs/[id]/page.tsx` — one pay run: lock inputs from
 /// the closed attendance period, compute, resolve errors and acknowledge variances, approve (a
@@ -63,7 +64,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
       if (run.isClosed) {
         try {
           corrections = await _repo.listAdjustments(sourcePayRunId: run.id);
-        } catch (_) {}
+        } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       }
       String? entity;
       try {
@@ -71,7 +72,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
         for (final e in entities) {
           if (e.id == run.legalEntityId) entity = e.name;
         }
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       if (mounted) {
         setState(() {
           _run = run;
@@ -98,7 +99,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
           return reasons.map((r) => (r as Map)['message']).join('; ');
         }
       }
-      return e.message;
+      return describeApiError(e);
     }
     return 'Something went wrong.';
   }

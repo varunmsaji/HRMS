@@ -86,7 +86,7 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Today's attendance calculated.")));
       await _load();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Something went wrong.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? describeApiError(e) : 'Something went wrong.')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -135,7 +135,7 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
             const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()))
           else if (_error != null)
             Column(children: [
-              Text(_error!.status == 403 ? "You do not have permission to view this employee's attendance." : _error!.message, textAlign: TextAlign.center),
+              Text(_error!.status == 403 ? "You do not have permission to view this employee's attendance." : describeApiError(_error!), textAlign: TextAlign.center),
               const SizedBox(height: 12),
               FilledButton(onPressed: _load, child: const Text('Retry')),
             ])

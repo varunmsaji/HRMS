@@ -19,6 +19,7 @@ import '../domain/leave_application_form.dart';
 import 'leave_application_detail_screen.dart';
 import 'leave_apply_screen.dart';
 import '../../../core/theme/employee_theme_scope.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Leave applications — mirrors `apps/web/src/app/app/leave-applications/page.tsx`. "Mine" and
 /// "Team" are two filters over the same permission-scoped read: the server only returns what the
@@ -76,7 +77,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     try {
       final balances = await ref.read(leaveRepositoryProvider).listLeaveBalances(id);
       if (mounted) setState(() => _balances = balances);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _loadLookups() async {
@@ -88,7 +89,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
           _typeNames = {for (final t in c['leave_types'] ?? const <Choice>[]) t.value: t.label};
         });
       }
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<ListEnvelopeLike> _fetch(int page) async {
@@ -245,7 +246,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
               : _loading
               ? const ListSkeleton(count: 5)
               : _error != null
-                  ? StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load leave', message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load leave', message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(

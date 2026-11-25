@@ -125,7 +125,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       });
       _apply(setup);
     } catch (e) {
-      if (mounted) setState(() => _loadError = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _loadError = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
   }
 
@@ -199,7 +199,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
         if (mounted && seq == _previewSeq) {
           setState(() {
             _preview = null;
-            _previewError = e is ApiError ? e.message : 'Something went wrong.';
+            _previewError = e is ApiError ? describeApiError(e) : 'Something went wrong.';
           });
         }
       }
@@ -292,7 +292,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Salary saved.')));
       Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) setState(() => _formError = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _formError = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -505,7 +505,7 @@ class _NewStructureDialogState extends State<_NewStructureDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e is ApiError ? e.message : 'Something went wrong.';
+          _error = e is ApiError ? describeApiError(e) : 'Something went wrong.';
           _creating = false;
         });
       }

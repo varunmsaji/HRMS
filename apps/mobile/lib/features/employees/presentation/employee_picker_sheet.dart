@@ -48,7 +48,7 @@ class _EmployeePickerSheetState extends ConsumerState<EmployeePickerSheet> {
     super.dispose();
   }
 
-  String _describe(Object e) => e is ApiError ? e.message : 'Something went wrong.';
+  String _describe(Object e) => e is ApiError ? describeApiError(e) : 'Something went wrong.';
 
   /// A slower, older answer never overwrites a newer one.
   Future<void> _load() async {

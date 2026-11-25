@@ -109,7 +109,7 @@ class _WorkCalendarMonthViewState extends ConsumerState<WorkCalendarMonthView> {
           const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(semanticsLabel: 'Loading calendar…')))
         else if (_error != null)
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_error!.status == 403 ? 'You do not have permission to view this calendar.' : _error!.message, style: TextStyle(color: theme.colorScheme.error)),
+            Text(_error!.status == 403 ? 'You do not have permission to view this calendar.' : describeApiError(_error!), style: TextStyle(color: theme.colorScheme.error)),
             TextButton(onPressed: _load, child: const Text('Try again')),
           ])
         else if (data != null) ...[

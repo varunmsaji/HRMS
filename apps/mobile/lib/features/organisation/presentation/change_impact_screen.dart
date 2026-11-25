@@ -73,7 +73,7 @@ class _ChangeImpactScreenState extends ConsumerState<ChangeImpactScreen> {
   String _describe(Object e) {
     if (e is! ApiError) return 'Something went wrong.';
     if (e.status == 403) return "You don't have permission to do that.";
-    return e.message;
+    return describeApiError(e);
   }
 
   Future<void> _load() async {

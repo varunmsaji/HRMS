@@ -155,7 +155,7 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
       await ref.read(apiClientProvider).post<Object?>('/payroll/statutory-rates/${rate['id']}/verify', ifMatch: rate['version'].toString(), parse: (_) => null);
       _toast('Rate marked as verified.');
     } catch (e) {
-      _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This rate was changed by someone else. Reloading.' : e.message) : 'Something went wrong.');
+      _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This rate was changed by someone else. Reloading.' : describeApiError(e)) : 'Something went wrong.');
     }
     _load();
   }
@@ -173,7 +173,7 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load statutory rates", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load statutory rates", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(

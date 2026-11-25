@@ -24,6 +24,7 @@ import 'attendance_widgets.dart';
 import 'mark_attendance_screen.dart';
 import 'mismatch_fixes.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
 
@@ -140,7 +141,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     try {
       final c = await loadChoices(ref.read(apiClientProvider), const ['employees']);
       if (mounted) setState(() => _employees = c['employees'] ?? const []);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -204,7 +205,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Calculation queued for ${ids.length} ${ids.length == 1 ? 'day' : 'days'}. Refresh in a minute to see them counted.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? 'Could not queue the calculation: ${e.message}' : 'Could not queue the calculation.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? 'Could not queue the calculation: ${describeApiError(e)}' : 'Could not queue the calculation.')));
     } finally {
       if (mounted) setState(() => _queuing = false);
     }
@@ -418,7 +419,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(

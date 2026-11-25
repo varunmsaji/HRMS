@@ -49,7 +49,7 @@ class _BulkAssignSalaryDialogState extends ConsumerState<BulkAssignSalaryDialog>
       final r = await ref.read(apiClientProvider).post<Rec>('/payroll/salary-assignments/bulk', body: {'salary_structure_id': _structureId, 'effective_from': _date}, parse: (d) => d as Rec);
       if (mounted) setState(() => _result = r);
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Could not assign the structure.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Could not assign the structure.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }

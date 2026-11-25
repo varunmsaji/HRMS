@@ -15,6 +15,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/assignment_lookup.dart';
 import '../domain/policy_assignment_form.dart';
 import '../domain/policy_setup_config.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Create a policy or shift on one page — mirrors the web "new policy" pages: pick a template,
 /// adjust the everyday rules (the rest sits under Advanced), then save a draft or publish.
@@ -70,7 +71,7 @@ class _PolicySetupScreenState extends ConsumerState<PolicySetupScreen> {
       final loaded = sources.isEmpty ? <String, List<Choice>>{} : await loadChoices(_client, sources);
       if (mounted) setState(() => _choices = loaded);
     } catch (e) {
-      if (mounted) setState(() => _banner = 'Could not load the options for this form. ${e is ApiError ? e.message : ''}'.trim());
+      if (mounted) setState(() => _banner = 'Could not load the options for this form. ${e is ApiError ? describeApiError(e) : ''}'.trim());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -148,7 +149,7 @@ class _PolicySetupScreenState extends ConsumerState<PolicySetupScreen> {
       final fields = _fieldErrors(e);
       setState(() {
         _errors = fields;
-        _banner = fields.isEmpty ? 'Nothing was saved. ${e.message}' : 'Nothing was saved. Please fix the highlighted fields.';
+        _banner = fields.isEmpty ? 'Nothing was saved. ${describeApiError(e)}' : 'Nothing was saved. Please fix the highlighted fields.';
       });
     } catch (_) {
       if (mounted) setState(() => _banner = 'Nothing was saved. Something went wrong.');
@@ -171,7 +172,7 @@ class _PolicySetupScreenState extends ConsumerState<PolicySetupScreen> {
       try {
         final company = await findOpenAssignment(_client, policyKind: kind, scopeType: 'COMPANY', leaveTypeId: leaveTypeId);
         if (company == null) assignTo = 'COMPANY';
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     }
     if (!mounted) return;
     final spec = FormSpec(name: 'publish', label: 'Publish', fields: [

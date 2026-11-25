@@ -14,6 +14,7 @@ import '../../shell/more_action.dart';
 import '../data/schedule_repository.dart';
 import '../domain/weekly_schedule.dart';
 import 'roster_view_switcher.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Weekly shift coverage — the Coverage view of Shift Rosters, as web's `app/app/rosters/coverage/page.tsx`. A phone shows
 /// one day at a time: pick a day in the strip, see each shift's headcount against its target.
@@ -58,7 +59,7 @@ class _WeeklyScheduleScreenState extends ConsumerState<WeeklyScheduleScreen> {
         _departments = set.choices['departments'] ?? const [];
         _branches = set.choices['branches'] ?? const [];
       });
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   void _filter({String? department, String? branch}) {
@@ -143,7 +144,7 @@ class _WeeklyScheduleScreenState extends ConsumerState<WeeklyScheduleScreen> {
                       icon: Icons.error_outline_rounded,
                       tone: Tone.danger,
                       title: _error!.status == 403 ? 'No access' : 'Something went wrong',
-                      message: _error!.status == 403 ? 'You do not have permission to view the schedule.' : _error!.message,
+                      message: _error!.status == 403 ? 'You do not have permission to view the schedule.' : describeApiError(_error!),
                       actionLabel: _error!.status == 403 ? null : 'Retry',
                       onAction: _load,
                     )

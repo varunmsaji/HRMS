@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// What the login screen remembers between sign-ins on this device: the identifier (email or
 /// employee ID) and the company code, so an employee does not retype their company code every time
@@ -33,7 +34,7 @@ class LoginPrefs {
       } else {
         await _storage.write(key: _companyCodeKey, value: companyCode);
       }
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   /// "Not you?": forget both.
@@ -41,7 +42,7 @@ class LoginPrefs {
     try {
       await _storage.delete(key: _identifierKey);
       await _storage.delete(key: _companyCodeKey);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 }
 

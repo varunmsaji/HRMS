@@ -13,6 +13,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
 import 'leave_applications_screen.dart' show LeaveStatusChip;
 import '../../../core/format.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// One leave application — mirrors `apps/web/src/app/app/leave-applications/[id]/page.tsx`: the
 /// request, its day-by-day breakdown and action history, and the review (approve / reject) and
@@ -51,7 +52,7 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     try {
       final c = await loadChoices(ref.read(apiClientProvider), const ['leave_types']);
       if (mounted) setState(() => _typeNames = {for (final t in c['leave_types'] ?? const <Choice>[]) t.value: t.label});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -118,7 +119,7 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
       _toast(a.status == 'APPROVED' ? 'Application cancelled — balance and attendance reversed.' : 'Application cancelled.');
       _load();
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -285,14 +286,14 @@ Future<LeaveApplication?> showLeaveReviewDialog(BuildContext context, LeaveRepos
                   ? 'You cannot approve or reject your own application.'
                   : e.code == 'LEAVE_APPLICATION_APPROVER_MISMATCH'
                       ? "You are not the resolved approver for this application's current stage."
-                      : e.message);
+                      : describeApiError(e));
             } else if (e.code == 'LEAVE_APPLICATION_BALANCE_SHORTFALL') {
               final ctxMap = e.details.isNotEmpty ? (e.details.first.context ?? const {}) : const <String, dynamic>{};
               setLocal(() => shortfall = {'available': '${ctxMap['available'] ?? '0.00'}', 'shortfall': '${ctxMap['shortfall'] ?? ''}'});
             } else if (e.status == 409) {
               setLocal(() => formError = "This application has already moved on (approved, rejected, or cancelled by someone else), or one of its dates falls in an attendance period that's now closed. Refresh to see its current state.");
             } else {
-              setLocal(() => formError = e.message);
+              setLocal(() => formError = describeApiError(e));
             }
           } catch (_) {
             setLocal(() => formError = 'Something went wrong.');

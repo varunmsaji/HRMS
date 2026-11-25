@@ -12,6 +12,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/policy_assignment_form.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -52,7 +53,7 @@ class _PolicyResolutionScreenState extends ConsumerState<PolicyResolutionScreen>
     try {
       final c = await loadChoices(_client, const ['employees']);
       if (mounted) setState(() => _employees = c['employees'] ?? const []);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _pickDate() async {
@@ -81,7 +82,7 @@ class _PolicyResolutionScreenState extends ConsumerState<PolicyResolutionScreen>
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

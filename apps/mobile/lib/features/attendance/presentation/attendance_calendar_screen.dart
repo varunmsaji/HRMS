@@ -192,7 +192,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
               child: Text('This month has more attendance records than could be loaded (${days.items.length} of ${days.total}), so some boxes may be missing.', style: TextStyle(color: scheme.error)),
             ),
           if (_error != null)
-            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the calendar", message: _error!.status == 403 ? 'You do not have permission to view attendance for everyone.' : _error!.message, actionLabel: 'Retry', onAction: _load)
+            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the calendar", message: _error!.status == 403 ? 'You do not have permission to view attendance for everyone.' : describeApiError(_error!), actionLabel: 'Retry', onAction: _load)
           else if (rows == null)
             const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
           else if (rows.isEmpty)

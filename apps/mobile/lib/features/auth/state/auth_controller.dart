@@ -8,6 +8,7 @@ import '../../../core/providers.dart';
 import '../../notifications/push/push_registration.dart';
 import '../data/auth_repository.dart';
 import 'auth_state.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Mirrors `apps/web/src/lib/auth/auth-context.tsx`'s `AuthProvider` — loads
 /// any persisted session on startup, resolves `/auth/me`, and reacts to
@@ -83,7 +84,7 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> logout() async {
     try {
       await _beforeLogout?.call();
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     try {
       await _repository.logout();
     } catch (_) {

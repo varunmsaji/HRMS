@@ -127,7 +127,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                   });
                   if (ctx.mounted) Navigator.of(ctx).pop(true);
                 } catch (e) {
-                  setLocal(() => error = e is ApiError ? e.message : 'Something went wrong.');
+                  setLocal(() => error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
                 }
               },
               child: const Text('Create pay run'),
@@ -145,7 +145,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
     try {
       setting = await repo.getSettings();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Something went wrong.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? describeApiError(e) : 'Something went wrong.')));
       return;
     }
     if (!mounted) return;
@@ -173,7 +173,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                   await repo.updateSettings(varianceThresholdPercent: threshold.text.trim(), ifMatch: setting.version);
                   if (ctx.mounted) Navigator.of(ctx).pop(true);
                 } catch (e) {
-                  setLocal(() => error = e is ApiError ? e.message : 'Something went wrong.');
+                  setLocal(() => error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
                 }
               },
               child: const Text('Save'),
@@ -208,7 +208,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                   icon: _error!.status == 403 ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
                   tone: _error!.status == 403 ? Tone.warning : Tone.danger,
                   title: _error!.status == 403 ? 'No access' : 'Couldn\'t load pay runs',
-                  message: _error!.status == 403 ? 'You do not have permission to view pay runs.' : _error!.message,
+                  message: _error!.status == 403 ? 'You do not have permission to view pay runs.' : describeApiError(_error!),
                   actionLabel: _error!.status == 403 ? null : 'Try again',
                   onAction: _load,
                 )

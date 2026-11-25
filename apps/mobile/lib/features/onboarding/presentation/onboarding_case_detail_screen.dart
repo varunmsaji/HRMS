@@ -122,7 +122,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
       }
       _toast('Everything verified.');
     } catch (e) {
-      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to review this case." : 'Could not verify everything. ${e.message}') : 'Could not verify everything.');
+      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to review this case." : 'Could not verify everything. ${describeApiError(e)}') : 'Could not verify everything.');
     } finally {
       if (mounted) setState(() => _busy = false);
       await _load();
@@ -138,7 +138,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
       if (success != null) _toast(success);
       await _load();
     } catch (e) {
-      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to do that." : e.message) : 'Something went wrong.');
+      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to do that." : describeApiError(e)) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -187,7 +187,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
           ? 'Login link sent to ${r.email}. They can set a password from the email and sign in.'
           : "Login link created. The link is ready to copy — email delivery isn't configured in this environment.");
     } catch (e) {
-      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to do that." : e.message) : 'Something went wrong.');
+      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to do that." : describeApiError(e)) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -346,7 +346,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
                               ? "You don't have permission to cancel onboarding."
                               : e.status == 409
                                   ? 'This onboarding case can no longer be cancelled. Refresh to see its latest status.'
-                                  : e.message;
+                                  : describeApiError(e);
                         });
                       } catch (_) {
                         setLocal(() {
@@ -411,7 +411,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
   }
 

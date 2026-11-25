@@ -54,7 +54,7 @@ class _InvitationComposerScreenState extends ConsumerState<InvitationComposerScr
     super.dispose();
   }
 
-  String _describe(Object e, String denied) => e is ApiError ? (e.status == 403 ? denied : e.message) : 'Something went wrong.';
+  String _describe(Object e, String denied) => e is ApiError ? (e.status == 403 ? denied : describeApiError(e)) : 'Something went wrong.';
 
   Future<void> _load() async {
     setState(() {

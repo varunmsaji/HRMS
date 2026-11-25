@@ -52,7 +52,7 @@ class _OnboardingCaseRouteScreenState extends ConsumerState<OnboardingCaseRouteS
               icon: notFound ? Icons.search_off_rounded : Icons.cloud_off_rounded,
               tone: notFound ? Tone.neutral : Tone.danger,
               title: notFound ? 'Not found' : 'Couldn\'t load this case',
-              message: notFound ? 'This onboarding case was not found, or you don\'t have access to it.' : error.message,
+              message: notFound ? 'This onboarding case was not found, or you don\'t have access to it.' : describeApiError(error),
               actionLabel: notFound ? null : 'Try again',
               onAction: notFound ? null : _load,
             ),

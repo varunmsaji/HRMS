@@ -149,7 +149,7 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
     if (e is ApiError) {
       if (e.code == 'STALE_RESOURCE') return 'This structure was changed by someone else. Reloading.';
       if (e.status == 403) return "You don't have permission to do that.";
-      return e.message;
+      return describeApiError(e);
     }
     return 'Something went wrong.';
   }

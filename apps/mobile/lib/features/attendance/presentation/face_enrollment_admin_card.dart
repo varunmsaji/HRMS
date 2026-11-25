@@ -80,7 +80,7 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
         if (mounted) setState(() => _reviewPhotos = photos.whereType<_ReviewPhoto>().toList());
       }
     } catch (e) {
-      if (mounted) setState(() => _loadError = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _loadError = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -94,7 +94,7 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
       await _load();
       return true;
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$failure ${e is ApiError ? e.message : ''}'.trim())));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$failure ${e is ApiError ? describeApiError(e) : ''}'.trim())));
       return false;
     } finally {
       if (mounted) setState(() => _busy = false);

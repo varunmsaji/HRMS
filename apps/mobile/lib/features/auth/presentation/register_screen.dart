@@ -169,12 +169,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           setState(() {
             _errors.clear();
             _errors.addAll(nextErrors);
-            _formError = hasFieldError ? null : error.message;
+            _formError = hasFieldError ? null : describeApiError(error);
           });
         } else if (error.status == 429) {
           setState(() => _formError = 'Too many attempts. Please wait a moment and try again.');
         } else {
-          setState(() => _formError = error.message);
+          setState(() => _formError = describeApiError(error));
         }
       } else {
         setState(() => _formError = 'Something went wrong. Please try again.');

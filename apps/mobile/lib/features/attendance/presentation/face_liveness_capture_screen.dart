@@ -12,6 +12,7 @@ import '../domain/active_liveness.dart';
 import '../domain/face_liveness_capture.dart';
 import 'active_liveness_panel.dart';
 import 'camera_input_image.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Captures the frames for one server-issued liveness challenge: live camera + on-device
 /// quality gating (one face, close, facing the camera, eyes open), then [FaceLivenessSession
@@ -137,7 +138,7 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
     if (controller != null) {
       try {
         if (controller.value.isStreamingImages) await controller.stopImageStream();
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       await controller.dispose();
     }
     await _detector?.close();

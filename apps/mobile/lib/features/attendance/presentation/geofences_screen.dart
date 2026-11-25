@@ -18,6 +18,7 @@ import '../data/geofence_repository.dart';
 import '../data/location_provider.dart';
 import '../domain/geofence_admin.dart';
 import '../domain/punch_location.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Workplace geofences — mirrors `apps/web/src/app/app/attendance-geofences/page.tsx`. A workplace
 /// is a branch with coordinates and a radius; this screen shows where each is used, manages the
@@ -75,7 +76,7 @@ class _GeofencesScreenState extends ConsumerState<GeofencesScreen> {
     if (_canConfigure || _canReview) _loadNames();
   }
 
-  String _describe(Object e) => e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This branch was changed by someone else. Try again.' : (e.status == 403 ? "You don't have permission to do that." : e.message)) : 'Something went wrong.';
+  String _describe(Object e) => e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This branch was changed by someone else. Try again.' : (e.status == 403 ? "You don't have permission to do that." : describeApiError(e))) : 'Something went wrong.';
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
@@ -84,7 +85,7 @@ class _GeofencesScreenState extends ConsumerState<GeofencesScreen> {
     try {
       final choices = await loadChoices(ref.read(apiClientProvider), const ['employees']);
       if (mounted) setState(() => _names = {for (final c in choices['employees'] ?? const []) c.value: c.label});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   String _employee(String id) => _names[id] ?? 'Employee';

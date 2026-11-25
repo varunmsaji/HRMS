@@ -7,6 +7,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../auth/state/auth_state.dart';
 import '../data/notification_repository.dart';
 import 'push_messaging.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Keeps the server's list of "phones to push to" in step with who is signed in on this one.
 ///
@@ -60,7 +61,7 @@ class PushRegistration {
     if (token == null) return;
     try {
       await _repo().unregisterDevice(token).timeout(const Duration(seconds: 4));
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   void dispose() => unawaited(_refresh?.cancel());

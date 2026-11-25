@@ -74,7 +74,7 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
       if (mounted) setState(() => _byDate = {for (final d in days) d.attendanceDate: d});
       if (mounted) widget.onLoaded?.call(_iso(_month).substring(0, 7), days);
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

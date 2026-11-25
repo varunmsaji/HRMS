@@ -57,7 +57,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       if (error is ApiError && error.status == 401) {
         setState(() => _formError = 'This reset link is invalid or has expired. Please request a new one.');
       } else if (error is ApiError) {
-        setState(() => _formError = error.message);
+        setState(() => _formError = describeApiError(error));
       } else {
         setState(() => _formError = 'Something went wrong. Please try again.');
       }

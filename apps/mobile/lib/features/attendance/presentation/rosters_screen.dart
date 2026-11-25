@@ -16,6 +16,7 @@ import '../../shell/more_action.dart';
 import '../domain/roster_form.dart';
 import 'roster_view_switcher.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -83,7 +84,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
           _shifts = {for (final s in c['shifts'] ?? const <Choice>[]) s.value: s.label};
         });
       }
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -129,7 +130,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
       await _client.post<Object?>('/rosters/${r['id']}/publish', body: const {}, ifMatch: r['version'].toString(), parse: (_) => null);
       _toast('Roster entry published.');
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
     _load();
   }
@@ -151,7 +152,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
       await _client.delete<Object?>('/rosters/${r['id']}', ifMatch: r['version'].toString(), parse: (_) => null);
       _toast('Roster entry removed.');
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
     _load();
   }
@@ -219,7 +220,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the roster", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the roster", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(

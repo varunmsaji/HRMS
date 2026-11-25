@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +21,13 @@ Future<void> main() async {
   installGlobalErrorHandlers();
   initTimeZones();
   final apiClient = await ApiClient.getInstance();
+  if (const bool.fromEnvironment('CLIENT_ERROR_REPORTING')) {
+    AppDiagnostics.instance.sink = (entry) => unawaited(
+      apiClient
+          .post<void>('/client-errors', body: entry.toReport(), parse: (_) {}, authenticated: false)
+          .catchError((Object _) {}),
+    );
+  }
   // A no-op instance when this build has no Firebase config, so the app always starts.
   final push = await FirebasePushMessaging.tryCreate();
   runApp(
@@ -61,6 +70,7 @@ class HrmsApp extends ConsumerWidget {
 void installGlobalErrorHandlers() {
   final previousOnError = FlutterError.onError;
   FlutterError.onError = (details) {
+    // Recorded (and reported when enabled) in every build mode; only *shown* in debug.
     AppDiagnostics.instance.recordError(details.exception, details.stack, source: 'flutter');
     if (kDebugMode) {
       (previousOnError ?? FlutterError.presentError)(details);

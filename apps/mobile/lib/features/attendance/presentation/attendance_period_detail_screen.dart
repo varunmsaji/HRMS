@@ -12,6 +12,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../../core/widgets/ui.dart';
 import '../../../core/format.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -102,7 +103,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
       var summary = const <Rec>[];
       try {
         summary = (await _client.getList<Rec>('$_url/summary', query: PageQuery(perPage: 100), parseItem: (d) => d as Rec)).data;
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       var employees = const <String, String>{};
       String? entity;
       try {
@@ -111,7 +112,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
         for (final e in c['legal_entities'] ?? const <Choice>[]) {
           if (e.value == period['legal_entity_id']) entity = e.label;
         }
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       if (mounted) {
         setState(() {
           _period = period;
@@ -138,7 +139,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
       final v = await _client.post<Rec>('$_url/validate', body: const {}, parse: (d) => d as Rec);
       if (mounted) setState(() => _validation = v);
     } catch (e) {
-      if (mounted) setState(() => _validationError = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _validationError = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -154,7 +155,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
       await _client.post<Object?>('/attendance/days/calculate-range', body: {'date_from': p['period_start'], 'date_to': dateTo, 'legal_entity_id': p['legal_entity_id']}, parse: (_) => null);
       _toast('Attendance calculation queued for ${p['period_start']} – $dateTo. Run Validate in a few minutes to check progress.');
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -188,7 +189,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
                 } on ApiError catch (e) {
                   final ctxMap = e.details.isNotEmpty ? e.details.first.context : null;
                   final found = ((ctxMap?['reasons'] as List?) ?? const []).cast<Rec>();
-                  setLocal(() => reasons = found.isEmpty ? [{'code': e.code, 'count': '', 'message': e.message}] : found);
+                  setLocal(() => reasons = found.isEmpty ? [{'code': e.code, 'count': '', 'message': describeApiError(e)}] : found);
                 }
               },
               child: const Text('Finalize'),
@@ -228,7 +229,7 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
                   if (mounted) setState(() => _period = updated);
                   if (ctx.mounted) Navigator.of(ctx).pop(true);
                 } catch (e) {
-                  setLocal(() => error = e is ApiError ? e.message : 'Something went wrong.');
+                  setLocal(() => error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
                 }
               },
               child: const Text('Reopen'),

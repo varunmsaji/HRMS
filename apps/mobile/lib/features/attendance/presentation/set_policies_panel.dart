@@ -46,7 +46,7 @@ Future<bool> endPolicyAssignment(BuildContext context, ApiClient client, {requir
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Assignment ended.')));
     return true;
   } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Could not end the assignment.')));
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? describeApiError(e) : 'Could not end the assignment.')));
     return false;
   }
 }
@@ -335,7 +335,7 @@ class _SetPoliciesPanelState extends ConsumerState<SetPoliciesPanel> {
         icon: Icons.error_outline_rounded,
         tone: Tone.danger,
         title: "Couldn't load the rules",
-        message: _error!.status == 403 ? 'You do not have permission to manage policy assignments.' : _error!.message,
+        message: _error!.status == 403 ? 'You do not have permission to manage policy assignments.' : describeApiError(_error!),
         actionLabel: 'Try again',
         onAction: _loadCoverage,
       ));

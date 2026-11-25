@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// A push the user tapped (from the system tray, with the app in the background or closed).
 class PushTap {
@@ -142,7 +143,7 @@ class FirebasePushMessaging implements PushMessaging {
   Future<void> deleteToken() async {
     try {
       await _fm.deleteToken();
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 }
 

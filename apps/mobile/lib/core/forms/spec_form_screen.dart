@@ -101,7 +101,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
       final loaded = await widget.loadChoices?.call();
       if (mounted && loaded != null) setState(() => _choices = loaded);
     } catch (e) {
-      if (mounted) setState(() => _banner = 'Could not load the options for this form. ${e is ApiError ? e.message : ''}'.trim());
+      if (mounted) setState(() => _banner = 'Could not load the options for this form. ${e is ApiError ? describeApiError(e) : ''}'.trim());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -149,7 +149,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
         _errors = fieldErrors;
         _banner = e.code == 'STALE_RESOURCE'
             ? 'This record was changed by someone else. Go back, reload, and try again.'
-            : (e.status == 403 ? "You don't have permission to do that." : (fieldErrors.isEmpty ? e.message : 'Please fix the highlighted fields.'));
+            : (e.status == 403 ? "You don't have permission to do that." : (fieldErrors.isEmpty ? describeApiError(e) : 'Please fix the highlighted fields.'));
       });
     } catch (_) {
       if (mounted) setState(() => _banner = 'Something went wrong.');

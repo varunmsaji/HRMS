@@ -92,7 +92,7 @@ class _MonthlySummaryCardState extends ConsumerState<MonthlySummaryCard> {
       }
       if (mounted && mine == _request) setState(() => _rows = out);
     } catch (e) {
-      final message = e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : e.message) : 'Something went wrong.';
+      final message = e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : describeApiError(e)) : 'Something went wrong.';
       if (mounted && mine == _request) setState(() => _error = message);
     }
   }

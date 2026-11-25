@@ -30,6 +30,18 @@ class DiagnosticEntry {
   final int? status;
   final String? code;
 
+  /// The scrubbed payload for `POST /v1/client-errors`: class, status/code, request id and code
+  /// locations — never a message, a token, a body or employee data.
+  Map<String, Object?> toReport() => {
+    'source': 'mobile',
+    'kind': source,
+    'error_class': type,
+    'frames': location?.split(' < ') ?? const <String>[],
+    'request_id': requestId,
+    'status': status,
+    'code': code,
+  };
+
   String format() => [
     at.toUtc().toIso8601String(),
     source,
@@ -53,6 +65,16 @@ class AppDiagnostics {
   static const capacity = 20;
   final Queue<DiagnosticEntry> _entries = Queue();
 
+  /// Where reportable entries are sent (`POST /v1/client-errors`). Null until `main` installs it,
+  /// and only installed when the build opts in with `--dart-define=CLIENT_ERROR_REPORTING=true`,
+  /// so a default build sends nothing anywhere.
+  void Function(DiagnosticEntry entry)? sink;
+
+  /// At most this many reports per app session, and never the same failure twice, so a render
+  /// loop cannot flood the API or the user's data plan.
+  static const maxReportsPerSession = 10;
+  final Set<String> _reported = {};
+
   List<DiagnosticEntry> get entries => List.unmodifiable(_entries);
 
   void _add(DiagnosticEntry entry) {
@@ -60,6 +82,30 @@ class AppDiagnostics {
     while (_entries.length > capacity) {
       _entries.removeFirst();
     }
+    _report(entry);
+  }
+
+  void _report(DiagnosticEntry entry) {
+    final send = sink;
+    if (send == null) return;
+    // A request that failed because of the caller (4xx) or connectivity (status 0) is not a defect.
+    if (entry.source == 'api' && (entry.status == null || entry.status! < 500)) return;
+    final key = '${entry.source}|${entry.type}|${entry.code ?? ''}|${entry.location ?? ''}';
+    if (_reported.length >= maxReportsPerSession || !_reported.add(key)) return;
+    try {
+      send(entry);
+    } catch (_) {
+      // Reporting must never throw into the failure it is describing.
+    }
+  }
+
+  /// An error the app caught and chose not to show (a best-effort lookup that failed). Same
+  /// scrubbed record as an uncaught one, so a developer can still see it happened.
+  void recordHandled(Object error, StackTrace? stack) {
+    // An expected API outcome (4xx, no connection) is already recorded by the client when it
+    // matters; only a server failure or a real bug is worth a second entry.
+    if (error is ApiError && error.status < 500) return;
+    recordError(error, stack, source: 'handled');
   }
 
   /// An uncaught error. Never throws — a broken diagnostics buffer must not mask the error.
@@ -96,7 +142,11 @@ class AppDiagnostics {
   String summary() => _entries.isEmpty ? 'No recent errors.' : _entries.map((e) => e.format()).join('\n');
 
   @visibleForTesting
-  void clear() => _entries.clear();
+  void clear() {
+    _entries.clear();
+    _reported.clear();
+    sink = null;
+  }
 
   static String? _topFrames(StackTrace? stack) {
     if (stack == null) return null;

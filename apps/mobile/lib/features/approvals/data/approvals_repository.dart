@@ -5,6 +5,7 @@ import '../../../core/api/envelope.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/format.dart';
 import '../../../core/providers.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 import '../../../core/time.dart' show formatMinutes;
 import '../../attendance/domain/request_resources.dart' show regularizationTypeLabels;
 import '../../profile/data/employee_repository.dart' show Employee;
@@ -158,7 +159,7 @@ class ApprovalsRepository {
     try {
       final env = await _client.getList<Map<String, dynamic>>('/leave-types', query: PageQuery(page: 1, perPage: 100), parseItem: (d) => d as Map<String, dynamic>);
       types = {for (final t in env.data) t['id'] as String: (t['name'] as String?) ?? 'Leave'};
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     return _rows(ApprovalKind.leave, '/leave-applications', {'application_status': 'SUBMITTED'}, 'submitted_at', me, (r) {
       final days = r['total_days'];
       final n = days is num ? days : num.tryParse('$days');

@@ -34,7 +34,7 @@ class _Loaded<T> {
   final String? error;
 }
 
-String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : e.message) : 'Something went wrong.';
+String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : describeApiError(e)) : 'Something went wrong.';
 
 /// Mirrors the organisation view of `apps/web/src/app/app/attendance/page.tsx`, which has three
 /// tabs. **Today**: the attendance rate beside five tappable figures (each opens Team attendance

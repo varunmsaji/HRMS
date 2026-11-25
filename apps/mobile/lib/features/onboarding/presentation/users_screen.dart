@@ -58,7 +58,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                   if (context.mounted) Navigator.of(context).pop(true);
                 } catch (error) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? error.message : 'Something went wrong.')));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? describeApiError(error) : 'Something went wrong.')));
                   }
                 }
               },
@@ -98,7 +98,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                   if (context.mounted) Navigator.of(context).pop(true);
                 } catch (error) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? error.message : 'Something went wrong.')));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? describeApiError(error) : 'Something went wrong.')));
                   }
                 }
               },

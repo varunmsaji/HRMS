@@ -119,7 +119,7 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
           ]),
           const SizedBox(height: 12),
           if (_error != null)
-            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Try again', onAction: _load)
+            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
           else if (_loading)
             const ListSkeleton(count: 3, embedded: true)
           else if (cards.isEmpty)

@@ -61,7 +61,7 @@ class _LeaveYearSettingScreenState extends ConsumerState<LeaveYearSettingScreen>
       });
       if (mounted) setState(() => _message = 'Saved.');
     } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
+      setState(() => _message = error is ApiError ? describeApiError(error) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

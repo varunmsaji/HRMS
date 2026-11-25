@@ -15,6 +15,7 @@ import 'attendance_period_detail_screen.dart';
 import 'monthly_summary_card.dart';
 import '../../../core/widgets/ui.dart';
 import '../../../core/format.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -77,7 +78,7 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
       var entities = const <Choice>[];
       try {
         entities = (await loadChoices(_client, const ['legal_entities']))['legal_entities'] ?? const [];
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       if (mounted) {
         setState(() {
           _periods = env.data;
@@ -135,7 +136,7 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance periods", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance periods", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(

@@ -319,7 +319,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       if (mounted) setState(() => _day = day);
       _toast('Attendance day recomputed.');
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -334,7 +334,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       if (mounted) setState(() => _day = day);
       _toast('Leave kept.');
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

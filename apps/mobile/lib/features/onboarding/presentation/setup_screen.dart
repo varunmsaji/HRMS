@@ -6,6 +6,7 @@ import '../../../core/api/api_error.dart';
 import '../data/onboarding_repository.dart' show SetupChecklist;
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Where each documented setup step sends the user to finish it (mirrors `STEP_DESTINATIONS` in
 /// `apps/web/src/app/app/setup/page.tsx`).
@@ -48,7 +49,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
       SetupChecklist? checklist;
       try {
         checklist = await repo.getSetupChecklist();
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       final progress = await repo.getSetupProgress();
       if (mounted) {
         setState(() {
@@ -59,7 +60,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? (e.status == 403 ? 'You do not have permission to view company setup progress.' : e.message) : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? (e.status == 403 ? 'You do not have permission to view company setup progress.' : describeApiError(e)) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

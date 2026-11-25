@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 import '../../../core/providers.dart';
 import '../../../features/shell/more_action.dart';
 import '../../auth/presentation/confirm_sign_out.dart';
@@ -80,7 +82,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } else if (_loading) {
       body = const ListSkeleton(count: 4);
     } else if (_error != null) {
-      body = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load profile', message: _error!.message, actionLabel: 'Try again', onAction: _load);
+      body = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load profile', message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load);
     } else {
       body = RefreshIndicator(onRefresh: _load, child: EmployeeOverview(
           employee: _employee!,
@@ -89,6 +91,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               icon: const Icon(Icons.folder_open_outlined),
               label: const Text('Employment & records'),
               onPressed: () => pushKeepingTheme<void>(context, (_) => EmployeeDetailScreen(employee: _employee!)),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.bug_report_outlined),
+              label: const Text('Copy diagnostics'),
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                await Clipboard.setData(ClipboardData(text: AppDiagnostics.instance.summary()));
+                messenger.showSnackBar(const SnackBar(content: Text('Diagnostics copied. Paste them into your message to support.')));
+              },
             ),
             TextButton.icon(
               icon: const Icon(Icons.logout_rounded),

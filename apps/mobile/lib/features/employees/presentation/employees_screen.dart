@@ -22,6 +22,7 @@ import '../../../core/export/csv_export.dart';
 import '../../../core/widgets/dashboard_kit.dart';
 import '../domain/employee_directory.dart';
 import '../domain/employee_forms.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Employee directory — mirrors `apps/web/src/app/app/employees/page.tsx`.
 class EmployeesScreen extends ConsumerStatefulWidget {
@@ -89,7 +90,7 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     try {
       final found = await _repo.directoryRows(missing);
       if (mounted) setState(() => _details.addAll(found));
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   /// Loads page 1 for the current search; a slower, older answer never overwrites a newer one.
@@ -120,7 +121,7 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     try {
       final fresh = await _repo.getEmployee(id);
       if (mounted) setState(() => _items = [for (final e in _items) e.id == id ? fresh : e]);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _loadMore() async {
@@ -137,7 +138,7 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
       });
       unawaited(_loadDetails(page.rows));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Something went wrong.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? describeApiError(e) : 'Something went wrong.')));
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -270,7 +271,7 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
         icon: forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
         tone: forbidden ? Tone.warning : Tone.danger,
         title: forbidden ? 'No access' : 'Couldn\'t load this',
-        message: forbidden ? 'You do not have permission to view this.' : _error!.message,
+        message: forbidden ? 'You do not have permission to view this.' : describeApiError(_error!),
         actionLabel: forbidden ? null : 'Try again',
         onAction: _load,
       );
@@ -424,7 +425,7 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     if (e is ApiError) {
       if (e.code == 'STALE_RESOURCE') return 'This employee record was changed by someone else. Reload and try again.';
       if (e.status == 403) return "You don't have permission to do that.";
-      return e.message;
+      return describeApiError(e);
     }
     return 'Something went wrong.';
   }
@@ -433,7 +434,7 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     try {
       final latest = await _repo.getEmployee(_employee.id);
       if (mounted) setState(() => _employee = latest);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _edit() async {
@@ -538,7 +539,7 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
           ? 'This employee already has a login account.'
           : e.status == 422
               ? "Can't invite this employee — add a personal email to their profile first."
-              : e.message);
+              : describeApiError(e));
     } catch (_) {
       _toast('Something went wrong.');
     } finally {

@@ -13,6 +13,7 @@ import '../../auth/state/auth_controller.dart';
 import 'salary_breakup_view.dart';
 import 'salary_setup_screen.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Assign a salary structure — or, for a daily-wage employee, a daily rate (D5). The `rate_kind`
 /// toggle is UI-only and is dropped before the request (the backend forbids unknown fields).
@@ -70,13 +71,13 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
       try {
         breakup = await client.get<Map<String, dynamic>>('/employees/${widget.employeeId}/salary/breakup?as_of=$_asOf', parse: (d) => d as Map<String, dynamic>);
       } on ApiError catch (e) {
-        message = e.message; // e.g. no salary assigned as of that date
+        message = describeApiError(e); // e.g. no salary assigned as of that date
       }
       Map<String, String> names = const {};
       try {
         final choices = await loadChoices(client, const ['salary_structures']);
         names = {for (final c in choices['salary_structures'] ?? const <Choice>[]) c.value: c.label};
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
       if (mounted) {
         setState(() {
           _history = history.data;
@@ -138,7 +139,7 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final scheme = Theme.of(context).colorScheme;
     if (_loading) return const ListSkeleton(count: 3);
-    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load salary", message: _error!.status == 403 ? "You do not have permission to view this employee's salary." : _error!.message, actionLabel: 'Try again', onAction: _load);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load salary", message: _error!.status == 403 ? "You do not have permission to view this employee's salary." : describeApiError(_error!), actionLabel: 'Try again', onAction: _load);
     final b = _breakup;
     final inner = b?['breakup'] as Map<String, dynamic>?;
     return RefreshIndicator(

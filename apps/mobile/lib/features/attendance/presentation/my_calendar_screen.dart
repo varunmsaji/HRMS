@@ -143,7 +143,7 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
     final t = EmployeeTokens.of(context);
     if (_loading) return const [Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))];
     if (_error != null) {
-      return [StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load your calendar", message: _error!.status == 403 ? "You don't have permission to see this calendar." : _error!.message, actionLabel: 'Retry', onAction: _load)];
+      return [StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load your calendar", message: _error!.status == 403 ? "You don't have permission to see this calendar." : describeApiError(_error!), actionLabel: 'Retry', onAction: _load)];
     }
     final calendar = _calendar;
     if (calendar == null) return const [];
