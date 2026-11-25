@@ -154,7 +154,7 @@ export default function RegularizationDetailPage() {
           message={
             error.status === 404
               ? "This request was not found, or you don't have access to it."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

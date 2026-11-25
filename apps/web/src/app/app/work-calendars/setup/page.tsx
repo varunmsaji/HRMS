@@ -200,7 +200,7 @@ export default function WorkCalendarSetupPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to manage work calendars."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={error.status === 403 ? undefined : () => void load()}
             />

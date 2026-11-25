@@ -125,7 +125,7 @@ export default function StatutoryRatesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to manage statutory rates."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

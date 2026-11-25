@@ -175,7 +175,7 @@ export default function DesignationsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view designations."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadDesignations()}
             />

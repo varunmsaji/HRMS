@@ -268,7 +268,7 @@ export default function RosterCalendarPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's roster."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

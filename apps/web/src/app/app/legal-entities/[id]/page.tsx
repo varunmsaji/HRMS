@@ -240,7 +240,7 @@ export default function LegalEntityDetailPage() {
                   ? "You do not have permission to view this company."
                   : error.status === 404
                     ? "This company could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void loadEntity()}
             />

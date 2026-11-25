@@ -109,7 +109,7 @@ export default function LeaveYearSettingPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view this setting."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

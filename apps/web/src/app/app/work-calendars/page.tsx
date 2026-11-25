@@ -162,7 +162,7 @@ export default function WorkCalendarsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view work calendars."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

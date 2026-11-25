@@ -166,7 +166,7 @@ export default function StatutoryLeaveMinimumsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view statutory minimums."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

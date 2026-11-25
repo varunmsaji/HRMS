@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { CompanySetupProgressSummary } from "@/lib/company/types";
 
 /** Where each documented setup step sends the user to finish it. Only one step exists in
@@ -85,7 +85,7 @@ export default function CompanySetupPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view company setup progress."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadProgress()}
             />

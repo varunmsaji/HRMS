@@ -448,7 +448,7 @@ export default function WorkCalendarDetailPage() {
                   ? "You do not have permission to view this calendar."
                   : error.status === 404
                     ? "This work calendar could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void load(exceptionsPage)}
             />

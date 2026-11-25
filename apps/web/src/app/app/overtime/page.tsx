@@ -30,7 +30,7 @@ import { EmployeeSelect } from "@/components/employee/employee-select";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { initialQueryValue } from "@/lib/dashboard/overview";
 import { businessToday, formatMinutes } from "@/lib/attendance/format";
@@ -189,7 +189,7 @@ export default function OvertimePage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view these overtime records."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

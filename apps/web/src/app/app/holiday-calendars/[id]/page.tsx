@@ -375,7 +375,7 @@ export default function HolidayCalendarDetailPage() {
                   ? "You do not have permission to view this calendar."
                   : error.status === 404
                     ? "This holiday calendar could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void load(year)}
             />

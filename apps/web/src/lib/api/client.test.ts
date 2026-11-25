@@ -188,6 +188,27 @@ describe("apiClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the server's 5xx reference, and never shows a bare status for a body-less error", async () => {
+    saveSession(SAMPLE_SESSION);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse(
+          { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred", details: [], request_id: "r9", reference: "ERR-1A2B3C4D" } },
+          500,
+        ),
+      ),
+    );
+    await expect(apiClient.get("/x")).rejects.toMatchObject({ status: 500, reference: "ERR-1A2B3C4D" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new SyntaxError("x"); } } as unknown as Response),
+    );
+    const error = (await apiClient.get("/x").catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe("Something went wrong. Please try again.");
+  });
+
   it("turns a proxy 502 without a JSON body into a readable, referenced error", async () => {
     saveSession(SAMPLE_SESSION);
     const fetchMock = vi.fn().mockResolvedValueOnce({

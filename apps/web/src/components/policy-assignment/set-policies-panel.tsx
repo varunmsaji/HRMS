@@ -376,7 +376,7 @@ export function SetPoliciesPanel({
           message={
             showing.error.status === 403
               ? "You do not have permission to manage policy assignments."
-              : showing.error.message
+              : describeApiError(showing.error)
           }
           onRetry={reload}
         />

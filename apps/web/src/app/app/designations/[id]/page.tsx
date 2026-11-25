@@ -249,7 +249,7 @@ export default function DesignationDetailPage() {
                   ? "You do not have permission to view this designation."
                   : error.status === 404
                     ? "This designation could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void loadDesignation()}
             />

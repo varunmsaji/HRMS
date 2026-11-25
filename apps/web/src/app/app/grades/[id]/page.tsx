@@ -233,7 +233,7 @@ export default function GradeDetailPage() {
                   ? "You do not have permission to view this grade."
                   : error.status === 404
                     ? "This grade could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void loadGrade()}
             />

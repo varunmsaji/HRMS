@@ -267,7 +267,7 @@ export default function RostersPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view rosters."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

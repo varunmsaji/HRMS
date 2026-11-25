@@ -213,7 +213,7 @@ export default function UsersPage() {
 
         {error && !loading ? (
           <div className="p-6">
-            <ErrorState message={error.message} onRetry={() => void load(page)} />
+            <ErrorState message={describeApiError(error)} onRetry={() => void load(page)} />
           </div>
         ) : null}
 

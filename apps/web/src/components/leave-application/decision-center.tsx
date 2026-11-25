@@ -261,7 +261,7 @@ export function LeaveDecisionCenter() {
 
       {error ? (
         <ErrorState
-          message={error.status === 403 ? "You do not have permission to review leave requests." : error.message}
+          message={error.status === 403 ? "You do not have permission to review leave requests." : describeApiError(error)}
           onRetry={retry}
         />
       ) : loading && !data ? (

@@ -32,6 +32,7 @@ import {
   type PolicyKind,
 } from "@/lib/policy-assignment/types";
 import { usePolicyFollowers } from "@/lib/policy-assignment/use-policy-followers";
+import { describeApiError } from "@/lib/api/errors";
 
 /** "Who follows this": the groups and people a policy applies to, managed from the policy's own
  * screen. The by-group view (Rules by Group) stays the place to compare every kind at once. */
@@ -84,7 +85,7 @@ export function PolicyFollowersPanel({
           message={
             error.status === 403
               ? "You do not have permission to see who follows this policy."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={reload}
         />

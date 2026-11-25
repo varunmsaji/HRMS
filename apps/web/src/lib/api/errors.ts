@@ -6,6 +6,8 @@ export class ApiError extends Error {
   readonly code: string;
   readonly details: ErrorDetail[];
   readonly requestId: string | null;
+  /** Short support reference the server logged for a 5xx (`ERR-1A2B3C4D`), when it sent one. */
+  readonly reference: string | null;
 
   constructor(params: {
     status: number;
@@ -13,6 +15,7 @@ export class ApiError extends Error {
     message: string;
     details?: ErrorDetail[];
     requestId?: string | null;
+    reference?: string | null;
   }) {
     super(params.message);
     this.name = "ApiError";
@@ -20,6 +23,7 @@ export class ApiError extends Error {
     this.code = params.code;
     this.details = params.details ?? [];
     this.requestId = params.requestId ?? null;
+    this.reference = params.reference ?? null;
   }
 }
 
@@ -95,8 +99,11 @@ export function isApiError(error: unknown): error is ApiError {
  * (validation, permission, conflict), which the message already explains.
  */
 export function errorReference(error: unknown): string | null {
-  if (!isApiError(error) || !error.requestId) return null;
-  return error.status === 0 || error.status >= 500 ? error.requestId : null;
+  if (!isApiError(error)) return null;
+  if (error.status !== 0 && error.status < 500) return null;
+  // The server's short reference when it sent one; otherwise the request id (network failures,
+  // proxy errors and older servers have no reference).
+  return error.reference ?? error.requestId;
 }
 
 /** True when repeating the *same read* is reasonable: no response, a gateway/availability

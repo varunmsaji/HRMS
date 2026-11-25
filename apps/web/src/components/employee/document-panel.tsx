@@ -165,7 +165,7 @@ export function DocumentPanel({ employeeId }: DocumentPanelProps) {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's documents."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

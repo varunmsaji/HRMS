@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Compensation } from "@/lib/employee/types";
 import {
@@ -170,7 +170,7 @@ export function CompensationPanel({ employeeId }: CompensationPanelProps) {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's compensation."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

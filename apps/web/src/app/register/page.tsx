@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { AuthLayout } from "@/components/layout/auth-layout";
-import { ApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
 import type { TokenResponseData } from "@/lib/auth/types";
@@ -105,11 +105,11 @@ export default function RegisterPage() {
           };
           const hasFieldError = Object.values(nextErrors).some(Boolean);
           setErrors(nextErrors);
-          setFormError(hasFieldError ? null : error.message);
+          setFormError(hasFieldError ? null : describeApiError(error));
         } else if (error.status === 429) {
           setFormError("Too many attempts. Please wait a moment and try again.");
         } else {
-          setFormError(error.message);
+          setFormError(describeApiError(error));
         }
       } else {
         setFormError("Something went wrong. Please try again.");

@@ -172,7 +172,7 @@ export default function CompanyProfilePage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view this company profile."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadProfile()}
             />

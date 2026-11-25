@@ -10,7 +10,7 @@ import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { landingPathFor } from "@/lib/auth/landing";
 import type { TokenResponseData } from "@/lib/auth/types";
@@ -111,11 +111,11 @@ export default function AcceptInvitePage() {
         } else if (error.status === 423) {
           setFormError("This account is temporarily locked. Try again later.");
         } else if (error.status === 409) {
-          setFormError(error.message);
+          setFormError(describeApiError(error));
         } else if (error.status === 422) {
           setFieldErrors({ password: getFieldError(error.details, "password") });
         } else {
-          setFormError(error.message);
+          setFormError(describeApiError(error));
         }
       } else {
         setFormError("Something went wrong. Please try again.");

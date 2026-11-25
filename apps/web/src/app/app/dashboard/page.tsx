@@ -17,6 +17,7 @@ import { usePermissions } from "@/lib/auth/use-permissions";
 import { businessToday } from "@/lib/attendance/format";
 import { rememberCompanyDateFormat } from "@/lib/dates/use-company-date";
 import type { CompanyDashboardSummary, CompanyProfile } from "@/lib/company/types";
+import { describeApiError } from "@/lib/api/errors";
 
 /** People with an employee record but no company-dashboard permission get their own workday view. */
 export default function DashboardPage() {
@@ -81,7 +82,7 @@ function CompanyDashboard() {
           message={
             error.status === 403
               ? "You do not have permission to view the company dashboard."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => {
             retryDashboard();

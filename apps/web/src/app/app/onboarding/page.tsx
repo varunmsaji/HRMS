@@ -378,7 +378,7 @@ export default function OnboardingPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view onboarding cases."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load(page, statusFilter)}
             />

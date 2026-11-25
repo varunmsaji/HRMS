@@ -413,7 +413,7 @@ export default function EmployeesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view the employee directory."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadEmployees(page, serverQuery)}
             />

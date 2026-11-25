@@ -295,7 +295,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's employment."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

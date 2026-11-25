@@ -421,7 +421,7 @@ export default function EmployeeDetailPage() {
                   ? "You do not have permission to view this employee."
                   : error.status === 404
                     ? "This employee could not be found, or you don't have access to it."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void loadEmployee()}
             />

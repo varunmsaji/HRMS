@@ -211,7 +211,7 @@ export default function WeeklyOffPatternDetailPage() {
                   ? "You do not have permission to view this pattern."
                   : error.status === 404
                     ? "This weekly-off pattern could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void load()}
             />

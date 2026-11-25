@@ -195,7 +195,7 @@ export default function ShiftsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view shifts."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadShifts()}
             />

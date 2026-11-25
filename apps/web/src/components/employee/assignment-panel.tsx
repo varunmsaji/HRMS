@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { useEmployeeNames } from "@/lib/employee/use-employee-names";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -129,7 +129,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's assignment."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

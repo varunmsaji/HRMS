@@ -215,7 +215,7 @@ export default function BranchesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view branches."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadBranches()}
             />

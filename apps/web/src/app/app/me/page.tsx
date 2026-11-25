@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { employeeFullName } from "@/lib/employee/names";
@@ -128,7 +128,7 @@ export default function MyProfilePage() {
       {error && !loading ? (
         <Card>
           <CardContent>
-            <ErrorState message={error.message} onRetry={() => void loadEmployee()} />
+            <ErrorState message={describeApiError(error)} onRetry={() => void loadEmployee()} />
           </CardContent>
         </Card>
       ) : null}

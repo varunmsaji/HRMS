@@ -38,6 +38,8 @@ export interface ErrorBody {
   message: string;
   details: ErrorDetail[];
   request_id: string;
+  /** Present on 5xx only: the short support reference (`ERR-1A2B3C4D`) the server also logged. */
+  reference?: string | null;
   documentation_url?: string | null;
 }
 

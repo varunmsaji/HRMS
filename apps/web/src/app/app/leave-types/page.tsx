@@ -252,7 +252,7 @@ export default function LeaveTypesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view leave types."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

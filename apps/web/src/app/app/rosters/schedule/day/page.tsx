@@ -311,7 +311,7 @@ export default function RosterBoardPage() {
           . Tap a column to move them there, or tap the card again to cancel.
         </p>
       ) : null}
-      {error ? <ErrorState message={error.message} /> : null}
+      {error ? <ErrorState message={describeApiError(error)} /> : null}
       {employees ? (
         <BusyRegion busy={loading} label="Refreshing board…">
           <div className="flex gap-3 overflow-x-auto pb-2">

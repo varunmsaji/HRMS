@@ -142,7 +142,7 @@ export default function GradesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view grades."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadGrades()}
             />

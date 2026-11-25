@@ -232,7 +232,7 @@ export function RegularizationDecisionCenter() {
 
       {error ? (
         <ErrorState
-          message={error.status === 403 ? "You do not have permission to review regularizations." : error.message}
+          message={error.status === 403 ? "You do not have permission to review regularizations." : describeApiError(error)}
           onRetry={retry}
         />
       ) : loading && !data ? (
