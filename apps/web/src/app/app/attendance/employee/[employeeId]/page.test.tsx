@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/components/common/toast", () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}));
 vi.mock("next/navigation", () => ({
   useParams: () => ({ employeeId: "emp-1" }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -9,7 +12,7 @@ vi.mock("@/lib/auth/auth-context", () => ({
   useAuth: () => ({ user: { company_timezone: "UTC", permissions: ["ATTENDANCE.VIEW_ALL"] } }),
 }));
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn(), download: vi.fn() },
 }));
 
 import EmployeeAttendanceProfilePage from "@/app/app/attendance/employee/[employeeId]/page";
@@ -98,5 +101,16 @@ describe("EmployeeAttendanceProfilePage", () => {
       const calls = mockedGet.mock.calls.map((c) => c[0]).filter((p) => p.startsWith("/attendance/days?"));
       expect(calls.some((p) => p.includes("date_from=2026-01-01") && p.includes("date_to=2026-01-31"))).toBe(true);
     });
+  });
+
+  it("downloads the statement for the month it is showing", async () => {
+    mockApi({ days: [] });
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    vi.mocked(apiClient.download).mockResolvedValue({ blob: new Blob(["x"]), filename: null });
+    render(<EmployeeAttendanceProfilePage />);
+    fireEvent.change(await screen.findByLabelText("Month", { selector: "input" }), { target: { value: "2026-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Download statement" }));
+    await waitFor(() => expect(apiClient.download).toHaveBeenCalledWith(expect.stringMatching(/\/statement\?month=2026-01&format=pdf$/)));
   });
 });

@@ -10,7 +10,9 @@ import { BreakdownPanel } from "@/components/attendance/dashboard/breakdown-pane
 import { AttendanceDashboardSkeleton } from "@/components/attendance/dashboard/dashboard-skeleton";
 import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboard/insight-panels";
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
+import { useSection } from "@/components/attendance/dashboard/use-dashboard-data";
 import { useTeamSize } from "@/components/attendance/dashboard/use-team-size";
+import { PatternAlertsPanel } from "@/components/attendance/dashboard/pattern-alerts";
 import { MusterHeatmap } from "@/components/attendance/dashboard/muster-heatmap";
 import { NeedsAttention } from "@/components/attendance/dashboard/needs-attention";
 import { NotCalculatedNotice } from "@/components/attendance/dashboard/not-calculated-notice";
@@ -86,6 +88,8 @@ import {
   summaryQuery,
   toRatePoints,
 } from "@/lib/attendance/summary";
+import type { PatternAlerts } from "@/lib/attendance/patterns";
+import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -346,6 +350,20 @@ function AttendanceDashboard() {
   const muster = useMemo(
     () => buildMuster(population, musterDates(win), employeesById),
     [population, win, employeesById],
+  );
+
+  // Who keeps being late or absent, looked at up to the end of the selected range, with the
+  // dashboard's own population filters. The server limits it to the people the caller may see.
+  const patternQuery = useMemo(() => {
+    const query = summaryQuery(range, filters);
+    delete query.date_from;
+    delete query.date_to;
+    return new URLSearchParams({ as_of: range.to, ...query }).toString();
+  }, [range, filters]);
+  const patterns = useSection<PatternAlerts>(
+    () => apiClient.get<PatternAlerts>(`/attendance/pattern-alerts?${patternQuery}`),
+    `patterns|${patternQuery}`,
+    mode === "org" || mode === "team",
   );
 
   const winLabel = `${formatShortDate(win.from)} – ${formatShortDate(win.to)}`;
@@ -753,6 +771,23 @@ function AttendanceDashboard() {
             status="ready"
           >
             <TrendChart days={totals.daily} range={win} onSelectPeriod={focusPeriod} />
+          </SectionCard>
+
+          <SectionCard
+            id="att-patterns"
+            title="Patterns to look at"
+            description={
+              patterns.data
+                ? `People who keep being late or absent: ${patterns.data.thresholds.late_days}+ late days, ${patterns.data.thresholds.absent_days}+ absent days or ${patterns.data.thresholds.incomplete_days}+ missing punches in ${patterns.data.thresholds.window_days} days, or the same weekday ${patterns.data.thresholds.weekday_absences}+ times in ${patterns.data.thresholds.weekday_window_days} days. A prompt to look, not a finding.`
+                : "People who keep being late or absent."
+            }
+            status={patterns.status}
+            error={patterns.error}
+            onRetry={patterns.retry}
+            unavailable={patterns.status === "idle" ? "Pattern alerts aren't available for your role." : null}
+            empty={patterns.data && patterns.data.alerts.length === 0 ? { title: "No patterns found.", description: "Nobody has crossed a threshold." } : null}
+          >
+            {patterns.data ? <PatternAlertsPanel data={patterns.data} employeesById={employeesById} /> : null}
           </SectionCard>
 
           <div className="grid gap-6 lg:grid-cols-2">

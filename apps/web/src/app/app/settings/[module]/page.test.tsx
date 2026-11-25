@@ -107,8 +107,9 @@ describe("Settings module page", () => {
       "Attendance rules",
       "Who follows which rules",
       "Closing the month",
+      "Attendance emails",
     ]);
-    for (const name of [/Shifts/, /Work Calendars/, /Workplace Geofences/, /Attendance Policies/, /Attendance Periods/]) {
+    for (const name of [/Shifts/, /Work Calendars/, /Workplace Geofences/, /Attendance Policies/, /Attendance Periods/, /Attendance Emails/]) {
       expect(screen.getByRole("link", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("link", { name: /Settings/ })).toHaveAttribute("href", "/app/settings");

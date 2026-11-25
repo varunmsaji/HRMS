@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
 
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/native-select";
 
 import {
   BUCKET_GLYPHS,
@@ -19,7 +20,7 @@ import {
   formatShortDate,
   type Muster,
 } from "@/lib/attendance/dashboard";
-import { musterRegisterPath, saveDownloadedFile } from "@/lib/attendance/export";
+import { EXPORT_FORMAT_LABELS, musterRegisterPath, pdfRegisterError, saveDownloadedFile, type ExportFormat } from "@/lib/attendance/export";
 import { cn } from "@/lib/utils";
 
 const PAGE_ROWS = 25;
@@ -29,11 +30,13 @@ const PAGE_ROWS = 25;
 export function MusterHeatmap({ muster, exportQuery }: { muster: Muster; exportQuery: Record<string, string> }) {
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
+  const [format, setFormat] = useState<ExportFormat>("csv");
+  const formatProblem = format === "pdf" ? pdfRegisterError(exportQuery.date_from, exportQuery.date_to) : null;
   async function exportRegister() {
     setExporting(true);
     try {
-      const file = await apiClient.download(musterRegisterPath(exportQuery));
-      saveDownloadedFile(file, `muster-register_${exportQuery.date_from}_${exportQuery.date_to}.csv`);
+      const file = await apiClient.download(musterRegisterPath(exportQuery, format));
+      saveDownloadedFile(file, `muster-register_${exportQuery.date_from}_${exportQuery.date_to}.${format}`);
     } catch (err) {
       toast({ title: "Could not export the register", description: describeApiError(err), variant: "danger" });
     } finally {
@@ -45,8 +48,23 @@ export function MusterHeatmap({ muster, exportQuery }: { muster: Muster; exportQ
   const rows = muster.rows.slice(0, visible);
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <Button type="button" size="sm" variant="outline" disabled={muster.rows.length === 0 || exporting} onClick={exportRegister}>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {formatProblem ? (
+          <p role="alert" className="text-xs text-danger">
+            {formatProblem}
+          </p>
+        ) : null}
+        <label htmlFor="att-muster-format" className="sr-only">
+          Register format
+        </label>
+        <NativeSelect id="att-muster-format" className="h-8 w-28" value={format} onChange={(e) => setFormat(e.target.value as ExportFormat)}>
+          {(Object.keys(EXPORT_FORMAT_LABELS) as ExportFormat[]).map((f) => (
+            <option key={f} value={f}>
+              {EXPORT_FORMAT_LABELS[f]}
+            </option>
+          ))}
+        </NativeSelect>
+        <Button type="button" size="sm" variant="outline" disabled={muster.rows.length === 0 || exporting || formatProblem !== null} onClick={exportRegister}>
           <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
           {exporting ? "Preparing…" : "Export muster register"}
         </Button>

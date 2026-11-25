@@ -8,6 +8,7 @@ import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { usePeriodSummary, type Section } from "@/components/attendance/dashboard/use-dashboard-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import type { AttendancePeriod } from "@/lib/attendance-period/types";
 import {
   BUCKET_LABELS,
@@ -21,6 +22,7 @@ import { useToast } from "@/components/common/toast";
 import { apiClient } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
 import {
+  EXPORT_FORMAT_LABELS,
   downloadCsv,
   exportFileName,
   exportWindowError,
@@ -28,6 +30,7 @@ import {
   saveDownloadedFile,
   toCsv,
   type CsvCell,
+  type ExportFormat,
   type ServerReport,
 } from "@/lib/attendance/export";
 import { formatClockTime, formatMinutes } from "@/lib/attendance/format";
@@ -222,14 +225,15 @@ function PeriodExport({
   const { toast } = useToast();
   const [from, setFrom] = useState(query.date_from);
   const [to, setTo] = useState(query.date_to);
+  const [format, setFormat] = useState<ExportFormat>("csv");
   const [busy, setBusy] = useState(false);
   const problem = exportWindowError(from, to, today);
 
   async function download() {
     setBusy(true);
     try {
-      const file = await apiClient.download(reportExportPath(report, { ...query, date_from: from, date_to: to }));
-      saveDownloadedFile(file, `${report}_${from}_${to}.csv`);
+      const file = await apiClient.download(reportExportPath(report, { ...query, date_from: from, date_to: to }, format));
+      saveDownloadedFile(file, `${report}_${from}_${to}.${format}`);
     } catch (err) {
       toast({ title: "Could not export the report", description: describeApiError(err), variant: "danger" });
     } finally {
@@ -247,12 +251,22 @@ function PeriodExport({
         <label htmlFor="att-export-to" className="text-xs text-foreground-muted">To</label>
         <Input id="att-export-to" type="date" max={today} value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
       </div>
+      <div className="space-y-1">
+        <label htmlFor="att-export-format" className="text-xs text-foreground-muted">Format</label>
+        <NativeSelect id="att-export-format" className="w-28" value={format} onChange={(e) => setFormat(e.target.value as ExportFormat)}>
+          {(Object.keys(EXPORT_FORMAT_LABELS) as ExportFormat[]).map((f) => (
+            <option key={f} value={f}>
+              {EXPORT_FORMAT_LABELS[f]}
+            </option>
+          ))}
+        </NativeSelect>
+      </div>
       <Button type="button" size="sm" variant="outline" disabled={busy || problem !== null} onClick={download}>
         <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
-        {busy ? "Preparing…" : "Export period (CSV)"}
+        {busy ? "Preparing…" : "Export period"}
       </Button>
       <p className={cn("basis-full text-xs", problem ? "text-danger" : "text-foreground-muted")} role={problem ? "alert" : undefined}>
-        {problem ?? "Up to a year, with the filters above, for the employees you can see."}
+        {problem ?? "Up to a year, with the filters above, for the employees you can see. PDF holds up to 5,000 rows."}
       </p>
     </div>
   );

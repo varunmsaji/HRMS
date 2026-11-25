@@ -37,8 +37,24 @@ export function downloadCsv(fileName: string, csv: string): void {
 /** The server-built muster register for `query` (the dashboard's own window and filters). The
  * server covers up to a year and only the employees the caller may see, so the file is not limited
  * to the rows this page loaded. */
-export function musterRegisterPath(query: Record<string, string>): string {
-  return `/attendance/export/muster?${new URLSearchParams(query).toString()}`;
+export function musterRegisterPath(query: Record<string, string>, format: ExportFormat = "csv"): string {
+  return `/attendance/export/muster?${new URLSearchParams({ ...query, format }).toString()}`;
+}
+
+export type ExportFormat = "csv" | "xlsx" | "pdf";
+
+export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
+  csv: "CSV",
+  xlsx: "Excel",
+  pdf: "PDF",
+};
+
+/** A PDF register is a page of columns: past this many days the server refuses it. */
+export const MAX_PDF_REGISTER_DAYS = 62;
+
+export function pdfRegisterError(from: string, to: string): string | null {
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  return days > MAX_PDF_REGISTER_DAYS ? `A PDF register can cover at most ${MAX_PDF_REGISTER_DAYS} days. Choose Excel or CSV for a longer period.` : null;
 }
 
 /** The longest period the server will export: a year, to the day. */
@@ -47,8 +63,8 @@ export const MAX_EXPORT_DAYS = 366;
 export type ServerReport = "daily" | "present-absent" | "late-early" | "hours" | "overtime";
 
 /** The server-built CSV of one report for `query` (a period plus the dashboard's filters). */
-export function reportExportPath(report: ServerReport, query: Record<string, string>): string {
-  return `/attendance/reports/${report}/export?${new URLSearchParams(query).toString()}`;
+export function reportExportPath(report: ServerReport, query: Record<string, string>, format: ExportFormat = "csv"): string {
+  return `/attendance/reports/${report}/export?${new URLSearchParams({ ...query, format }).toString()}`;
 }
 
 /** Why `from`..`to` cannot be exported, or `null` when it can. ISO dates compare as text. */
@@ -71,4 +87,9 @@ export function saveDownloadedFile(file: { blob: Blob; filename: string | null }
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+/** One employee's statement for `month` (`YYYY-MM`). */
+export function statementPath(employeeId: string, month: string, format: ExportFormat = "pdf"): string {
+  return `/attendance/employees/${employeeId}/statement?${new URLSearchParams({ month, format }).toString()}`;
 }

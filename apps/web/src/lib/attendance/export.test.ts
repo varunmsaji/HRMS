@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { csvCell, exportFileName, exportWindowError, musterRegisterPath, reportExportPath, toCsv } from "@/lib/attendance/export";
+import { csvCell, exportFileName, exportWindowError, musterRegisterPath, pdfRegisterError, reportExportPath, statementPath, toCsv } from "@/lib/attendance/export";
 
 describe("csvCell", () => {
   it("quotes commas, quotes and line breaks", () => {
@@ -33,7 +33,10 @@ describe("exportFileName", () => {
 describe("musterRegisterPath", () => {
   it("carries the window and filters as the query", () => {
     expect(musterRegisterPath({ date_from: "2026-11-01", date_to: "2026-11-30", department_id: "d1" })).toBe(
-      "/attendance/export/muster?date_from=2026-11-01&date_to=2026-11-30&department_id=d1",
+      "/attendance/export/muster?date_from=2026-11-01&date_to=2026-11-30&department_id=d1&format=csv",
+    );
+    expect(musterRegisterPath({ date_from: "2026-11-01", date_to: "2026-11-30" }, "xlsx")).toBe(
+      "/attendance/export/muster?date_from=2026-11-01&date_to=2026-11-30&format=xlsx",
     );
   });
 });
@@ -41,8 +44,9 @@ describe("musterRegisterPath", () => {
 describe("reportExportPath", () => {
   it("names the report and carries the period and filters", () => {
     expect(reportExportPath("late-early", { date_from: "2026-01-01", date_to: "2026-12-31", branch_id: "b1" })).toBe(
-      "/attendance/reports/late-early/export?date_from=2026-01-01&date_to=2026-12-31&branch_id=b1",
+      "/attendance/reports/late-early/export?date_from=2026-01-01&date_to=2026-12-31&branch_id=b1&format=csv",
     );
+    expect(reportExportPath("daily", { date_from: "2026-01-01", date_to: "2026-01-31" }, "pdf")).toContain("&format=pdf");
   });
 });
 
@@ -57,5 +61,20 @@ describe("exportWindowError", () => {
     expect(exportWindowError("2026-11-10", "2026-11-01", today)).toMatch(/on or before/i);
     expect(exportWindowError("2026-11-01", "2026-11-25", today)).toMatch(/future/i);
     expect(exportWindowError("2025-11-23", today, today)).toMatch(/at most 366/i);
+  });
+});
+
+describe("pdfRegisterError", () => {
+  it("allows up to 62 days and refuses a longer register", () => {
+    expect(pdfRegisterError("2026-10-01", "2026-11-01")).toBeNull();
+    expect(pdfRegisterError("2026-09-01", "2026-11-01")).toBeNull(); // 62 days
+    expect(pdfRegisterError("2026-08-31", "2026-11-01")).toMatch(/at most 62 days/);
+  });
+});
+
+describe("statementPath", () => {
+  it("names the employee, the month and the format", () => {
+    expect(statementPath("e1", "2026-11")).toBe("/attendance/employees/e1/statement?month=2026-11&format=pdf");
+    expect(statementPath("e1", "2026-11", "xlsx")).toContain("format=xlsx");
   });
 });

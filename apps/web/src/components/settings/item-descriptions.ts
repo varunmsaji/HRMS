@@ -15,6 +15,7 @@ export const SETTINGS_ITEM_DESCRIPTIONS: Record<string, string> = {
   "/app/attendance-policies": "Late, early-exit and absence rules, and face enrollment",
   "/app/overtime-policies": "Overtime eligibility and rates",
   "/app/regularization-policies": "Who can correct attendance (regularization) and who approves it",
+  "/app/attendance-digests": "Daily team note and weekly HR summary by email",
   "/app/leave-types": "Casual, sick, earned and more",
   "/app/leave-policies": "Accrual, carry-forward and limits",
   "/app/leave-combination-rules": "Which leaves can be taken together",

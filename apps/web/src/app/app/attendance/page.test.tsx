@@ -35,6 +35,7 @@ import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
 import { fakeSummary, type FakeOrg } from "@/lib/attendance/__fixtures__/fake-summary";
 import { addDays, weekdayIndex, type EmployeeLite } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
+import type { PatternAlerts } from "@/lib/attendance/patterns";
 import type { AttendanceDay } from "@/lib/attendance/types";
 
 const mockedGet = vi.mocked(apiClient.get);
@@ -62,6 +63,15 @@ const EMPLOYEES = [
   { id: "emp-2", first_name: "Ben", last_name: "Iyer", display_name: null, employee_code: "EMP-002", status: "ACTIVE", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
   { id: "emp-3", first_name: "Chitra", last_name: "Nair", display_name: null, employee_code: "EMP-003", status: "PROBATION", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
 ];
+
+const PATTERN_THRESHOLDS = {
+  window_days: 30,
+  weekday_window_days: 56,
+  late_days: 5,
+  absent_days: 4,
+  incomplete_days: 3,
+  weekday_absences: 3,
+};
 
 const PERIOD_OPEN = {
   id: "per-1",
@@ -92,11 +102,17 @@ interface Overrides {
   summaryError?: Error;
   /** How many people report to the caller (`GET /employees/{id}/direct-reports`); omitted = none. */
   directReports?: number | Error;
+  /** Pattern alerts (`GET /attendance/pattern-alerts`); omitted = none, an Error = the request fails. */
+  patterns?: PatternAlerts["alerts"] | Error;
 }
 
 function mockApi(o: Overrides = {}) {
   const days = o.days ?? [];
   mockedGet.mockImplementation((path: string) => {
+    if (path.startsWith("/attendance/pattern-alerts")) {
+      if (o.patterns instanceof Error) return Promise.reject(o.patterns);
+      return Promise.resolve({ as_of: TODAY, thresholds: PATTERN_THRESHOLDS, alerts: o.patterns ?? [] });
+    }
     if (path.startsWith("/regularizations")) return Promise.resolve(o.regularizations ?? []);
     if (path.startsWith("/overtime")) {
       return o.overtime instanceof Error ? Promise.reject(o.overtime) : Promise.resolve(o.overtime ?? []);
@@ -297,6 +313,52 @@ describe("AttendanceDashboardPage", () => {
       const url = replaceMock.mock.calls[replaceMock.mock.calls.length - 1][0] as string;
       expect(url).toMatch(/range=custom/);
       expect(url).toMatch(/from=(\d{4}-\d{2}-\d{2})&to=\1/);
+    });
+
+    it("lists who keeps being late or absent on the Trends tab, with the days behind each", async () => {
+      mockApi({
+        days: sampleDays(),
+        patterns: [
+          { employee_id: "emp-1", kind: "repeat_late", count: 6, dates: [TODAY, addDays(TODAY, -1)], weekday: null },
+          { employee_id: "emp-3", kind: "repeat_absent_weekday", count: 3, dates: [addDays(TODAY, -7)], weekday: 0 },
+        ],
+      });
+      searchParams = new URLSearchParams("view=trends");
+      render(<AttendanceDashboardPage />);
+      const panel = (await screen.findByRole("heading", { name: "Patterns to look at" })).closest("[id='att-patterns']") as HTMLElement;
+      expect(await within(panel).findByText("late on 6 days in the last 30")).toBeInTheDocument();
+      expect(within(panel).getByText("absent on 3 Mondays in the last 56 days")).toBeInTheDocument();
+      expect(within(panel).getByRole("link", { name: "Asha Rao" })).toHaveAttribute("href", "/app/attendance/employee/emp-1");
+      expect(within(panel).getByText(/A prompt to look, not a finding/)).toBeInTheDocument();
+      expect(within(panel).getByText(/and 4 earlier/)).toBeInTheDocument(); // 6 late days, 2 listed
+    });
+
+    it("says so when nobody has a pattern, and keeps a failing request to its own panel", async () => {
+      mockApi({ days: sampleDays(), patterns: [] });
+      searchParams = new URLSearchParams("view=trends");
+      const first = render(<AttendanceDashboardPage />);
+      expect(await screen.findByText("No patterns found.")).toBeInTheDocument();
+      first.unmount();
+
+      mockApi({ days: sampleDays(), patterns: new ApiError({ status: 500, code: "BOOM", message: "x" }) });
+      render(<AttendanceDashboardPage />);
+      const panel = (await screen.findByRole("heading", { name: "Patterns to look at" })).closest("[id='att-patterns']") as HTMLElement;
+      expect(await within(panel).findByRole("button", { name: /try again/i })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Attendance trend" })).toBeInTheDocument(); // the rest still renders
+    });
+
+    it("asks for patterns up to the end of the range with the dashboard's filters", async () => {
+      mockApi({ days: sampleDays() });
+      searchParams = new URLSearchParams("view=trends&dept=unassigned");
+      render(<AttendanceDashboardPage />);
+      await screen.findByRole("heading", { name: "Patterns to look at" });
+      await waitFor(() => {
+        const paths = mockedGet.mock.calls.map((c) => c[0] as string).filter((p) => p.startsWith("/attendance/pattern-alerts"));
+        expect(paths.length).toBeGreaterThan(0);
+        expect(paths[0]).toContain(`as_of=${TODAY}`);
+        expect(paths[0]).toContain("department_id=unassigned");
+        expect(paths[0]).not.toContain("date_from");
+      });
     });
 
     it("opens the late arrivals of one band from the punctuality chart, matching the count clicked", async () => {
@@ -1151,7 +1213,7 @@ describe("AttendanceDashboardPage", () => {
       render(<AttendanceDashboardPage />);
       const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
       const group = within(reports).getByRole("group", { name: /Export Daily attendance for a period/ });
-      await user.click(within(group).getByRole("button", { name: "Export period (CSV)" }));
+      await user.click(within(group).getByRole("button", { name: "Export period" }));
       await waitFor(() => expect(apiClient.download).toHaveBeenCalledTimes(1));
       expect(vi.mocked(apiClient.download).mock.calls[0][0]).toMatch(
         /^\/attendance\/reports\/daily\/export\?date_from=\d{4}-\d{2}-\d{2}&date_to=\d{4}-\d{2}-\d{2}/,
@@ -1163,6 +1225,23 @@ describe("AttendanceDashboardPage", () => {
       expect(within(reports).queryByRole("group", { name: /for a period/ })).not.toBeInTheDocument();
     });
 
+    it("exports a period in the format chosen", async () => {
+      mockApi({ days: sampleDays() });
+      vi.mocked(apiClient.download).mockResolvedValue({ blob: new Blob(["x"]), filename: "daily.xlsx" });
+      URL.createObjectURL = vi.fn(() => "blob:x");
+      URL.revokeObjectURL = vi.fn();
+      searchParams = new URLSearchParams("view=reports");
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
+      const group = within(reports).getByRole("group", { name: /for a period/ });
+      await user.selectOptions(within(group).getByLabelText("Format"), "xlsx");
+      await user.click(within(group).getByRole("button", { name: "Export period" }));
+      await waitFor(() => expect(apiClient.download).toHaveBeenCalled());
+      const calls = vi.mocked(apiClient.download).mock.calls;
+      expect(calls[calls.length - 1][0]).toMatch(/&format=xlsx$/);
+    });
+
     it("will not export a period over a year", async () => {
       mockApi({ days: sampleDays() });
       searchParams = new URLSearchParams("view=reports");
@@ -1171,7 +1250,7 @@ describe("AttendanceDashboardPage", () => {
       const group = within(reports).getByRole("group", { name: /for a period/ });
       fireEvent.change(within(group).getByLabelText("From"), { target: { value: "2020-01-01" } });
       expect(within(group).getByRole("alert")).toHaveTextContent(/at most 366 days/i);
-      expect(within(group).getByRole("button", { name: "Export period (CSV)" })).toBeDisabled();
+      expect(within(group).getByRole("button", { name: "Export period" })).toBeDisabled();
     });
 
     it("searches within a report", async () => {

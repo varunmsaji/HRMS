@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { StatementDownload } from "@/components/attendance/statement-download";
 import { EmployeeMonthView } from "@/components/attendance/dashboard/employee-month-view";
 import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { useSection } from "@/components/attendance/dashboard/use-dashboard-data";
@@ -152,6 +153,7 @@ export function SelfView({ employeeId, today, timezone }: SelfViewProps) {
         status={days.status}
         error={days.error}
         onRetry={days.retry}
+        actions={<StatementDownload employeeId={employeeId} maxMonth={month} />}
       >
         <EmployeeMonthView
           month={month}
