@@ -9,7 +9,8 @@ from hrms.core.task_policy import NO_RETRY_TASKS
 
 
 def _app_tasks() -> dict[str, object]:
-    return {n: t for n, t in celery_app.tasks.items() if not n.startswith("celery.")}
+    # Other tests register throwaway `test.*` tasks on this shared app; only real tasks count.
+    return {n: t for n, t in celery_app.tasks.items() if not n.startswith(("celery.", "test."))}
 
 
 def _retries(task: object) -> bool:
