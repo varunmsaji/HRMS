@@ -361,8 +361,8 @@ async def _calculate_range_pass(
     dates_by_employee: dict[UUID, set[date]] = {}
     if only is not None:
         # A retry: exactly the employee-dates that failed transiently last time.
-        for employee_id, target_dates in _group_by_employee(only).items():
-            dates_by_employee[employee_id] = set(target_dates)
+        for employee_id, retry_dates in _group_by_employee(only).items():
+            dates_by_employee[employee_id] = set(retry_dates)
     else:
         async with session_scope(company_id=str(company_id)) as session:
             spans = await EmploymentService(session).list_legal_entity_spans(
