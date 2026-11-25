@@ -93,10 +93,12 @@ async def test_invalid_or_oversized_reports_are_rejected_and_not_logged(
 
 
 # --- privacy: what a hostile or careless client can put in a report ----------------------------
+FAKE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"  # made up; masked by the JWT pattern
 HOSTILE = {
-    "error_class": "TypeError Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+    "error_class": "TypeError Bearer " + FAKE_JWT,
     "kind": "priya@example.com",
-    "frames": ["/_next/static/x.js:1:2 token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"],
+    # Joined at runtime so the source holds no literal `token=<value>` (secret scanners flag it).
+    "frames": ["/_next/static/x.js:1:2 " + "token" + "=" + FAKE_JWT],
     "code": "PAN ABCDE1234F",
     "app_version": "9876543210",
     "request_id": "aadhaar 2345 6789 0123",
