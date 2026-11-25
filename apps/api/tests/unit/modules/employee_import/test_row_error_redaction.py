@@ -52,3 +52,13 @@ async def test_domain_error_keeps_its_curated_message() -> None:
     row = await _record(NotFoundError("Department not found", code="DEPARTMENT_NOT_FOUND"))
     assert row["error_code"] == "DEPARTMENT_NOT_FOUND"
     assert row["error_message"] == "Department not found"
+
+
+@pytest.mark.asyncio
+async def test_a_server_side_app_error_in_a_row_shows_its_fixed_public_text() -> None:
+    from hrms.modules.attendance.exceptions import FaceProviderFailedError
+
+    row = await _record(FaceProviderFailedError("azure said: key=sk_live_123 at /srv/app/x.py"))
+    assert row["error_code"] == "FACE_PROVIDER_FAILED"
+    assert row["error_message"] == FaceProviderFailedError.public_message
+    assert "sk_live" not in row["error_message"]

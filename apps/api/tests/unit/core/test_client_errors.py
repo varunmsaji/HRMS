@@ -90,3 +90,49 @@ async def test_invalid_or_oversized_reports_are_rejected_and_not_logged(
     r = await client.post("/v1/client-errors", json=bad)
     assert r.status_code == 422
     assert recorder.events == []
+
+
+# --- privacy: what a hostile or careless client can put in a report ----------------------------
+HOSTILE = {
+    "error_class": "TypeError Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+    "kind": "priya@example.com",
+    "frames": ["/_next/static/x.js:1:2 token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln"],
+    "code": "PAN ABCDE1234F",
+    "app_version": "9876543210",
+    "request_id": "aadhaar 2345 6789 0123",
+    "path": "/reset-password/abc123secret?token=zzz",
+}
+
+
+async def test_whatever_a_client_puts_in_a_report_is_masked_before_it_is_stored(
+    client: AsyncClient, recorder: _Recorder
+) -> None:
+    """The record goes through the same redaction processor as every other log line, so a client
+    that stuffs a token, an email, a PAN, an Aadhaar or a phone number into any string field does
+    not get it stored."""
+    from hrms.core.observability.redaction import redact_event
+
+    r = await client.post("/v1/client-errors", json={**GOOD, **HOSTILE})
+    assert r.status_code == 204
+    [(event, fields)] = recorder.events
+    stored = str(redact_event(None, "error", {"event": event, **fields}))
+    for secret in (
+        "eyJhbGciOiJIUzI1NiJ9",
+        "priya@example.com",
+        "ABCDE1234F",
+        "2345 6789 0123",
+        "abc123secret",
+        "zzz",
+    ):
+        assert secret not in stored, secret
+
+
+async def test_a_report_has_no_field_that_could_carry_a_message_or_a_payload(
+    client: AsyncClient, recorder: _Recorder
+) -> None:
+    await client.post(
+        "/v1/client-errors",
+        json={**GOOD, "message": "x", "stack": "y", "body": {"salary": 1}, "headers": {"a": "b"}},
+    )
+    fields = recorder.events[0][1]
+    assert not {"message", "stack", "body", "headers", "payload", "response"} & set(fields)

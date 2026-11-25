@@ -578,7 +578,7 @@ class EmployeeImportService:
             )
         elif isinstance(exc, AppError):
             code = exc.code
-            message = exc.message
+            message = exc.client_message
         else:
             code = "IMPORT_ROW_FAILED"
             # Never `str(exc)`: this text is stored and returned by the `/errors` endpoint, and an

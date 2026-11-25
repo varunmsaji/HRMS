@@ -4009,7 +4009,7 @@ def _blocked(employee_id: UUID, exc: AppError, existing: list[PunchRead]) -> Man
         employee_id=employee_id,
         outcome="BLOCKED",
         code=exc.code,
-        message=exc.message,
+        message=exc.client_message,
         existing_punches=existing,
     )
 
