@@ -10,11 +10,13 @@ import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../domain/attendance_export.dart';
 import '../domain/attendance_insights.dart';
 import '../domain/attendance_mismatch.dart' show attentionRank;
 import '../domain/attendance_pulse.dart';
 import '../domain/attendance_totals.dart';
 import '../domain/pattern_alerts.dart';
+import 'attendance_export_dialog.dart';
 import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import 'attendance_day_detail_screen.dart';
@@ -409,6 +411,26 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       rows.isEmpty
           ? const Text('No attendance days to show.')
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('muster_export'),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Export register'),
+                  onPressed: () => showAttendanceExport(
+                    context,
+                    ref,
+                    title: 'Export attendance register',
+                    filePrefix: 'muster',
+                    from: _bounds.from,
+                    to: _bounds.to,
+                    today: _today,
+                    path: musterExportPath,
+                    pdfLimited: true,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               SegmentedButton<bool>(
                 key: const ValueKey('muster_switch'),
                 showSelectedIcon: false,
@@ -779,7 +801,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       body = TabBarView(physics: const NeverScrollableScrollPhysics(), children: [
         _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _patternAlerts(), _readiness(), _heatmap()]),
         _tab([_breakdown(), _trend(), _punctuality(), _absenceLeave(), _workHours(), _overtimeCard()]),
-        AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel),
+        AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel, exportFrom: _bounds.from, exportTo: _bounds.to),
       ]);
     }
     return DefaultTabController(

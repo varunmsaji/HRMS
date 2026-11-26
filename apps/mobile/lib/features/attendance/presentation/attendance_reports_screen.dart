@@ -7,7 +7,9 @@ import '../../../core/providers.dart';
 import '../../../core/widgets/ui.dart';
 import '../data/attendance_repository.dart';
 import '../domain/attendance_pulse.dart';
+import '../domain/attendance_export.dart';
 import '../domain/attendance_reports.dart';
+import 'attendance_export_dialog.dart';
 import 'attendance_period_detail_screen.dart' show AttendancePeriodDetailScreen;
 
 /// The Reports panel of the web attendance dashboard (`reports-panel.tsx`): six read-only reports
@@ -25,7 +27,13 @@ class AttendanceReportsPanel extends ConsumerStatefulWidget {
     required this.zone,
     required this.today,
     required this.rangeLabel,
+    this.exportFrom,
+    this.exportTo,
   });
+
+  /// The period an export opens on (`YYYY-MM-DD`); null leaves the export button out.
+  final String? exportFrom;
+  final String? exportTo;
 
   /// Attendance days in the selected range.
   final List<AttendanceDay> days;
@@ -169,6 +177,24 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
               child: const Text('Open period'),
             ),
           ]),
+        if (widget.exportFrom != null && widget.exportTo != null && serverReports.containsKey(_report))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Export period'),
+              onPressed: () => showAttendanceExport(
+                context,
+                ref,
+                title: 'Export ${reportLabels[_report] ?? 'report'}',
+                filePrefix: serverReports[_report]!,
+                from: widget.exportFrom!,
+                to: widget.exportTo!,
+                today: widget.today,
+                path: (from, to, format) => reportExportPath(serverReports[_report]!, from, to, format),
+              ),
+            ),
+          ),
         if (blocked != null)
           blocked
         else ...[

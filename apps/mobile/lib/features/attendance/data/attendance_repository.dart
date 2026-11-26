@@ -581,6 +581,9 @@ class AttendanceRepository {
   /// One of the five photos under review (`front`, `left`, `right`, `up`, `down`), fetched through
   /// the API (auth + no-store) — they never have a URL of their own. Enrollments from before every
   /// angle was kept have only the front; the other angles answer 404.
+  /// A server-built export (muster register or report) at [path], from `attendance_export.dart`.
+  Future<DownloadedFile> downloadExport(String path) => _client.download(path);
+
   /// One employee's attendance statement for [month] (`YYYY-MM`) as `pdf`, `xlsx` or `csv`
   /// (web `statementPath`). The server only answers for people the caller may see.
   Future<DownloadedFile> downloadStatement(String employeeId, String month, {String format = 'pdf'}) =>
