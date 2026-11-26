@@ -1,6 +1,10 @@
 # Web vs mobile parity audit (2026-11-26)
 
 Question: is the mobile app up to date with the web app?
+**Update, same day:** gaps 1 to 4 below are now closed in code (commits `7d426f9`, `9bdd58a`, `fac7130`,
+`0d2fdd5`, on PR 81). Two remain: row 5 (decision needed) and row 6 (not compared). None of the closed work
+has been tried on a phone or against a running API.
+
 Short answer: **mostly, but not fully.** Since the 2026-11-22 audit mobile closed the two gaps it listed
 (R-F02, R-D06) and added push, but web then shipped a batch of attendance features (2026-11-24/25) that mobile
 does not have, and one API contract change (assigned branches) is missing from **both** clients.
@@ -11,14 +15,27 @@ Builds on `WEB_VS_MOBILE_PARITY_2026-11-22.md`. Only this file was written; no c
 
 ## 1. Gaps that exist now
 
-| # | Feature | Web | Mobile | Evidence | Severity |
-|---|---|---|---|---|---|
-| 1 | **Assigned branches** (API `adeffaa`): HR admin and branch manager must be given at least one branch; `branch_ids` on invite, user read and role update; `PUT /users/{id}/branches` | Not done. `users/page.tsx` posts `/users/invite` and patches roles with no branches | Not done. `inviteUser` sends only `email` and `roleCode` | `BranchAccessRequiredError` in `account_invite/exceptions.py`; `_needs_branches` in `service.py`; zero `branch_ids` matches in `web/src` and `mobile/lib` (mobile only has regenerated test fixtures, `0281c15`) | **High, shared.** Inviting or re-roling an HR admin or branch manager is rejected on both clients. Not a mobile lag: plan it once for both |
-| 2 | **Monthly attendance statement** download per employee (`GET /attendance/employees/{id}/statement`, `85df47e`) | Yes (`statement-download.tsx`, employee page and self view) | No. No `statement` match in `mobile/lib` | commit file lists | Medium. An employee on a phone cannot get their own statement |
-| 3 | **Pattern alerts** (often late, often absent, missing punches, same weekday) (`GET /attendance/pattern-alerts`) | Yes (`pattern-alerts.tsx`, `patterns.ts`) | No | no `pattern-alerts` in `mobile/lib` | Medium for managers and HR |
-| 4 | **Exports** of the muster register and the five reports (CSV, Excel, PDF) (`/attendance/export/muster`, `/attendance/reports/{report}/export`) | Yes (`export.ts`, reports panel, muster heatmap) | No. Mobile has only the employee directory CSV (`core/export/csv_export.dart`) | no `export` call in attendance mobile code | Low to medium. Share-sheet export is natural on a phone |
-| 5 | **Attendance digest settings** page (`/app/attendance-digests`, `GET/PUT /attendance/digest-settings`) | Yes | No (`digest` appears only in the work-calendar change-impact screen) | route lists | Low. Rare admin setting; acceptable as web-only if decided |
-| 6 | Web attendance page: click-through, manager view, chart drill-downs (`de201a9`) | Yes | **Not checked in depth**; mobile Insights has charts and a Team screen with quick chips but I did not compare drill-down behaviour | `de201a9` touches no mobile file | Unknown, treat as medium until compared on screen |
+| # | Status | Feature | Web | Mobile | Evidence | Severity |
+|---|---|---|---|---|---|---|
+| 1 | **Closed** (`7d426f9`) | **Assigned branches** (API `adeffaa`): HR admin and branch manager must be given at least one branch; `branch_ids` on invite, user read and role update; `PUT /users/{id}/branches` | Not done. `users/page.tsx` posts `/users/invite` and patches roles with no branches | Not done. `inviteUser` sends only `email` and `roleCode` | `BranchAccessRequiredError` in `account_invite/exceptions.py`; `_needs_branches` in `service.py`; zero `branch_ids` matches in `web/src` and `mobile/lib` (mobile only has regenerated test fixtures, `0281c15`) | **High, shared.** Inviting or re-roling an HR admin or branch manager is rejected on both clients. Not a mobile lag: plan it once for both |
+| 2 | **Closed** (`9bdd58a`) | **Monthly attendance statement** download per employee (`GET /attendance/employees/{id}/statement`, `85df47e`) | Yes (`statement-download.tsx`, employee page and self view) | No. No `statement` match in `mobile/lib` | commit file lists | Medium. An employee on a phone cannot get their own statement |
+| 3 | **Closed** (`fac7130`) | **Pattern alerts** (often late, often absent, missing punches, same weekday) (`GET /attendance/pattern-alerts`) | Yes (`pattern-alerts.tsx`, `patterns.ts`) | No | no `pattern-alerts` in `mobile/lib` | Medium for managers and HR |
+| 4 | **Closed** (`0d2fdd5`) | **Exports** of the muster register and the five reports (CSV, Excel, PDF) (`/attendance/export/muster`, `/attendance/reports/{report}/export`) | Yes (`export.ts`, reports panel, muster heatmap) | No. Mobile has only the employee directory CSV (`core/export/csv_export.dart`) | no `export` call in attendance mobile code | Low to medium. Share-sheet export is natural on a phone |
+| 5 | Open, decision | **Attendance digest settings** page (`/app/attendance-digests`, `GET/PUT /attendance/digest-settings`) | Yes | No (`digest` appears only in the work-calendar change-impact screen) | route lists | Low. Rare admin setting; acceptable as web-only if decided |
+| 6 | Open, not compared | Web attendance page: click-through, manager view, chart drill-downs (`de201a9`) | Yes | **Not checked in depth**; mobile Insights has charts and a Team screen with quick chips but I did not compare drill-down behaviour | `de201a9` touches no mobile file | Unknown, treat as medium until compared on screen |
+
+## 1a. How the closed gaps were closed
+
+- **Row 1:** a branch picker on invite and on the roles dialog, on web (`users/page.tsx`) and mobile
+  (`users_screen.dart`). Shown only for HR admin and branch manager without company admin; at least one branch
+  required; `branch_ids` sent on invite and role update; users list shows each person's branches.
+- **Row 2:** a "Download statement" menu (PDF, Excel, CSV) on the month card, which both the employee's own
+  screen and the HR employee profile use; the file goes to the share sheet.
+- **Row 3:** a "Patterns to look at" card on the Insights Today tab, left out when the caller may not see it.
+  Web also shows it in team view; mobile's Team attendance is a one-day list, so it is not there.
+- **Row 4:** "Export register" (heatmap card) and "Export period" (Reports tab), with web's limits. Mobile
+  Insights has no department, branch or shift filters, so mobile exports cover the whole range for everyone the
+  caller can see, where web passes its filters through.
 
 ## 2. Closed since 2026-11-22
 
@@ -52,14 +69,13 @@ Builds on `WEB_VS_MOBILE_PARITY_2026-11-22.md`. Only this file was written; no c
 
 ## 5. Recommended order
 
-1. Decide assigned branches for both clients before this API change is released: a branch picker on invite and
-   on the role dialog for `HR_ADMIN` and `BRANCH_MANAGER`, plus a branch list on the user row.
-2. Mobile: monthly statement (share the PDF), then pattern alerts on Insights and Team attendance.
-3. Mobile: report and muster export through the share sheet, if wanted.
-4. Compare row 6 on screen, side by side.
-5. Decide whether digest settings stay web-only and record it in the intentional list.
-6. Try the unreleased mobile work on a phone (checklist in `MOBILE_HANDOFF_2026-11-20.md`, section 3.1).
+1. Done: assigned branches, statement, pattern alerts, exports (section 1a).
+2. Compare row 6 on screen, side by side.
+3. Decide whether digest settings stay web-only and record it in the intentional list.
+4. Try it on a phone and a browser, against a real API: invite an HR admin and a branch manager and edit their
+   branches; download a statement in each format; open the pattern alerts card; export a register and a report.
+   Also the unreleased mobile work in `MOBILE_HANDOFF_2026-11-20.md`, section 3.1.
 
 ## Confidence
 
-High: rows 1 to 5 (commit contents plus absence searches, row 1 also read from service code). Low: row 6.
+High: rows 1 to 5 were real gaps when found (commit contents plus absence searches, row 1 also read from service code); rows 1 to 4 are now closed by code and automated tests only. Low: row 6.
