@@ -18,6 +18,41 @@ const _roleCodes = ['COMPANY_ADMIN', 'HR_ADMIN', 'REPORTING_MANAGER', 'BRANCH_MA
 /// Role codes shown as words (`HR_ADMIN` -> `HR admin`).
 String roleLabel(String code) => code.replaceAll('_', ' ').toLowerCase().replaceFirstMapped(RegExp(r'^.'), (m) => m[0]!.toUpperCase()).replaceAll('Hr ', 'HR ');
 
+/// HR admin and branch manager (without company admin) see only the branches an admin assigns.
+bool needsBranches(Iterable<String> roles) {
+  final set = roles.toSet();
+  return !set.contains('COMPANY_ADMIN') && (set.contains('HR_ADMIN') || set.contains('BRANCH_MANAGER'));
+}
+
+/// Checkbox list of active branches; [selected] is edited in place.
+class _BranchPicker extends StatelessWidget {
+  const _BranchPicker({required this.branches, required this.selected, required this.onChanged});
+  final List<({String id, String name})> branches;
+  final Set<String> selected;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 12),
+      Text('Branches they cover', style: Theme.of(context).textTheme.titleSmall),
+      const Text('Choose at least one. They see and manage only these branches.'),
+      if (branches.isEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text('No active branches yet.')),
+      for (final b in branches)
+        CheckboxListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(b.name),
+          value: selected.contains(b.id),
+          onChanged: (v) {
+            (v ?? false) ? selected.add(b.id) : selected.remove(b.id);
+            onChanged();
+          },
+        ),
+    ]);
+  }
+}
+
 class UsersScreen extends ConsumerStatefulWidget {
   const UsersScreen({super.key});
 
@@ -31,12 +66,15 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   Future<void> _invite() async {
     final emailController = TextEditingController();
     String roleCode = _roleCodes.last;
+    final branchIds = <String>{};
+    final branches = await ref.read(onboardingRepositoryProvider).listActiveBranches().catchError((_) => <({String id, String name})>[]);
+    if (!mounted) return;
     final created = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: const Text('Invite user'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
             AuthFormField(label: 'Email', required: true, child: TextField(controller: emailController, keyboardType: TextInputType.emailAddress)),
             const SizedBox(height: 12),
             AuthFormField(
@@ -47,14 +85,24 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                 onChanged: (v) => setState(() => roleCode = v ?? roleCode),
               ),
             ),
-          ]),
+            if (needsBranches([roleCode])) _BranchPicker(branches: branches, selected: branchIds, onChanged: () => setState(() {})),
+          ])),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
             FilledButton(
               onPressed: () async {
                 if (emailController.text.trim().isEmpty) return;
+                final restricted = needsBranches([roleCode]);
+                if (restricted && branchIds.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choose at least one branch for this role.')));
+                  return;
+                }
                 try {
-                  await ref.read(onboardingRepositoryProvider).inviteUser(email: emailController.text.trim(), roleCode: roleCode);
+                  await ref.read(onboardingRepositoryProvider).inviteUser(
+                        email: emailController.text.trim(),
+                        roleCode: roleCode,
+                        branchIds: restricted ? branchIds.toList() : const [],
+                      );
                   if (context.mounted) Navigator.of(context).pop(true);
                 } catch (error) {
                   if (context.mounted) {
@@ -73,12 +121,15 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
 
   Future<void> _editRoles(UserSummary user) async {
     final selected = Set<String>.from(user.roleCodes);
+    final branchIds = Set<String>.from(user.branchIds);
+    final branches = await ref.read(onboardingRepositoryProvider).listActiveBranches().catchError((_) => <({String id, String name})>[]);
+    if (!mounted) return;
     final changed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(user.emailLabel),
-          content: Column(
+          content: SingleChildScrollView(child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               for (final role in _roleCodes)
@@ -87,14 +138,20 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                   value: selected.contains(role),
                   onChanged: (v) => setState(() => (v ?? false) ? selected.add(role) : selected.remove(role)),
                 ),
+              if (needsBranches(selected)) _BranchPicker(branches: branches, selected: branchIds, onChanged: () => setState(() {})),
             ],
-          ),
+          )),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
             FilledButton(
               onPressed: () async {
+                final restricted = needsBranches(selected);
+                if (restricted && branchIds.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choose at least one branch for this role.')));
+                  return;
+                }
                 try {
-                  await ref.read(onboardingRepositoryProvider).updateUserRoles(user.userId, selected.toList());
+                  await ref.read(onboardingRepositoryProvider).updateUserRoles(user.userId, selected.toList(), branchIds: restricted ? branchIds.toList() : const []);
                   if (context.mounted) Navigator.of(context).pop(true);
                 } catch (error) {
                   if (context.mounted) {
@@ -128,7 +185,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
         final display = name.isEmpty ? user.emailLabel : name;
         return ListRowCard(
           title: display,
-          subtitle: [user.emailLabel, user.roleCodes.isEmpty ? 'No roles' : user.roleCodes.map(roleLabel).join(', ')].join(' · '),
+          subtitle: [
+            user.emailLabel,
+            user.roleCodes.isEmpty ? 'No roles' : user.roleCodes.map(roleLabel).join(', '),
+            if (needsBranches(user.roleCodes)) user.branchIds.isEmpty ? 'No branches' : '${user.branchIds.length} branch${user.branchIds.length == 1 ? '' : 'es'}',
+          ].join(' · '),
           leading: InitialsAvatar(name: display),
           onTap: canManageRoles ? () => _editRoles(user) : null,
         );
