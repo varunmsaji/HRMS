@@ -14,6 +14,7 @@ import '../domain/attendance_insights.dart';
 import '../domain/attendance_mismatch.dart' show attentionRank;
 import '../domain/attendance_pulse.dart';
 import '../domain/attendance_totals.dart';
+import '../domain/pattern_alerts.dart';
 import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import 'attendance_day_detail_screen.dart';
@@ -76,6 +77,10 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   _Loaded<AttendanceTotals>? _totals;
   bool _byBranch = false;
 
+  /// People with a repeating pattern, up to the end of the range. Null when the caller may not see
+  /// it (the card is then left out); an error shows on the card only.
+  _Loaded<PatternAlerts>? _patterns;
+
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
   String get _today => businessToday(_zone);
   ({String from, String to}) get _bounds => resolveInsightsRange(_range, _today);
@@ -119,6 +124,13 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       final repo = ref.read(attendanceRepositoryProvider);
       final daysFuture = repo.listAttendanceDays(dateFrom: w.from, dateTo: w.to);
       final totalsFuture = _loaded(() => repo.attendanceSummary(dateFrom: w.from, dateTo: w.to));
+      final patternsFuture = () async {
+        try {
+          return _Loaded<PatternAlerts>.ok(await repo.patternAlerts(asOf: _bounds.to));
+        } catch (e) {
+          return e is ApiError && e.status == 403 ? null : _Loaded<PatternAlerts>.fail(_msg(e));
+        }
+      }();
       final namesFuture = loadChoices(ref.read(apiClientProvider), const ['employees']).then((c) => {for (final e in c['employees'] ?? const <Choice>[]) e.value: e.label}).catchError((_) => <String, String>{});
       final otFuture = _section(() => _all('/overtime', filters: {'date_from': w.from, 'date_to': w.to}));
       final regFuture = _section(() => _all('/regularizations', filters: {'request_status': 'SUBMITTED'}));
@@ -126,6 +138,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       final days = await daysFuture;
       final totals = await totalsFuture;
       final names = await namesFuture;
+      final patterns = await patternsFuture;
       final ot = await otFuture;
       final regs = await regFuture;
       final periods = await periodFuture;
@@ -137,6 +150,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         _regularizations = regs;
         _periods = periods;
         _totals = totals;
+        _patterns = patterns;
       });
     } catch (e) {
       if (mounted) setState(() => _error = _msg(e));
@@ -225,6 +239,33 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
                           : null,
                 ),
             ]),
+    );
+  }
+
+  /// "Patterns to look at": people who keep being late or absent. A prompt to look, not a finding;
+  /// each names the days behind it and opens the person's attendance profile (web `PatternAlertsPanel`).
+  Widget _patternAlerts() {
+    final loaded = _patterns;
+    if (loaded == null) return const SizedBox.shrink();
+    final data = loaded.data;
+    if (data == null) return _card('Patterns to look at', _sectionError(loaded.error ?? 'Pattern alerts could not be loaded.'));
+    final t = data.thresholds;
+    return _card(
+      'Patterns to look at',
+      data.alerts.isEmpty
+          ? const Text('No patterns found. Nobody has crossed a threshold.')
+          : Column(children: [
+              for (final a in data.alerts)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  onTap: () => _openEmployee(a.employeeId),
+                  title: Text(_name(a.employeeId)),
+                  subtitle: Text('${a.label}: ${a.describe(t)}\n${a.dates.map(shortDate).join(', ')}${a.count > a.dates.length ? ' and ${a.count - a.dates.length} earlier' : ''}', style: const TextStyle(fontSize: 12)),
+                  isThreeLine: true,
+                ),
+            ]),
+      subtitle: 'People who keep being late or absent: ${t.lateDays}+ late days, ${t.absentDays}+ absent days or ${t.incompleteDays}+ missing punches in ${t.windowDays} days, or the same weekday ${t.weekdayAbsences}+ times in ${t.weekdayWindowDays} days. A prompt to look, not a finding.',
     );
   }
 
@@ -736,7 +777,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     } else {
       // Swiping is off: the attendance grid and the charts scroll sideways, and a swipe there must not change tab.
       body = TabBarView(physics: const NeverScrollableScrollPhysics(), children: [
-        _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _readiness(), _heatmap()]),
+        _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _patternAlerts(), _readiness(), _heatmap()]),
         _tab([_breakdown(), _trend(), _punctuality(), _absenceLeave(), _workHours(), _overtimeCard()]),
         AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel),
       ]);

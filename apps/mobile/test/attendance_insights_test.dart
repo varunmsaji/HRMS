@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_insights.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_totals.dart';
+import 'package:hrms_mobile/features/attendance/domain/pattern_alerts.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_insights_screen.dart';
 
 import 'support/fake_api_client.dart';
@@ -24,6 +26,7 @@ AttendanceDay day(String id, String emp, String date, String status, {String? fi
     );
 
 void main() {
+  patternTests();
   group('insights logic', () {
     test('ranges resolve like the web presets', () {
       expect(resolveInsightsRange(InsightsRange.week, '2026-10-14'), (from: '2026-10-12', to: '2026-10-14'));
@@ -118,6 +121,8 @@ void main() {
     await tester.pumpAndSettle();
     // Today.
     expect(find.text('Needs attention'), findsOneWidget);
+    expect(find.text('Patterns to look at'), findsOneWidget);
+    expect(find.textContaining('No patterns found'), findsOneWidget);
     expect(find.text('Corrections pending'), findsOneWidget);
     expect(find.text('Attendance heatmap'), findsOneWidget);
     // Trends.
@@ -139,9 +144,19 @@ void main() {
   });
 }
 
+const _thresholds = {'window_days': 30, 'weekday_window_days': 56, 'late_days': 5, 'absent_days': 4, 'incomplete_days': 3, 'weekday_absences': 3};
+
 class _Repo implements AttendanceRepository {
-  _Repo(this.days);
+  _Repo(this.days, {this.patterns, this.patternsForbidden = false});
   final List<AttendanceDay> days;
+  final Map<String, dynamic>? patterns;
+  final bool patternsForbidden;
+
+  @override
+  Future<PatternAlerts> patternAlerts({String? asOf}) async {
+    if (patternsForbidden) throw ApiError(status: 403, code: 'FORBIDDEN', message: 'no');
+    return PatternAlerts.fromJson(patterns ?? {'as_of': asOf ?? '2026-10-14', 'thresholds': _thresholds, 'alerts': []});
+  }
 
   @override
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => days;
@@ -152,4 +167,48 @@ class _Repo implements AttendanceRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<void> _pumpToday(WidgetTester tester, _Repo repo) async {
+  tester.view.physicalSize = const Size(800, 6000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final api = FakeApiClient(lists: {
+    '/employees': [
+      {'id': 'e1', 'first_name': 'Asha', 'last_name': 'Rao', 'employee_code': 'E-1'}
+    ],
+    '/regularizations': const [],
+    '/attendance-periods': const [],
+    '/overtime': const [],
+  });
+  await tester.pumpWidget(ProviderScope(
+    overrides: [attendanceRepositoryProvider.overrideWithValue(repo), apiClientProvider.overrideWithValue(api), fakeAuth(const [])],
+    child: const MaterialApp(home: AttendanceInsightsScreen()),
+  ));
+  await tester.pumpAndSettle();
+}
+
+void patternTests() {
+  testWidgets('pattern alerts name the person, the pattern in words and the days behind it', (tester) async {
+    await _pumpToday(
+      tester,
+      _Repo(const [], patterns: {
+        'as_of': '2026-10-14',
+        'thresholds': _thresholds,
+        'alerts': [
+          {'employee_id': 'e1', 'kind': 'repeat_late', 'count': 7, 'dates': ['2026-10-12', '2026-10-09'], 'weekday': null},
+          {'employee_id': 'e1', 'kind': 'repeat_absent_weekday', 'count': 3, 'dates': ['2026-10-05'], 'weekday': 0},
+        ],
+      }),
+    );
+    expect(find.textContaining('Often late: late on 7 days in the last 30'), findsOneWidget);
+    expect(find.textContaining('and 5 earlier'), findsOneWidget);
+    expect(find.textContaining('absent on 3 Mondays in the last 56 days'), findsOneWidget);
+  });
+
+  testWidgets('the card is left out when the caller may not see pattern alerts', (tester) async {
+    await _pumpToday(tester, _Repo(const [], patternsForbidden: true));
+    expect(find.text('Patterns to look at'), findsNothing);
+    expect(find.text('Needs attention'), findsOneWidget);
+  });
 }

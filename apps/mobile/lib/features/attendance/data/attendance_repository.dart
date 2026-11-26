@@ -7,6 +7,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 import '../domain/attendance_totals.dart';
+import '../domain/pattern_alerts.dart';
 import '../domain/day_timeline.dart';
 import '../domain/mark_day.dart';
 import '../domain/punch_location.dart';
@@ -388,6 +389,13 @@ class AttendanceRepository {
   Future<AttendanceTotals> attendanceSummary({required String dateFrom, required String dateTo}) => _client.get(
         '/attendance/summary?${Uri(queryParameters: {'date_from': dateFrom, 'date_to': dateTo}).query}',
         parse: (d) => AttendanceTotals.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// Who keeps being late or absent, looked at up to [asOf] (`YYYY-MM-DD`; the server defaults to
+  /// today). The server limits it to the people the caller may see.
+  Future<PatternAlerts> patternAlerts({String? asOf}) => _client.get(
+        '/attendance/pattern-alerts${asOf == null ? '' : '?${Uri(queryParameters: {'as_of': asOf}).query}'}',
+        parse: (d) => PatternAlerts.fromJson(d as Map<String, dynamic>),
       );
 
   /// Pages through every result (capped at 50 pages) so day-level summaries are not truncated.
