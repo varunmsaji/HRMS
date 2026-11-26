@@ -11,10 +11,16 @@ import { apiClient } from "@/lib/api/client";
 import type { SetupChecklist } from "@/lib/company/setup-checklist";
 import { cn } from "@/lib/utils";
 
-/** Loads the checklist. `null` until it arrives or when the user may not see it, so callers
- * render nothing rather than an error for something that is only a nudge. */
-export function useSetupChecklist({ enabled = true }: { enabled?: boolean } = {}): SetupChecklist | null {
-  const [checklist, setChecklist] = useState<SetupChecklist | null>(null);
+/** Loads the checklist. `checklist` is `null` while it loads or when the user may not see it;
+ * `loading` tells those two apart for screens that must say something when it is missing. */
+export function useSetupChecklistState({ enabled = true }: { enabled?: boolean } = {}): {
+  checklist: SetupChecklist | null;
+  loading: boolean;
+} {
+  const [state, setState] = useState<{ checklist: SetupChecklist | null; loading: boolean }>({
+    checklist: null,
+    loading: enabled,
+  });
   useEffect(() => {
     if (!enabled) return;
     let current = true;
@@ -22,16 +28,23 @@ export function useSetupChecklist({ enabled = true }: { enabled?: boolean } = {}
       .get<SetupChecklist>("/companies/current/setup-checklist")
       .then((data) => {
         // Anything that is not a checklist is treated as unavailable, never rendered half-way.
-        if (current) setChecklist(data && Array.isArray(data.items) ? data : null);
+        if (current)
+          setState({ checklist: data && Array.isArray(data.items) ? data : null, loading: false });
       })
       .catch(() => {
-        if (current) setChecklist(null);
+        if (current) setState({ checklist: null, loading: false });
       });
     return () => {
       current = false;
     };
   }, [enabled]);
-  return checklist;
+  return state;
+}
+
+/** Same as `useSetupChecklistState`, for callers that render nothing rather than an error for
+ * something that is only a nudge. */
+export function useSetupChecklist({ enabled = true }: { enabled?: boolean } = {}): SetupChecklist | null {
+  return useSetupChecklistState({ enabled }).checklist;
 }
 
 /** A single line on the Settings page: how far along, and the next thing to do. Hidden once the
@@ -78,8 +91,7 @@ export function SetupChecklistBanner({
 }
 
 /** The full list, on the Setup page: essentials first, then the optional ones. */
-export function SetupChecklistList() {
-  const checklist = useSetupChecklist();
+export function SetupChecklistList({ checklist }: { checklist: SetupChecklist | null }) {
   if (!checklist) return null;
   const essentials = checklist.items.filter((item) => item.required);
   const optional = checklist.items.filter((item) => !item.required);

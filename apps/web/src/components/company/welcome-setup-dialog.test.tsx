@@ -72,6 +72,17 @@ describe("WelcomeSetupDialog", () => {
     expect(screen.queryByText("Welcome to Technobeala")).not.toBeInTheDocument();
   });
 
+  it("remembers that setup was already done, so it does not ask again on every visit", async () => {
+    mockData({ profileDone: true, legalEntities: 1, branches: 2 });
+    const first = render(<WelcomeSetupDialog companyName="Technobeala" />);
+    await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(3));
+    first.unmount();
+    mockedGet.mockClear();
+    render(<WelcomeSetupDialog companyName="Technobeala" />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+
   it("stays away for people who cannot manage the company, and while approval is pending", async () => {
     mockData({ profileDone: false, legalEntities: 0, branches: 0 });
     mockUser = { ...admin, permissions: ["EMPLOYEE.VIEW"] };

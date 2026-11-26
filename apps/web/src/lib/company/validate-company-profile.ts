@@ -1,4 +1,5 @@
 import type { CompanyProfile } from "@/lib/company/types";
+import { isValidEmail } from "@/lib/validation";
 
 export interface CompanyProfileFormValues {
   name: string;
@@ -175,6 +176,26 @@ export function validateCompanyProfileForm(
   const errors: CompanyProfileFormErrors = {};
 
   if (!values.name.trim()) errors.name = "Company name is required.";
+
+  const email = values.contactEmail.trim();
+  if (email && !isValidEmail(email)) errors.contactEmail = "Enter a valid email address.";
+
+  for (const [key, value] of [
+    ["countryCode", values.countryCode],
+    ["addressCountryCode", values.addressCountryCode],
+  ] as const) {
+    if (value.trim() && !/^[A-Za-z]{2}$/.test(value.trim())) {
+      errors[key] = "Use a 2-letter country code, for example IN.";
+    }
+  }
+
+  const language = values.languageCode.trim();
+  if (language.length < 2 || language.length > 10) {
+    errors.languageCode = "Use a language code such as en-IN.";
+  }
+  const dateFormat = values.dateFormat.trim();
+  if (!dateFormat) errors.dateFormat = "Enter a date format, for example DD/MM/YYYY.";
+  else if (dateFormat.length > 20) errors.dateFormat = "Must be 20 characters or fewer.";
 
   const fiscalMonth = Number(values.fiscalYearStartMonth);
   if (!Number.isInteger(fiscalMonth) || fiscalMonth < 1 || fiscalMonth > 12) {

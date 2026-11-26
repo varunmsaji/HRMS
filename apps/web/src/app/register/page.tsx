@@ -287,6 +287,12 @@ export default function RegisterPage() {
           </FormField>
         </fieldset>
 
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-foreground-secondary">
+          New workspaces are reviewed before changes are switched on. You can sign in and look
+          around straight away, and we will email you at your work email once your company is
+          approved.
+        </p>
+
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? "Creating your workspace…" : "Create workspace"}
         </Button>

@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 const MESSAGES: Record<string, { title: string; body: string }> = {
   PENDING_APPROVAL: {
     title: "Your company is awaiting approval",
-    body: "You can look around, but changes are disabled until a platform administrator approves your company.",
+    body: "You can look around, but changes are disabled until a platform administrator approves your company. We will email the admin address as soon as that happens, so there is nothing you need to do in the meantime.",
   },
   SUSPENDED: {
     title: "Your company is suspended",

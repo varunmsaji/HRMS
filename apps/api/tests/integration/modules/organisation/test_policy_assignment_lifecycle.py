@@ -556,7 +556,7 @@ async def test_setup_checklist_follows_the_real_state(client: AsyncClient) -> No
             return {"by_code": {i["code"]: i for i in data["items"]}, **data}
 
         fresh = await items()
-        assert fresh["required_total"] == 3 and fresh["required_complete"] == 0
+        assert fresh["required_total"] == 4 and fresh["required_complete"] == 0
         assert fresh["next_code"] == "SHIFT"
         assert not any(i["is_complete"] for i in fresh["items"])
 

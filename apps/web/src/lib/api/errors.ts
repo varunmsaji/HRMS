@@ -72,6 +72,19 @@ export function timeoutError(requestId: string | null, isWrite: boolean): Networ
  * Matching on the last dot-segment handles both without the caller needing to know which path
  * produced the error.
  */
+/**
+ * Like `getFieldError`, but matches the *tail* of the dotted path, so `contact.email` and
+ * `address.country_code` can be told apart from a top-level `country_code`. A detail whose path
+ * is `body.contact.email` matches `("contact", "email")`.
+ */
+export function getNestedFieldError(details: ErrorDetail[], ...path: string[]): string | undefined {
+  const wanted = path.join(".");
+  return details.find((detail) => {
+    if (!detail.field) return false;
+    return detail.field === wanted || detail.field.endsWith(`.${wanted}`);
+  })?.message;
+}
+
 export function getFieldError(details: ErrorDetail[], field: string): string | undefined {
   return details.find((detail) => {
     if (!detail.field) return false;
