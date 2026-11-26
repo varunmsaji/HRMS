@@ -573,6 +573,11 @@ class AttendanceRepository {
   /// One of the five photos under review (`front`, `left`, `right`, `up`, `down`), fetched through
   /// the API (auth + no-store) — they never have a URL of their own. Enrollments from before every
   /// angle was kept have only the front; the other angles answer 404.
+  /// One employee's attendance statement for [month] (`YYYY-MM`) as `pdf`, `xlsx` or `csv`
+  /// (web `statementPath`). The server only answers for people the caller may see.
+  Future<DownloadedFile> downloadStatement(String employeeId, String month, {String format = 'pdf'}) =>
+      _client.download('/attendance/employees/$employeeId/statement?month=$month&format=$format');
+
   Future<DownloadedFile> downloadFaceReviewPhoto(String employeeId, {String angle = 'front'}) =>
       _client.download(angle == 'front' ? '${_face(employeeId)}/review-photo' : '${_face(employeeId)}/review-photo?angle=$angle');
 
