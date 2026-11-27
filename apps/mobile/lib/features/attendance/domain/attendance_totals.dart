@@ -215,6 +215,7 @@ class AttendanceTotals {
     required this.weekdayAbsence,
     required this.byDepartment,
     required this.byBranch,
+    this.calculatedAt,
   });
 
   factory AttendanceTotals.fromJson(Map<String, dynamic> j) => AttendanceTotals(
@@ -233,7 +234,12 @@ class AttendanceTotals {
         weekdayAbsence: [for (final w in _list(j['weekday_absence'])) WeekdayStat.fromJson(w)],
         byDepartment: [for (final g in _list(j['by_department'])) GroupStat.fromJson(g)],
         byBranch: [for (final g in _list(j['by_branch'])) GroupStat.fromJson(g)],
+        calculatedAt: j['calculated_at'] as String?,
       );
+
+  /// When the focus day's rows were last calculated (not when the app fetched them); null when
+  /// that day has no rows yet.
+  final String? calculatedAt;
 
   final String dateFrom;
 

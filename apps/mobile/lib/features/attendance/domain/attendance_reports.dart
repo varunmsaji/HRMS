@@ -75,6 +75,9 @@ class EmployeeTally {
   int absent = 0;
   int leave = 0;
   int half = 0;
+  int off = 0;
+  int holiday = 0;
+  int incomplete = 0;
   int worked = 0;
   int scheduled = 0;
 
@@ -91,6 +94,10 @@ List<EmployeeTally> tallyByEmployee(List<AttendanceDay> rows) {
     if (b == 'ABSENT') e.absent += 1;
     if (b == 'LEAVE') e.leave += 1;
     if (b == 'HALF_DAY') e.half += 1;
+    // The same three columns as the server's present / absent export (`report_export.py`).
+    if (b == 'WEEKLY_OFF') e.off += 1;
+    if (b == 'HOLIDAY') e.holiday += 1;
+    if (b == 'INCOMPLETE') e.incomplete += 1;
     if (d.actualFirstIn != null) {
       e.days += 1;
       e.worked += workedMinutes(d);
@@ -115,10 +122,25 @@ const reportBasis = {
   'payroll': 'Payroll days from the period summary: a half day is split into paid and unpaid halves (0.5 each), so these figures can differ from the whole-day reports.',
 };
 
+/// Why an on-screen report and its export can differ (web `REPORT_SOURCE_NOTE`).
+const reportSourceNote =
+    'The table is built from the days loaded for this range. Export period builds the file on the server from every record in the period it is given, so it can hold more rows.';
+
 /// Minutes on an overtime record that are still waiting for a decision. A rejected record's minutes
 /// are neither approved nor pending.
 int overtimePendingMinutes(Map<String, dynamic> record) =>
     record['status'] == 'PENDING' ? ((_int(record, 'minutes_detected') - _int(record, 'minutes_approved')).clamp(0, 1 << 31)) : 0;
+
+/// Found, approved and pending minutes over [records] (web `overtimeTotals`).
+({int found, int approved, int pending}) overtimeTotals(List<Map<String, dynamic>> records) {
+  var found = 0, approved = 0, pending = 0;
+  for (final r in records) {
+    found += _int(r, 'minutes_detected');
+    approved += _int(r, 'minutes_approved');
+    pending += overtimePendingMinutes(r);
+  }
+  return (found: found, approved: approved, pending: pending);
+}
 
 /// The five reports built from the range's days and overtime records. The payroll report reads a
 /// period summary and is built by [payrollReport] once that has loaded.
@@ -159,6 +181,9 @@ List<ReportDef> buildReports({required List<AttendanceDay> days, required List<R
         ReportColumn('half', 'Half day', (r) => '${(r as EmployeeTally).half}', (r) => (r as EmployeeTally).half, numeric: true),
         ReportColumn('absent', 'Absent', (r) => '${(r as EmployeeTally).absent}', (r) => (r as EmployeeTally).absent, numeric: true),
         ReportColumn('leave', 'Leave', (r) => '${(r as EmployeeTally).leave}', (r) => (r as EmployeeTally).leave, numeric: true),
+        ReportColumn('off', 'Weekly off', (r) => '${(r as EmployeeTally).off}', (r) => (r as EmployeeTally).off, numeric: true),
+        ReportColumn('holiday', 'Holiday', (r) => '${(r as EmployeeTally).holiday}', (r) => (r as EmployeeTally).holiday, numeric: true),
+        ReportColumn('incomplete', 'Incomplete', (r) => '${(r as EmployeeTally).incomplete}', (r) => (r as EmployeeTally).incomplete, numeric: true),
       ],
     ),
     ReportDef(

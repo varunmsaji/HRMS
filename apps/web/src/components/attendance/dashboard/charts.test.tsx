@@ -76,7 +76,7 @@ describe("TrendChart", () => {
   it("maps the daily counts to the chosen metric and switches with the selector", async () => {
     const user = userEvent.setup();
     render(<TrendChart days={days} range={range} />);
-    const table = () => screen.getByRole("table", { name: /present %, daily/i });
+    const table = () => screen.getByRole("table", { name: /present % \(full days\), daily/i });
     expect(within(table()).getAllByText("50.0%").length).toBeGreaterThan(0);
 
     await user.selectOptions(screen.getByLabelText("Trend metric"), "absent_pct");
@@ -119,7 +119,7 @@ describe("TrendChart", () => {
     expect(screen.queryByRole("group", { name: "Granularity" })).not.toBeInTheDocument();
     rerender(<TrendChart days={days} range={range} />);
     await user.click(screen.getByRole("button", { name: "weekly" }));
-    expect(screen.getByRole("img", { name: /present %, weekly/i })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /present % \(full days\), weekly/i })).toBeInTheDocument();
     rerender(<TrendChart days={[]} range={range} />);
     expect(screen.getByText(/no attendance recorded in this range to chart/i)).toBeInTheDocument();
   });

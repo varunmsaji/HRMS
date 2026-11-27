@@ -72,7 +72,7 @@ int workedMinutes(AttendanceDay d) => d.workedMinutes ?? _int(d, 'worked_minutes
 enum TrendMetric { presentPct, absentPct, leavePct, latePct, remotePct, avgHours }
 
 const trendMetricLabels = {
-  TrendMetric.presentPct: 'Present %',
+  TrendMetric.presentPct: 'Present % (full days)',
   TrendMetric.absentPct: 'Absent %',
   TrendMetric.leavePct: 'Leave %',
   TrendMetric.latePct: 'Late %',

@@ -1,3 +1,5 @@
+import { bucketOf } from "@/lib/attendance/dashboard";
+import type { AttendanceDay } from "@/lib/attendance/types";
 import type { OvertimeRecord } from "@/lib/overtime/types";
 
 /** What each report counts, in one sentence (R-F01). Two reports can show different numbers for
@@ -35,4 +37,44 @@ export function overtimeTotals(records: readonly OvertimeRecord[]): OvertimeTota
     }),
     { found: 0, approved: 0, pending: 0 },
   );
+}
+
+/** One employee's whole-day counts over the loaded days (the Present / absent and Work hours
+ * reports). Mobile's `tallyByEmployee` and the server's `_tallies` count the same way; the shared
+ * fixture `apps/api/tests/fixtures/attendance_metrics_parity.json` holds all three to it. */
+export interface EmployeeTally {
+  id: string;
+  present: number;
+  half: number;
+  absent: number;
+  leave: number;
+  off: number;
+  holiday: number;
+  incomplete: number;
+  /** Days with a first punch: the base for hours. */
+  days: number;
+  worked: number;
+  scheduled: number;
+}
+
+export function tallyByEmployee(rows: readonly AttendanceDay[]): EmployeeTally[] {
+  const map = new Map<string, EmployeeTally>();
+  for (const day of rows) {
+    const e = map.get(day.employee_id) ?? { id: day.employee_id, present: 0, half: 0, absent: 0, leave: 0, off: 0, holiday: 0, incomplete: 0, days: 0, worked: 0, scheduled: 0 };
+    const bucket = bucketOf(day);
+    if (bucket === "PRESENT" || bucket === "REMOTE" || bucket === "ON_DUTY") e.present += 1;
+    if (bucket === "HALF_DAY") e.half += 1;
+    if (bucket === "ABSENT") e.absent += 1;
+    if (bucket === "LEAVE") e.leave += 1;
+    if (bucket === "WEEKLY_OFF") e.off += 1;
+    if (bucket === "HOLIDAY") e.holiday += 1;
+    if (bucket === "INCOMPLETE") e.incomplete += 1;
+    if (day.actual_first_in) {
+      e.days += 1;
+      e.worked += day.worked_minutes;
+      e.scheduled += day.scheduled_minutes ?? 0;
+    }
+    map.set(day.employee_id, e);
+  }
+  return Array.from(map.values());
 }

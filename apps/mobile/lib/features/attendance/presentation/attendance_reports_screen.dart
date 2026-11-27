@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
+import '../../../core/time.dart' show formatMinutes;
 import '../../../core/widgets/ui.dart';
 import '../data/attendance_repository.dart';
 import '../domain/attendance_pulse.dart';
@@ -29,7 +30,16 @@ class AttendanceReportsPanel extends ConsumerStatefulWidget {
     required this.rangeLabel,
     this.exportFrom,
     this.exportTo,
+    this.partialNote,
+    this.showPayroll = true,
   });
+
+  /// Shown above the reports when [days] is not the whole range.
+  final Widget? partialNote;
+
+  /// Whether the payroll attendance report is offered. Web shows it in the organisation view
+  /// only; anyone else would get a 403 from the period summary.
+  final bool showPayroll;
 
   /// The period an export opens on (`YYYY-MM-DD`); null leaves the export button out.
   final String? exportFrom;
@@ -149,6 +159,24 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
     );
   }
 
+  /// Web's `OvertimeTotalsLine`, above the overtime report.
+  Widget _overtimeTotals() {
+    final t = overtimeTotals(widget.overtime);
+    const bold = TextStyle(fontWeight: FontWeight.w600);
+    return Padding(
+      key: const ValueKey('overtime-totals'),
+      padding: const EdgeInsets.only(top: 8),
+      child: Text.rich(TextSpan(children: [
+        const TextSpan(text: 'Found ', style: bold),
+        TextSpan(text: '${formatMinutes(t.found)} · '),
+        const TextSpan(text: 'Approved ', style: bold),
+        TextSpan(text: '${formatMinutes(t.approved)} · '),
+        const TextSpan(text: 'Pending ', style: bold),
+        TextSpan(text: formatMinutes(t.pending)),
+      ])),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -157,12 +185,14 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
     final view = reportView(def, query: _search.text, sortKey: _sortKey, ascending: _ascending, page: _page);
     final sortKey = _sortKey ?? def.columns.first.key;
     return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [
+        if (widget.partialNote != null) widget.partialNote!,
         Text('${widget.rangeLabel}. Read-only views of existing attendance data.', style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 10),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(children: [
             for (final e in reportLabels.entries)
+              if (e.key != 'payroll' || widget.showPayroll)
               Padding(padding: const EdgeInsets.only(right: 6), child: ChoiceChip(label: Text(e.value), selected: _report == e.key, onSelected: (_) => _choose(e.key))),
           ]),
         ),
@@ -177,6 +207,8 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
               child: const Text('Open period'),
             ),
           ]),
+        if (widget.exportFrom != null && widget.exportTo != null && serverReports.containsKey(_report))
+          Text(reportSourceNote, key: const ValueKey('report-source-note'), style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
         if (widget.exportFrom != null && widget.exportTo != null && serverReports.containsKey(_report))
           Align(
             alignment: Alignment.centerLeft,
@@ -195,6 +227,7 @@ class _AttendanceReportsPanelState extends ConsumerState<AttendanceReportsPanel>
               ),
             ),
           ),
+        if (_report == 'overtime' && widget.overtimeError == null && widget.overtime.isNotEmpty) _overtimeTotals(),
         if (blocked != null)
           blocked
         else ...[

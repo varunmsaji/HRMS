@@ -150,6 +150,21 @@ class AttendanceDay {
       );
 }
 
+/// The attendance days that were loaded for a range, and how many the server holds.
+class DaysCoverage {
+  const DaysCoverage({required this.days, required this.total, required this.truncated});
+
+  final List<AttendanceDay> days;
+
+  /// Every day the server holds for the range, loaded or not.
+  final int total;
+
+  /// True when the page ceiling stopped the load before the last page.
+  final bool truncated;
+
+  int get loaded => days.length;
+}
+
 /// `PunchRead`.
 class Punch {
   Punch({required this.id, required this.employeeId, required this.punchTime, required this.direction, required this.source, this.reference});
@@ -398,13 +413,27 @@ class AttendanceRepository {
         parse: (d) => PatternAlerts.fromJson(d as Map<String, dynamic>),
       );
 
-  /// Pages through every result (capped at 50 pages) so day-level summaries are not truncated.
-  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {
+  /// Every attendance day in the range, as [listAttendanceDaysCovered] loads them.
+  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async =>
+      (await listAttendanceDaysCovered(employeeId: employeeId, dateFrom: dateFrom, dateTo: dateTo, attendanceStatus: attendanceStatus)).days;
+
+  /// The API's largest page for `/attendance/days` (`BOUNDED_MAX_PAGE_SIZE`).
+  static const daysPageSize = 500;
+
+  /// 20 pages of [daysPageSize] is 10,000 days, the same ceiling as web (`use-dashboard-data.ts`).
+  static const daysMaxPages = 20;
+
+  /// Pages through the range up to [daysMaxPages]. The list is newest first, so when it stops
+  /// early the oldest days are the ones missing; [DaysCoverage.truncated] says so, and the screen
+  /// must say it too.
+  Future<DaysCoverage> listAttendanceDaysCovered({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {
     final all = <AttendanceDay>[];
-    for (var page = 1; page <= 50; page++) {
+    int? total;
+    var truncated = false;
+    for (var page = 1; page <= daysMaxPages; page++) {
       final env = await _client.getList(
         '/attendance/days',
-        query: PageQuery(page: page, perPage: 100),
+        query: PageQuery(page: page, perPage: daysPageSize),
         filters: {
           if (employeeId != null) 'employee_id': employeeId,
           'date_from': dateFrom,
@@ -414,9 +443,11 @@ class AttendanceRepository {
         parseItem: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>),
       );
       all.addAll(env.data);
+      total ??= env.pagination?.total;
       if (env.pagination == null || !env.pagination!.hasNext) break;
+      if (page == daysMaxPages) truncated = true;
     }
-    return all;
+    return DaysCoverage(days: all, total: total ?? all.length, truncated: truncated);
   }
 
   /// [idempotencyKey]: pass the same key when retrying after a failure with no response

@@ -100,13 +100,32 @@ void main() {
   setUpAll(primeThemes);
 
   group('history is never silently truncated by the API page size', () {
-    test('days: follows every page (250 rows at 100 per page)', () async {
-      final rows = [for (var i = 0; i < 250; i++) _row('d$i', '2026-01-01', 'PRESENT')];
+    test('days: follows every page (1,250 rows at 500 per page, the API maximum)', () async {
+      final rows = [for (var i = 0; i < 1250; i++) _row('d$i', '2026-01-01', 'PRESENT')];
       final client = _PagedClient(rows);
-      final days = await AttendanceRepository(client).listAttendanceDays(employeeId: 'e-1', dateFrom: '2026-01-01', dateTo: '2026-12-31');
-      expect(days, hasLength(250));
+      final covered = await AttendanceRepository(client).listAttendanceDaysCovered(employeeId: 'e-1', dateFrom: '2026-01-01', dateTo: '2026-12-31');
+      expect(covered.days, hasLength(1250));
+      expect(covered.total, 1250);
+      expect(covered.truncated, isFalse);
       expect(client.requests.map((r) => r.page), [1, 2, 3]);
-      expect(client.requests.every((r) => r.perPage == 100), isTrue);
+      expect(client.requests.every((r) => r.perPage == 500), isTrue);
+    });
+
+    test('days: stops at 10,000 (as web does) and says it is partial', () async {
+      final rows = [for (var i = 0; i < 10200; i++) _row('d$i', '2026-01-01', 'PRESENT')];
+      final client = _PagedClient(rows);
+      final covered = await AttendanceRepository(client).listAttendanceDaysCovered(dateFrom: 'a', dateTo: 'b');
+      expect(covered.loaded, 10000);
+      expect(covered.total, 10200);
+      expect(covered.truncated, isTrue);
+      expect(client.requests, hasLength(20));
+    });
+
+    test('days: exactly 10,000 rows is complete, not partial', () async {
+      final rows = [for (var i = 0; i < 10000; i++) _row('d$i', '2026-01-01', 'PRESENT')];
+      final covered = await AttendanceRepository(_PagedClient(rows)).listAttendanceDaysCovered(dateFrom: 'a', dateTo: 'b');
+      expect(covered.loaded, 10000);
+      expect(covered.truncated, isFalse);
     });
 
     test('days: still complete when the server caps pages below what was asked', () async {

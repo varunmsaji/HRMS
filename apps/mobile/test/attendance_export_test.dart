@@ -27,6 +27,12 @@ class _Repo implements AttendanceRepository {
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => const [];
 
   @override
+  Future<DaysCoverage> listAttendanceDaysCovered({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {
+    final all = await listAttendanceDays(employeeId: employeeId, dateFrom: dateFrom, dateTo: dateTo, attendanceStatus: attendanceStatus);
+    return DaysCoverage(days: all, total: all.length, truncated: false);
+  }
+
+  @override
   Future<AttendanceTotals> attendanceSummary({required String dateFrom, required String dateTo}) async => AttendanceTotals.fromJson(totalsJson(dateTo, dateFrom));
 
   @override

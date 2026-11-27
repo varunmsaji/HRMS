@@ -671,7 +671,7 @@ export const TREND_METRICS = [
 export type TrendMetric = (typeof TREND_METRICS)[number];
 
 export const TREND_METRIC_LABELS: Record<TrendMetric, string> = {
-  present_pct: "Present %",
+  present_pct: "Present % (full days)",
   absent_pct: "Absent %",
   leave_pct: "Leave %",
   late_pct: "Late %",

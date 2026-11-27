@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
+import '../../../core/auth/permissions.dart' show attendanceViewAll;
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart' show Choice;
 import '../../../core/providers.dart';
@@ -70,6 +71,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   String? _error;
   /// Every day in the fetched window (the range widened to at least 14 days).
   List<AttendanceDay> _days = const [];
+  /// Null until loaded; truncated when the window holds more days than the page ceiling.
+  DaysCoverage? _coverage;
   Map<String, String> _names = const {};
   _Loaded<List<_Rec>> _overtime = _Loaded.ok(const []);
   _Loaded<List<_Rec>> _regularizations = _Loaded.ok(const []);
@@ -82,6 +85,9 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   /// People with a repeating pattern, up to the end of the range. Null when the caller may not see
   /// it (the card is then left out); an error shows on the card only.
   _Loaded<PatternAlerts>? _patterns;
+
+  /// The organisation view. Web offers the payroll report only there (`showPayroll`).
+  bool get _canViewAll => (ref.read(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceViewAll);
 
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
   String get _today => businessToday(_zone);
@@ -124,7 +130,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     final w = _window;
     try {
       final repo = ref.read(attendanceRepositoryProvider);
-      final daysFuture = repo.listAttendanceDays(dateFrom: w.from, dateTo: w.to);
+      final daysFuture = repo.listAttendanceDaysCovered(dateFrom: w.from, dateTo: w.to);
       final totalsFuture = _loaded(() => repo.attendanceSummary(dateFrom: w.from, dateTo: w.to));
       final patternsFuture = () async {
         try {
@@ -146,7 +152,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       final periods = await periodFuture;
       if (!mounted) return;
       setState(() {
-        _days = days;
+        _days = days.days;
+        _coverage = days;
         _names = names;
         _overtime = ot;
         _regularizations = regs;
@@ -610,6 +617,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       'Today',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _muted('$total ${total == 1 ? 'employee' : 'employees'} · ${k.noRecord > 0 ? '${k.noRecord} with no record yet for today' : 'employed today'}'),
+        if (t.calculatedAt != null)
+          _muted(t.focusDate == _today ? 'Last calculated at ${formatClockTime(t.calculatedAt, _zone)}.' : 'Last calculated ${formatDateTime(t.calculatedAt, _zone)}.'),
         const SizedBox(height: 10),
         LayoutBuilder(builder: (context, box) {
           final w = (box.maxWidth - 8) / 2;
@@ -742,10 +751,12 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       subtitle: subtitle,
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 8, runSpacing: 8, children: [
-          _stat('On time', formatPct(s.onTimeRate), '${s.onTime} of ${s.checkedIn} check-ins'),
-          _stat('Late arrivals', '${s.late}', '${formatPct(s.lateRate)} of check-ins'),
+          _stat('On time', formatPct(s.onTimeRate), '${s.onTime} of ${s.checkedIn} completed days'),
+          _stat('Late arrivals', '${s.late}', '${formatPct(s.lateRate)} of completed days'),
           _stat('Average lateness', s.avgLateMinutes == null ? '—' : '${s.avgLateMinutes!.round()} min', 'On late days only'),
         ]),
+        const SizedBox(height: 6),
+        _muted('A completed day has both an IN and an OUT punch. A day still open is not judged yet, so these figures can differ from the Late tile, which counts every check-in.'),
         if (s.late > 0) ...[
           const SizedBox(height: 12),
           Text('How late', style: Theme.of(context).textTheme.labelLarge),
@@ -787,7 +798,21 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
 
  // ---- tabs ----------------------------------------------------------------------------------
 
-  Widget _tab(List<Widget> children) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: children));
+  Widget _tab(List<Widget> children) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: [if (_partialNote() case final note?) note, ...children]));
+
+  /// Web's partial-data note (`attendance/page.tsx`): the totals are the server's and complete,
+  /// the per-person panels only cover the days that were loaded.
+  Widget? _partialNote() {
+    final c = _coverage;
+    if (c == null || !c.truncated) return null;
+    return Padding(
+      key: const ValueKey('days-truncated'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _muted('Totals and charts count every attendance record, but the employee lists, heatmap and reports show the most recent ${_count(c.loaded)} of ${_count(c.total)} in this range. Choose a shorter range to list them all.'),
+    );
+  }
+
+  static String _count(int n) => n.toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
 
   @override
   Widget build(BuildContext context) {
@@ -801,7 +826,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       body = TabBarView(physics: const NeverScrollableScrollPhysics(), children: [
         _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _patternAlerts(), _readiness(), _heatmap()]),
         _tab([_breakdown(), _trend(), _punctuality(), _absenceLeave(), _workHours(), _overtimeCard()]),
-        AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel, exportFrom: _bounds.from, exportTo: _bounds.to),
+        AttendanceReportsPanel(partialNote: _partialNote(), showPayroll: _canViewAll, days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel, exportFrom: _bounds.from, exportTo: _bounds.to),
       ]);
     }
     return DefaultTabController(

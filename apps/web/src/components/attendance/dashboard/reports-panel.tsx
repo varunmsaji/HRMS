@@ -35,7 +35,7 @@ import {
 } from "@/lib/attendance/export";
 import { formatClockTime, formatMinutes } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
-import { overtimePending, overtimeTotals, REPORT_BASIS } from "@/lib/attendance/report-basis";
+import { overtimePending, overtimeTotals, REPORT_BASIS, tallyByEmployee } from "@/lib/attendance/report-basis";
 import { OVERTIME_DAY_CLASS_LABELS, OVERTIME_STATUS_LABELS, type OvertimeDayClass, type OvertimeRecord } from "@/lib/overtime/types";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +62,8 @@ function DayLink({ id, label, children }: { id: string; label: string; children:
 interface Column<T> {
   key: string;
   label: string;
+  /** The CSV header when it differs from `label`: a column shown as "8h 30m" exports raw minutes. */
+  csvLabel?: string;
   render: (row: T) => ReactNode;
   sort: (row: T) => string | number;
   /** What the CSV holds when it differs from `sort` (a "—" cell, a clock time, a null). */
@@ -103,7 +105,7 @@ function ReportTable<T>({ rows, columns, rowKey, searchText, empty, exportName }
     downloadCsv(
       exportName,
       toCsv(
-        columns.map((c) => c.label),
+        columns.map((c) => c.csvLabel ?? c.label),
         view.map((row) => columns.map((c) => (c.csv ? c.csv(row) : c.sort(row)))),
       ),
     );
@@ -200,6 +202,10 @@ function OvertimeTotalsLine({ records }: { records: OvertimeRecord[] }) {
     </p>
   );
 }
+
+/** Why an on-screen report and its export can differ (the same words on mobile). */
+const REPORT_SOURCE_NOTE =
+  "The table is built from the days loaded for this range. Export period builds the file on the server from every record in the period it is given, so it can hold more rows.";
 
 const SERVER_REPORTS: Partial<Record<ReportKey, ServerReport>> = {
   daily: "daily",
@@ -331,7 +337,7 @@ function PayrollReport({ periods, employeesById, today }: Pick<ReportsPanelProps
           { key: "absent", label: "Absent", align: "right", render: (r) => r.absent_days, sort: (r) => Number(r.absent_days) },
           { key: "leave", label: "Leave", align: "right", render: (r) => r.leave_days, sort: (r) => Number(r.leave_days) },
           { key: "lop", label: "LOP", align: "right", render: (r) => r.lop_days, sort: (r) => Number(r.lop_days) },
-          { key: "ot", label: "OT (min)", align: "right", render: (r) => formatMinutes(r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night), sort: (r) => r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night, csv: (r) => r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night },
+          { key: "ot", label: "OT", csvLabel: "OT (min)", align: "right", render: (r) => formatMinutes(r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night), sort: (r) => r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night, csv: (r) => r.ot_minutes_normal + r.ot_minutes_weekly_off + r.ot_minutes_holiday + r.ot_minutes_night },
         ]}
       />
     </div>
@@ -346,24 +352,7 @@ export function ReportsPanel(props: ReportsPanelProps) {
   const [report, setReport] = useState<ReportKey>("daily");
   const name = (id: string) => employeeName(employeesById.get(id), id);
 
-  const perEmployee = useMemo(() => {
-    const map = new Map<string, { id: string; present: number; absent: number; leave: number; half: number; worked: number; scheduled: number; days: number }>();
-    for (const day of rows) {
-      const e = map.get(day.employee_id) ?? { id: day.employee_id, present: 0, absent: 0, leave: 0, half: 0, worked: 0, scheduled: 0, days: 0 };
-      const bucket = bucketOf(day);
-      if (bucket === "PRESENT" || bucket === "REMOTE" || bucket === "ON_DUTY") e.present += 1;
-      if (bucket === "ABSENT") e.absent += 1;
-      if (bucket === "LEAVE") e.leave += 1;
-      if (bucket === "HALF_DAY") e.half += 1;
-      if (day.actual_first_in) {
-        e.days += 1;
-        e.worked += day.worked_minutes;
-        e.scheduled += day.scheduled_minutes ?? 0;
-      }
-      map.set(day.employee_id, e);
-    }
-    return Array.from(map.values());
-  }, [rows]);
+  const perEmployee = useMemo(() => tallyByEmployee(rows), [rows]);
 
   let body: ReactNode;
   if (report === "daily") {
@@ -380,7 +369,7 @@ export function ReportsPanel(props: ReportsPanelProps) {
           { key: "status", label: "Status", render: (d) => BUCKET_LABELS[bucketOf(d)], sort: (d) => BUCKET_LABELS[bucketOf(d)] },
           { key: "in", label: "In", render: (d) => formatClockTime(d.actual_first_in, timezone), sort: (d) => d.actual_first_in ?? "", csv: (d) => formatClockTime(d.actual_first_in, timezone) },
           { key: "out", label: "Out", render: (d) => formatClockTime(d.actual_last_out, timezone), sort: (d) => d.actual_last_out ?? "", csv: (d) => formatClockTime(d.actual_last_out, timezone) },
-          { key: "worked", label: "Worked (min)", align: "right", render: (d) => formatMinutes(d.worked_minutes), sort: (d) => d.worked_minutes },
+          { key: "worked", label: "Worked", csvLabel: "Worked (min)", align: "right", render: (d) => formatMinutes(d.worked_minutes), sort: (d) => d.worked_minutes },
         ]}
       />
     );
@@ -398,6 +387,9 @@ export function ReportsPanel(props: ReportsPanelProps) {
           { key: "half", label: "Half day", align: "right", render: (e) => e.half, sort: (e) => e.half },
           { key: "absent", label: "Absent", align: "right", render: (e) => e.absent, sort: (e) => e.absent },
           { key: "leave", label: "Leave", align: "right", render: (e) => e.leave, sort: (e) => e.leave },
+          { key: "off", label: "Weekly off", align: "right", render: (e) => e.off, sort: (e) => e.off },
+          { key: "holiday", label: "Holiday", align: "right", render: (e) => e.holiday, sort: (e) => e.holiday },
+          { key: "incomplete", label: "Incomplete", align: "right", render: (e) => e.incomplete, sort: (e) => e.incomplete },
         ]}
       />
     );
@@ -428,9 +420,9 @@ export function ReportsPanel(props: ReportsPanelProps) {
         columns={[
           { key: "name", label: "Employee", render: (e) => <EmployeeLink id={e.id}>{name(e.id)}</EmployeeLink>, sort: (e) => name(e.id).toLowerCase(), csv: (e) => name(e.id) },
           { key: "days", label: "Days", align: "right", render: (e) => e.days, sort: (e) => e.days },
-          { key: "worked", label: "Worked (min)", align: "right", render: (e) => formatMinutes(e.worked), sort: (e) => e.worked },
-          { key: "avg", label: "Average (min)", align: "right", render: (e) => formatMinutes(Math.round(e.worked / e.days)), sort: (e) => e.worked / e.days, csv: (e) => Math.round(e.worked / e.days) },
-          { key: "scheduled", label: "Scheduled (min)", align: "right", render: (e) => formatMinutes(e.scheduled), sort: (e) => e.scheduled },
+          { key: "worked", label: "Worked", csvLabel: "Worked (min)", align: "right", render: (e) => formatMinutes(e.worked), sort: (e) => e.worked },
+          { key: "avg", label: "Average", csvLabel: "Average (min)", align: "right", render: (e) => formatMinutes(Math.round(e.worked / e.days)), sort: (e) => e.worked / e.days, csv: (e) => Math.round(e.worked / e.days) },
+          { key: "scheduled", label: "Scheduled", csvLabel: "Scheduled (min)", align: "right", render: (e) => formatMinutes(e.scheduled), sort: (e) => e.scheduled },
         ]}
       />
     );
@@ -455,9 +447,9 @@ export function ReportsPanel(props: ReportsPanelProps) {
             { key: "date", label: "Date", render: (r) => <DayLink id={r.attendance_day_id} label={`Open ${name(r.employee_id)} on ${formatShortDate(r.attendance_date)}`}>{formatShortDate(r.attendance_date)}</DayLink>, sort: (r) => r.attendance_date },
             { key: "name", label: "Employee", render: (r) => <EmployeeLink id={r.employee_id}>{name(r.employee_id)}</EmployeeLink>, sort: (r) => name(r.employee_id).toLowerCase(), csv: (r) => name(r.employee_id) },
             { key: "class", label: "Day class", render: (r) => (r.day_class ? OVERTIME_DAY_CLASS_LABELS[r.day_class as OvertimeDayClass] ?? r.day_class : "—"), sort: (r) => r.day_class ?? "", csv: (r) => (r.day_class ? OVERTIME_DAY_CLASS_LABELS[r.day_class as OvertimeDayClass] ?? r.day_class : "") },
-            { key: "detected", label: "Detected (min)", align: "right", render: (r) => formatMinutes(r.minutes_detected), sort: (r) => r.minutes_detected },
-            { key: "approved", label: "Approved (min)", align: "right", render: (r) => formatMinutes(r.minutes_approved), sort: (r) => r.minutes_approved },
-            { key: "pending", label: "Pending (min)", align: "right", render: (r) => (overtimePending(r) > 0 ? formatMinutes(overtimePending(r)) : "—"), sort: (r) => overtimePending(r) },
+            { key: "detected", label: "Detected", csvLabel: "Detected (min)", align: "right", render: (r) => formatMinutes(r.minutes_detected), sort: (r) => r.minutes_detected },
+            { key: "approved", label: "Approved", csvLabel: "Approved (min)", align: "right", render: (r) => formatMinutes(r.minutes_approved), sort: (r) => r.minutes_approved },
+            { key: "pending", label: "Pending", csvLabel: "Pending (min)", align: "right", render: (r) => (overtimePending(r) > 0 ? formatMinutes(overtimePending(r)) : "—"), sort: (r) => overtimePending(r) },
             { key: "status", label: "Status", render: (r) => OVERTIME_STATUS_LABELS[r.status], sort: (r) => r.status },
           ]}
         />
@@ -492,6 +484,7 @@ export function ReportsPanel(props: ReportsPanelProps) {
         ))}
       </div>
       <p className="text-xs text-foreground-secondary">{REPORT_BASIS[report]}</p>
+      {SERVER_REPORTS[report] ? <p className="text-xs text-foreground-muted">{REPORT_SOURCE_NOTE}</p> : null}
       {SERVER_REPORTS[report] ? (
         <PeriodExport
           // A new report or a new range starts from the page's range again.

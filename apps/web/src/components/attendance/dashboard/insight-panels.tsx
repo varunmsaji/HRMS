@@ -57,16 +57,19 @@ export function PunctualityPanel({ summary, frequent, employeesById, onViewLate,
         <Stat
           label="On time"
           value={formatPct(summary.onTimeRate)}
-          hint={`${summary.onTime} of ${summary.checkedIn} check-ins`}
+          hint={`${summary.onTime} of ${summary.checkedIn} completed days`}
           tone={summary.late === 0 ? "good" : undefined}
         />
-        <Stat label="Late arrivals" value={String(summary.late)} hint={formatPct(summary.lateRate) + " of check-ins"} tone={summary.late > 0 ? "warn" : undefined} />
+        <Stat label="Late arrivals" value={String(summary.late)} hint={formatPct(summary.lateRate) + " of completed days"} tone={summary.late > 0 ? "warn" : undefined} />
         <Stat
           label="Average lateness"
           value={summary.avgLateMinutes === null ? "—" : `${Math.round(summary.avgLateMinutes)} min`}
           hint="On late days only"
         />
       </div>
+      <p className="text-xs text-foreground-muted">
+        A completed day has both an IN and an OUT punch. A day still open is not judged yet, so these figures can differ from the Late tile, which counts every check-in.
+      </p>
 
       {summary.late > 0 ? (
         <div>
