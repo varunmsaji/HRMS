@@ -17,6 +17,7 @@ import '../widgets/list_filter.dart';
 import '../widgets/ui.dart' hide DetailSection;
 import '../widgets/ui.dart' as ui show DetailSection;
 import '../theme/employee_theme_scope.dart';
+import '../diagnostics/app_diagnostics.dart';
 
 /// A request's status, in the shared words and theme colours (audit MOB-UX-042, 039). [labels]
 /// overrides a word for one resource; most pass none.
@@ -80,7 +81,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     try {
       final c = await loadChoices(ref.read(apiClientProvider), const ['employees']);
       if (mounted) setState(() => _employees = c['employees'] ?? const []);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -165,7 +166,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     try {
       final fresh = await ref.read(apiClientProvider).get<Rec>('${_c.path}/$id', parse: (d) => d as Rec);
       if (mounted) setState(() => _rows = [for (final r in _rows) r['id'] == id ? fresh : r]);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   List<FilterGroup> get _groups => [
@@ -243,7 +244,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
               : _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load requests", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load requests", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
@@ -371,7 +372,7 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
       _toast('Request cancelled.');
       _load();
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -391,7 +392,7 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
         icon: _error?.status == 404 ? Icons.search_off_rounded : Icons.error_outline_rounded,
         tone: _error?.status == 404 ? Tone.neutral : Tone.danger,
         title: _error?.status == 404 ? 'Not found' : 'Something went wrong',
-        message: _error?.status == 404 ? "This ${_c.singular.toLowerCase()} was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'),
+        message: _error?.status == 404 ? "This ${_c.singular.toLowerCase()} was not found, or you don't have access to it." : describeError(_error, 'Something went wrong.'),
         actionLabel: 'Retry',
         onAction: _load,
       );
@@ -515,10 +516,10 @@ Future<Rec?> showRequestReviewDialog(BuildContext context, ApiClient client, Req
                         ? 'You cannot approve or reject your own ${c.singular.toLowerCase()}.'
                         : e.code == c.approverMismatchCode
                             ? "You are not the resolved approver for this ${c.singular.toLowerCase()}'s current stage."
-                            : e.message)
+                            : describeApiError(e))
                     : e.status == 409
                         ? 'This ${c.singular.toLowerCase()} has already moved on (decided or cancelled by someone else). Refresh to see its current state.'
-                        : e.message);
+                        : describeApiError(e));
               } catch (_) {
                 setLocal(() => formError = 'Something went wrong.');
               }

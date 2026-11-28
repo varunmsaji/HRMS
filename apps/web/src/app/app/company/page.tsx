@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CompanyProfileForm } from "@/components/company/company-profile-form";
 import { CompanyProfileView } from "@/components/company/company-profile-view";
@@ -11,7 +11,13 @@ import { useToast } from "@/components/common/toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError, getStaleResourceCurrent } from "@/lib/api/errors";
+import {
+  ApiError,
+  describeApiError,
+  getFieldError,
+  getNestedFieldError,
+} from "@/lib/api/errors";
+import { useAuth } from "@/lib/auth/auth-context";
 import type { CompanyProfile } from "@/lib/company/types";
 import { rememberCompanyDateFormat } from "@/lib/dates/use-company-date";
 import {
@@ -22,8 +28,16 @@ import {
   type CompanyProfileFormValues,
 } from "@/lib/company/validate-company-profile";
 
+/** Statuses in which the API refuses every change (see `core/auth/company_access.py`). */
+const READ_ONLY_STATUSES = new Set(["PENDING_APPROVAL", "SUSPENDED"]);
+
 export default function CompanyProfilePage() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const readOnly = READ_ONLY_STATUSES.has(user?.company_status ?? "");
+  const formRef = useRef<HTMLDivElement>(null);
+  const [saveSummary, setSaveSummary] = useState<string | null>(null);
+  const [focusErrorTick, setFocusErrorTick] = useState(0);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -58,8 +72,16 @@ export default function CompanyProfilePage() {
     void loadProfile();
   }, [loadProfile]);
 
+  // After a failed save, move focus to the first field that has an error so the admin lands on
+  // what to fix instead of scrolling a 25-field form.
+  useEffect(() => {
+    if (focusErrorTick === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [focusErrorTick]);
+
   function startEditing() {
-    if (!profile) return;
+    if (!profile || readOnly) return;
+    setSaveSummary(null);
     setFormValues(profileToFormValues(profile));
     setFormErrors({});
     setStaleMessage(null);
@@ -79,6 +101,8 @@ export default function CompanyProfilePage() {
     const clientErrors = validateCompanyProfileForm(formValues);
     if (Object.keys(clientErrors).length > 0) {
       setFormErrors(clientErrors);
+      setSaveSummary("Some details need fixing. The first one is highlighted below.");
+      setFocusErrorTick((tick) => tick + 1);
       return;
     }
 
@@ -92,6 +116,7 @@ export default function CompanyProfilePage() {
 
     setSaving(true);
     setFormErrors({});
+    setSaveSummary(null);
     setStaleMessage(null);
     try {
       const updated = await apiClient.patch<CompanyProfile>("/companies/current", patch, {
@@ -109,20 +134,61 @@ export default function CompanyProfilePage() {
           return;
         }
         if (err.status === 422) {
-          setFormErrors({
+          const nextErrors: CompanyProfileFormErrors = {
             name: getFieldError(err.details, "name"),
+            legalName: getFieldError(err.details, "legal_name"),
+            registrationNumber: getFieldError(err.details, "registration_number"),
+            industryCode: getFieldError(err.details, "industry_code"),
+            companySize: getFieldError(err.details, "company_size"),
+            // Top level only: the address has its own `country_code`, handled below.
+            countryCode: err.details.find(
+              (d) => d.field === "country_code" || d.field === "body.country_code",
+            )?.message,
             currency: getFieldError(err.details, "currency"),
             timezone: getFieldError(err.details, "timezone"),
+            contactEmail: getNestedFieldError(err.details, "contact", "email"),
+            contactPhone: getNestedFieldError(err.details, "contact", "phone"),
+            website: getNestedFieldError(err.details, "contact", "website"),
+            addressLine1: getNestedFieldError(err.details, "address", "line1"),
+            addressLine2: getNestedFieldError(err.details, "address", "line2"),
+            addressCity: getNestedFieldError(err.details, "address", "city"),
+            addressState: getNestedFieldError(err.details, "address", "state"),
+            addressPostalCode: getNestedFieldError(err.details, "address", "postal_code"),
+            addressCountryCode: getNestedFieldError(err.details, "address", "country_code"),
+            languageCode: getNestedFieldError(err.details, "locale", "language_code"),
+            dateFormat: getNestedFieldError(err.details, "locale", "date_format"),
+            fiscalYearStartMonth: getFieldError(err.details, "fiscal_year"),
             businessHoursStart: getFieldError(err.details, "business_hours"),
             businessHoursEnd: getFieldError(err.details, "business_hours"),
             workingDays: getFieldError(err.details, "working_days"),
-            fiscalYearStartMonth: getFieldError(err.details, "fiscal_year"),
-          });
+            logoUrl: getNestedFieldError(err.details, "branding", "logo_url"),
+            primaryColor: getNestedFieldError(err.details, "branding", "theme", "primary_color"),
+          };
+          const cleaned = Object.fromEntries(
+            Object.entries(nextErrors).filter(([, message]) => Boolean(message)),
+          ) as CompanyProfileFormErrors;
+          setFormErrors(cleaned);
+          // Never fail silently: if the server rejected something this form has no field for,
+          // say what it said instead.
+          setSaveSummary(
+            Object.keys(cleaned).length > 0
+              ? "Some details need fixing. The first one is highlighted below."
+              : describeApiError(err),
+          );
+          setFocusErrorTick((tick) => tick + 1);
           return;
         }
         if (err.status === 403) {
-          setError(err);
-          setEditing(false);
+          // Two different things share this status: the company is read-only (pending approval,
+          // suspended), or this person may not change the profile. Either way the profile they
+          // were just looking at is still valid, so keep it on screen and say why the save failed.
+          toast({
+            title: err.code.startsWith("COMPANY_")
+              ? "Changes are switched off for this company"
+              : "You don't have permission to change the company profile",
+            description: describeApiError(err),
+            variant: "danger",
+          });
           return;
         }
         if (err.status === 423) {
@@ -157,7 +223,16 @@ export default function CompanyProfilePage() {
         description="Your organisation's registered details."
         actions={
           profile && !editing ? (
-            <Button type="button" onClick={startEditing}>
+            <Button
+              type="button"
+              onClick={startEditing}
+              disabled={readOnly}
+              title={
+                readOnly
+                  ? "Editing is switched off while your company is awaiting approval or suspended."
+                  : undefined
+              }
+            >
               Edit
             </Button>
           ) : null
@@ -172,7 +247,7 @@ export default function CompanyProfilePage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view this company profile."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadProfile()}
             />
@@ -196,7 +271,15 @@ export default function CompanyProfilePage() {
           ) : null}
 
           {!loading && !error && profile && editing && formValues ? (
-            <div className="space-y-6">
+            <div className="space-y-6" ref={formRef}>
+              {saveSummary ? (
+                <div
+                  role="alert"
+                  className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger"
+                >
+                  {saveSummary}
+                </div>
+              ) : null}
               <CompanyProfileForm
                 values={formValues}
                 errors={formErrors}

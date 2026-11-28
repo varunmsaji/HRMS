@@ -1,5 +1,6 @@
 import '../../../core/api/api_client.dart';
 import '../../employees/domain/employee_directory.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// `GET /employees/{id}` — mirrors `EmployeeRead` (employee/schemas.py). Only
 /// the personal-record fields the mobile "My Profile" screen shows; the web
@@ -204,7 +205,10 @@ class EmployeeRepository {
   /// web's `useEmployeeWorkSummary`. The two employee calls must succeed (they carry the
   /// permission check); the lookup lists fall back to empty, as on web.
   Future<EmployeeWorkSummary> workSummary(String employeeId) async {
-    Future<List<Map<String, dynamic>>> lookup(String path) => _rows(path).catchError((Object _) => <Map<String, dynamic>>[]);
+    Future<List<Map<String, dynamic>>> lookup(String path) => _rows(path).catchError((Object e, StackTrace s) {
+      AppDiagnostics.instance.recordHandled(e, s);
+      return <Map<String, dynamic>>[];
+    });
     final results = await Future.wait([
       _rows('/employees/$employeeId/employments'),
       _rows('/employees/$employeeId/assignments'),

@@ -415,7 +415,7 @@ export function PolicyDetailPage<
                   ? "You do not have permission to view this policy."
                   : error.status === 404
                     ? "This policy could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void load()}
             />

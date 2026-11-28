@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
 import { errorReference, isApiError } from "@/lib/api/errors";
+import { reportClientError } from "@/lib/observability/report-client-error";
 
 export interface RouteErrorProps {
   error: Error & { digest?: string };
@@ -30,9 +31,10 @@ export function routeErrorReference(error: Error & { digest?: string }): string 
 
 export function RouteError({ error, retry, reset }: RouteErrorProps) {
   useEffect(() => {
-    // Development aid only. No telemetry is sent anywhere (no third-party error service has
-    // been approved), and production builds stay quiet.
+    // Development: the console. Production: a scrubbed report to our own API (off until the
+    // ingestion endpoint is enabled) — never a third-party service, never the message text.
     if (process.env.NODE_ENV !== "production") console.error(error);
+    reportClientError(error, "render");
   }, [error]);
 
   const reference = routeErrorReference(error);

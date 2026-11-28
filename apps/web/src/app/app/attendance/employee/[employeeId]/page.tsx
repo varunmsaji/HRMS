@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { StatementDownload } from "@/components/attendance/statement-download";
 import { EmployeeMonthView } from "@/components/attendance/dashboard/employee-month-view";
 import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { useSection } from "@/components/attendance/dashboard/use-dashboard-data";
@@ -159,6 +160,7 @@ export default function EmployeeAttendanceProfilePage() {
               onChange={(e) => e.target.value && setMonth(e.target.value)}
               className="w-44"
             />
+            <StatementDownload employeeId={employeeId} maxMonth={today.slice(0, 7)} month={month} />
           </>
         }
       >

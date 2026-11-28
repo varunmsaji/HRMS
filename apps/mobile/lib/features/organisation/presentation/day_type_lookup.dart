@@ -46,7 +46,7 @@ class _DayTypeLookupState extends ConsumerState<DayTypeLookup> {
           );
       if (mounted) setState(() => _result = data);
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

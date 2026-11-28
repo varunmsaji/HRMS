@@ -180,12 +180,13 @@ class ApiClient {
         message: errorPayload?['message'] as String? ??
             (unavailable
                 ? 'The service is temporarily unavailable. Please try again in a moment.'
-                : 'Request failed with status ${response.statusCode}'),
+                : 'Something went wrong. Please try again.'),
         details: (errorPayload?['details'] as List? ?? [])
             .map((d) => ErrorDetail.fromJson(d as Map<String, dynamic>))
             .toList(),
         // The envelope's id, else the API's response header, else the id this client sent.
         requestId: errorPayload?['request_id'] as String? ?? response.headers.value('x-request-id') ?? sentRequestId,
+        reference: errorPayload?['reference'] as String?,
       );
       AppDiagnostics.instance.recordFailedRequest(error);
       throw error;

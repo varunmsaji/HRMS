@@ -1675,3 +1675,19 @@ class GeofenceAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AttendanceDigestSetting(Base, TimestampMixin):
+    """A company's opt-out for the attendance digest emails. One row per company, created when its
+    settings are first saved; no row means both digests are on (`digest_settings.py`)."""
+
+    __tablename__ = "attendance_digest_setting"
+
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), primary_key=True
+    )
+    manager_daily_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    hr_weekly_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )

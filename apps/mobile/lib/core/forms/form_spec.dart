@@ -37,6 +37,11 @@ enum FieldKind {
   /// An Indian PIN code: six digits on the number pad.
   pincode,
   hidden,
+
+  /// Not an input: a heading that starts a collapsible group of the fields that follow it, up to
+  /// the next section. [FieldSpec.label] is the title and [FieldSpec.hint] a one-line summary. It
+  /// carries no value, is never sent, and a form without any section renders exactly as before.
+  section,
 }
 
 class FieldSpec {
@@ -237,13 +242,15 @@ dynamic toWireValue(FieldSpec f, dynamic form) {
 Map<String, dynamic> rowToPayload(FormSpec spec, Map<String, dynamic> values) {
   return {
     for (final f in spec.fields)
-      f.key: fieldVisible(f, values) ? toWireValue(f, values[f.key]) : (f.kind == FieldKind.toggle ? false : null),
+      if (f.kind != FieldKind.section)
+        f.key: fieldVisible(f, values) ? toWireValue(f, values[f.key]) : (f.kind == FieldKind.toggle ? false : null),
   };
 }
 
 Map<String, dynamic> rowFromWire(FormSpec spec, Map<String, dynamic> wire) {
   return {
-    for (final f in spec.fields) f.key: toFormValue(f, wire.containsKey(f.key) ? wire[f.key] : spec.defaults[f.key]),
+    for (final f in spec.fields)
+      if (f.kind != FieldKind.section) f.key: toFormValue(f, wire.containsKey(f.key) ? wire[f.key] : spec.defaults[f.key]),
   };
 }
 
@@ -290,7 +297,7 @@ bool _sameWire(dynamic a, dynamic b) {
 Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
   final errors = <String, String>{};
   for (final f in spec.fields) {
-    if (!fieldVisible(f, values)) continue;
+    if (f.kind == FieldKind.section || !fieldVisible(f, values)) continue;
     final raw = values[f.key];
     final text = raw is String ? raw.trim() : '';
     if (f.kind == FieldKind.rows) {

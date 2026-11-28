@@ -115,4 +115,10 @@ describe("RegisterPage", () => {
 
     expect(await screen.findByText(/too weak, try again/i)).toBeInTheDocument();
   });
+
+  it("tells the person up front that a new workspace is reviewed before changes switch on", () => {
+    render(<RegisterPage />);
+    expect(screen.getByText(/reviewed before changes are switched on/i)).toBeInTheDocument();
+    expect(screen.getByText(/email you at your work email/i)).toBeInTheDocument();
+  });
 });

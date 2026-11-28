@@ -185,7 +185,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
           message={
             error.status === 403
               ? "You do not have permission to view this employee's attendance."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

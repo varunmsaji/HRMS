@@ -175,7 +175,7 @@ class SetupChecklist {
 }
 
 class UserSummary {
-  UserSummary({required this.userId, this.email, this.firstName, this.lastName, required this.status, required this.roleCodes});
+  UserSummary({required this.userId, this.email, this.firstName, this.lastName, required this.status, required this.roleCodes, this.branchIds = const []});
   final String userId;
 
   /// Null for a user without an email address (the backend allows it).
@@ -184,6 +184,9 @@ class UserSummary {
   final String? lastName;
   final String status;
   final List<String> roleCodes;
+
+  /// Live branches this user covers; only meaningful for HR admin / branch manager.
+  final List<String> branchIds;
 
   String get emailLabel => email ?? 'No email';
 
@@ -194,6 +197,7 @@ class UserSummary {
         lastName: json['last_name'] as String?,
         status: json['status'] as String,
         roleCodes: (json['role_codes'] as List).cast<String>(),
+        branchIds: ((json['branch_ids'] as List?) ?? const []).cast<String>(),
       );
 }
 
@@ -295,14 +299,21 @@ class OnboardingRepository {
 
   Future<List<UserSummary>> listUsers() =>
       _client.getList('/users', parseItem: (d) => UserSummary.fromJson(d as Map<String, dynamic>)).then((e) => e.data);
-  Future<Map<String, dynamic>> inviteUser({required String email, required String roleCode}) => _client.post(
+  /// Active branches as (id, name), for choosing the branches an HR admin / branch manager covers.
+  Future<List<({String id, String name})>> listActiveBranches() => _client
+      .getList('/branches', parseItem: (d) => d as Map<String, dynamic>)
+      .then((e) => [
+            for (final b in e.data)
+              if (b['is_active'] != false) (id: b['id'] as String, name: (b['name'] as String?) ?? 'Branch'),
+          ]);
+  Future<Map<String, dynamic>> inviteUser({required String email, required String roleCode, List<String> branchIds = const []}) => _client.post(
         '/users/invite',
-        body: {'email': email, 'role_code': roleCode},
+        body: {'email': email, 'role_code': roleCode, 'branch_ids': branchIds},
         parse: (d) => d as Map<String, dynamic>,
       );
-  Future<void> updateUserRoles(String userId, List<String> roleCodes) => _client.patch(
+  Future<void> updateUserRoles(String userId, List<String> roleCodes, {List<String> branchIds = const []}) => _client.patch(
         '/users/$userId/roles',
-        body: {'role_codes': roleCodes},
+        body: {'role_codes': roleCodes, 'branch_ids': branchIds},
         parse: (_) {},
       );
 }

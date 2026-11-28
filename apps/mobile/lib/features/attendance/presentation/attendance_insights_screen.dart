@@ -4,16 +4,20 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
+import '../../../core/auth/permissions.dart' show attendanceViewAll;
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart' show Choice;
 import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../domain/attendance_export.dart';
 import '../domain/attendance_insights.dart';
 import '../domain/attendance_mismatch.dart' show attentionRank;
 import '../domain/attendance_pulse.dart';
 import '../domain/attendance_totals.dart';
+import '../domain/pattern_alerts.dart';
+import 'attendance_export_dialog.dart';
 import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import 'attendance_day_detail_screen.dart';
@@ -34,7 +38,7 @@ class _Loaded<T> {
   final String? error;
 }
 
-String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : e.message) : 'Something went wrong.';
+String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have permission to view this." : describeApiError(e)) : 'Something went wrong.';
 
 /// Mirrors the organisation view of `apps/web/src/app/app/attendance/page.tsx`, which has three
 /// tabs. **Today**: the attendance rate beside five tappable figures (each opens Team attendance
@@ -67,6 +71,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   String? _error;
   /// Every day in the fetched window (the range widened to at least 14 days).
   List<AttendanceDay> _days = const [];
+  /// Null until loaded; truncated when the window holds more days than the page ceiling.
+  DaysCoverage? _coverage;
   Map<String, String> _names = const {};
   _Loaded<List<_Rec>> _overtime = _Loaded.ok(const []);
   _Loaded<List<_Rec>> _regularizations = _Loaded.ok(const []);
@@ -75,6 +81,13 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   /// The window's totals, counted by the backend; null until loaded.
   _Loaded<AttendanceTotals>? _totals;
   bool _byBranch = false;
+
+  /// People with a repeating pattern, up to the end of the range. Null when the caller may not see
+  /// it (the card is then left out); an error shows on the card only.
+  _Loaded<PatternAlerts>? _patterns;
+
+  /// The organisation view. Web offers the payroll report only there (`showPayroll`).
+  bool get _canViewAll => (ref.read(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceViewAll);
 
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
   String get _today => businessToday(_zone);
@@ -117,8 +130,15 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     final w = _window;
     try {
       final repo = ref.read(attendanceRepositoryProvider);
-      final daysFuture = repo.listAttendanceDays(dateFrom: w.from, dateTo: w.to);
+      final daysFuture = repo.listAttendanceDaysCovered(dateFrom: w.from, dateTo: w.to);
       final totalsFuture = _loaded(() => repo.attendanceSummary(dateFrom: w.from, dateTo: w.to));
+      final patternsFuture = () async {
+        try {
+          return _Loaded<PatternAlerts>.ok(await repo.patternAlerts(asOf: _bounds.to));
+        } catch (e) {
+          return e is ApiError && e.status == 403 ? null : _Loaded<PatternAlerts>.fail(_msg(e));
+        }
+      }();
       final namesFuture = loadChoices(ref.read(apiClientProvider), const ['employees']).then((c) => {for (final e in c['employees'] ?? const <Choice>[]) e.value: e.label}).catchError((_) => <String, String>{});
       final otFuture = _section(() => _all('/overtime', filters: {'date_from': w.from, 'date_to': w.to}));
       final regFuture = _section(() => _all('/regularizations', filters: {'request_status': 'SUBMITTED'}));
@@ -126,17 +146,20 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       final days = await daysFuture;
       final totals = await totalsFuture;
       final names = await namesFuture;
+      final patterns = await patternsFuture;
       final ot = await otFuture;
       final regs = await regFuture;
       final periods = await periodFuture;
       if (!mounted) return;
       setState(() {
-        _days = days;
+        _days = days.days;
+        _coverage = days;
         _names = names;
         _overtime = ot;
         _regularizations = regs;
         _periods = periods;
         _totals = totals;
+        _patterns = patterns;
       });
     } catch (e) {
       if (mounted) setState(() => _error = _msg(e));
@@ -225,6 +248,33 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
                           : null,
                 ),
             ]),
+    );
+  }
+
+  /// "Patterns to look at": people who keep being late or absent. A prompt to look, not a finding;
+  /// each names the days behind it and opens the person's attendance profile (web `PatternAlertsPanel`).
+  Widget _patternAlerts() {
+    final loaded = _patterns;
+    if (loaded == null) return const SizedBox.shrink();
+    final data = loaded.data;
+    if (data == null) return _card('Patterns to look at', _sectionError(loaded.error ?? 'Pattern alerts could not be loaded.'));
+    final t = data.thresholds;
+    return _card(
+      'Patterns to look at',
+      data.alerts.isEmpty
+          ? const Text('No patterns found. Nobody has crossed a threshold.')
+          : Column(children: [
+              for (final a in data.alerts)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  onTap: () => _openEmployee(a.employeeId),
+                  title: Text(_name(a.employeeId)),
+                  subtitle: Text('${a.label}: ${a.describe(t)}\n${a.dates.map(shortDate).join(', ')}${a.count > a.dates.length ? ' and ${a.count - a.dates.length} earlier' : ''}', style: const TextStyle(fontSize: 12)),
+                  isThreeLine: true,
+                ),
+            ]),
+      subtitle: 'People who keep being late or absent: ${t.lateDays}+ late days, ${t.absentDays}+ absent days or ${t.incompleteDays}+ missing punches in ${t.windowDays} days, or the same weekday ${t.weekdayAbsences}+ times in ${t.weekdayWindowDays} days. A prompt to look, not a finding.',
     );
   }
 
@@ -368,6 +418,26 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       rows.isEmpty
           ? const Text('No attendance days to show.')
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('muster_export'),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Export register'),
+                  onPressed: () => showAttendanceExport(
+                    context,
+                    ref,
+                    title: 'Export attendance register',
+                    filePrefix: 'muster',
+                    from: _bounds.from,
+                    to: _bounds.to,
+                    today: _today,
+                    path: musterExportPath,
+                    pdfLimited: true,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               SegmentedButton<bool>(
                 key: const ValueKey('muster_switch'),
                 showSelectedIcon: false,
@@ -547,6 +617,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       'Today',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _muted('$total ${total == 1 ? 'employee' : 'employees'} · ${k.noRecord > 0 ? '${k.noRecord} with no record yet for today' : 'employed today'}'),
+        if (t.calculatedAt != null)
+          _muted(t.focusDate == _today ? 'Last calculated at ${formatClockTime(t.calculatedAt, _zone)}.' : 'Last calculated ${formatDateTime(t.calculatedAt, _zone)}.'),
         const SizedBox(height: 10),
         LayoutBuilder(builder: (context, box) {
           final w = (box.maxWidth - 8) / 2;
@@ -679,10 +751,12 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       subtitle: subtitle,
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 8, runSpacing: 8, children: [
-          _stat('On time', formatPct(s.onTimeRate), '${s.onTime} of ${s.checkedIn} check-ins'),
-          _stat('Late arrivals', '${s.late}', '${formatPct(s.lateRate)} of check-ins'),
+          _stat('On time', formatPct(s.onTimeRate), '${s.onTime} of ${s.checkedIn} completed days'),
+          _stat('Late arrivals', '${s.late}', '${formatPct(s.lateRate)} of completed days'),
           _stat('Average lateness', s.avgLateMinutes == null ? '—' : '${s.avgLateMinutes!.round()} min', 'On late days only'),
         ]),
+        const SizedBox(height: 6),
+        _muted('A completed day has both an IN and an OUT punch. A day still open is not judged yet, so these figures can differ from the Late tile, which counts every check-in.'),
         if (s.late > 0) ...[
           const SizedBox(height: 12),
           Text('How late', style: Theme.of(context).textTheme.labelLarge),
@@ -724,7 +798,21 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
 
  // ---- tabs ----------------------------------------------------------------------------------
 
-  Widget _tab(List<Widget> children) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: children));
+  Widget _tab(List<Widget> children) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: [if (_partialNote() case final note?) note, ...children]));
+
+  /// Web's partial-data note (`attendance/page.tsx`): the totals are the server's and complete,
+  /// the per-person panels only cover the days that were loaded.
+  Widget? _partialNote() {
+    final c = _coverage;
+    if (c == null || !c.truncated) return null;
+    return Padding(
+      key: const ValueKey('days-truncated'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _muted('Totals and charts count every attendance record, but the employee lists, heatmap and reports show the most recent ${_count(c.loaded)} of ${_count(c.total)} in this range. Choose a shorter range to list them all.'),
+    );
+  }
+
+  static String _count(int n) => n.toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
 
   @override
   Widget build(BuildContext context) {
@@ -736,9 +824,9 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     } else {
       // Swiping is off: the attendance grid and the charts scroll sideways, and a swipe there must not change tab.
       body = TabBarView(physics: const NeverScrollableScrollPhysics(), children: [
-        _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _readiness(), _heatmap()]),
+        _tab([_ratePulse(), _summaryBlock(), _needsAttention(), _patternAlerts(), _readiness(), _heatmap()]),
         _tab([_breakdown(), _trend(), _punctuality(), _absenceLeave(), _workHours(), _overtimeCard()]),
-        AttendanceReportsPanel(days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel),
+        AttendanceReportsPanel(partialNote: _partialNote(), showPayroll: _canViewAll, days: _rangeDays, overtime: _rangeOvertime, overtimeError: _overtime.error, periods: _periods.data, name: _name, zone: _zone, today: _today, rangeLabel: _rangeLabel, exportFrom: _bounds.from, exportTo: _bounds.to),
       ]);
     }
     return DefaultTabController(

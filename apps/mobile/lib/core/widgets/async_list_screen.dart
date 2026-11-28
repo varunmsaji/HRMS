@@ -88,7 +88,7 @@ class AsyncListScreenState<T> extends State<AsyncListScreen<T>> {
         icon: forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
         tone: forbidden ? Tone.warning : Tone.danger,
         title: forbidden ? 'No access' : 'Couldn\'t load this',
-        message: forbidden ? 'You do not have permission to view this.' : _error!.message,
+        message: forbidden ? 'You do not have permission to view this.' : describeApiError(_error!),
         actionLabel: forbidden ? null : 'Try again',
         onAction: reload,
       );

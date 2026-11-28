@@ -12,6 +12,7 @@ import '../domain/punch_location.dart';
 import '../domain/punch_warning.dart';
 import '../presentation/punch_location_flow.dart';
 import 'active_liveness_config.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Where a face punch is in its flow (drives the face card's sentence and disables its buttons).
 enum FacePhase { idle, locating, challenge, capturing, verifying }
@@ -166,7 +167,7 @@ class PunchController extends StateNotifier<PunchState> {
       _plainPending = error is ApiError && error.status == 0 ? (direction: direction, key: key) : null;
       if (error is ApiError && isGeofenceError(error) && ui.active) {
         // A refused location is a real answer: nothing was recorded, so retrying is safe.
-        return ui.showGeofenceRejected(error.code, error.message);
+        return ui.showGeofenceRejected(error.code, describeApiError(error));
       }
       final warning = PunchWarning.fromError(error, zone: _zone);
       if (warning != null) {
@@ -199,8 +200,9 @@ class PunchController extends StateNotifier<PunchState> {
       var policy = GeofencePolicyMe.disabled;
       try {
         policy = await repository.getMyGeofencePolicy();
-      } catch (_) {
+      } catch (e, s) {
         // Offline / unknown: attempt the punch; the server enforces and will say if it needed one.
+        AppDiagnostics.instance.recordHandled(e, s);
       }
       if (!policy.isDisabled) {
         final location = _ref.read(locationCaptureProvider);
@@ -279,7 +281,7 @@ class PunchController extends StateNotifier<PunchState> {
           // Refused on location: nothing was recorded. A retry needs a new face challenge, so
           // the whole punch starts again once this attempt has been cleaned up.
           _facePending = null;
-          if (ui.active) retryAfter = await ui.showGeofenceRejected(error.code, error.message);
+          if (ui.active) retryAfter = await ui.showGeofenceRejected(error.code, describeApiError(error));
         } else if (PunchWarning.fromError(error, zone: _zone) case final warning?) {
           // Refused as a repeat of the previous punch: nothing was recorded, and retrying cannot help.
           _facePending = null;

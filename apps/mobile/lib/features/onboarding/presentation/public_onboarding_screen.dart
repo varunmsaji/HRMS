@@ -100,7 +100,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
 
   void _toast(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
-  String _errMessage(Object e) => e is ApiError ? e.message : 'Something went wrong.';
+  String _errMessage(Object e) => e is ApiError ? describeApiError(e) : 'Something went wrong.';
 
   /// Validates and PATCHes the section at [_step]; returns whether it's safe to move on.
   Future<bool> _saveCurrent() async {
@@ -179,7 +179,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
         title: 'Link not available',
         message: _loadError?.status == 404
             ? 'This onboarding link is invalid or has expired. Please contact HR for a new one.'
-            : (_loadError?.message ?? 'Something went wrong.'),
+            : describeError(_loadError, 'Something went wrong.'),
         onRetry: _loadError?.status == 404 ? null : _load,
       );
     }
@@ -437,7 +437,7 @@ class _DocumentsStepState extends ConsumerState<_DocumentsStep> {
       if (mounted) setState(() => _type = null);
       messenger.showSnackBar(const SnackBar(content: Text('Document uploaded')));
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Could not upload: ${e is ApiError ? e.message : 'Something went wrong.'}')));
+      messenger.showSnackBar(SnackBar(content: Text('Could not upload: ${e is ApiError ? describeApiError(e) : 'Something went wrong.'}')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -450,7 +450,7 @@ class _DocumentsStepState extends ConsumerState<_DocumentsStep> {
       await ref.read(publicOnboardingRepositoryProvider).deleteDocument(widget.token, d.id);
       widget.onChanged(widget.documents.where((x) => x.id != d.id).toList());
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Could not delete: ${e is ApiError ? e.message : 'Something went wrong.'}')));
+      messenger.showSnackBar(SnackBar(content: Text('Could not delete: ${e is ApiError ? describeApiError(e) : 'Something went wrong.'}')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

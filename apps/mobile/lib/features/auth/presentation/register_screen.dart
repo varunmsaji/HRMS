@@ -9,6 +9,7 @@ import '../state/auth_controller.dart';
 import '../state/auth_state.dart';
 import 'widgets/auth_form_field.dart';
 import 'widgets/auth_scaffold.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const _months = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -60,8 +61,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         _timezones = config.allowedCompanyTimezones;
         if (!_timezones.contains(_timezone)) _timezone = _timezones.first;
       });
-    } catch (_) {
+    } catch (e, s) {
       // Defaults to `Asia/Kolkata` alone, matching the server's own default.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
   }
 
@@ -169,12 +171,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           setState(() {
             _errors.clear();
             _errors.addAll(nextErrors);
-            _formError = hasFieldError ? null : error.message;
+            _formError = hasFieldError ? null : describeApiError(error);
           });
         } else if (error.status == 429) {
           setState(() => _formError = 'Too many attempts. Please wait a moment and try again.');
         } else {
-          setState(() => _formError = error.message);
+          setState(() => _formError = describeApiError(error));
         }
       } else {
         setState(() => _formError = 'Something went wrong. Please try again.');

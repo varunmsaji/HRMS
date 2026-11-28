@@ -109,8 +109,11 @@ export function WelcomeSetupDialog({ companyName }: { companyName: string }) {
     if (!eligible || userId === null || hasBeenSeen(userId)) return;
     let cancelled = false;
     void loadSteps().then((loaded) => {
-      if (cancelled || !loaded || loaded.every((step) => step.done)) return;
+      if (cancelled || !loaded) return;
+      // Everything already done: there is nothing to welcome them to. Remember that too, or
+      // these three requests would run on every dashboard visit for as long as the company exists.
       markSeen(userId);
+      if (loaded.every((step) => step.done)) return;
       setSteps(loaded);
       setOpen(true);
     });
@@ -135,8 +138,9 @@ export function WelcomeSetupDialog({ companyName }: { companyName: string }) {
         <DialogHeader>
           <DialogTitle>Welcome to {companyName}</DialogTitle>
           <DialogDescription>
-            Let&apos;s get your company set up. It takes a few minutes, and {doneCount} of{" "}
-            {steps.length} steps {doneCount === 1 ? "is" : "are"} already done.
+            Let&apos;s get your company set up. These {steps.length} things take a few minutes
+            {doneCount > 0 ? `, and ${doneCount} ${doneCount === 1 ? "is" : "are"} already done` : ""}.
+            After that, the Setup page lists everything else to do.
           </DialogDescription>
         </DialogHeader>
 

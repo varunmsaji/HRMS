@@ -150,7 +150,7 @@ export default function LegalEntitiesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view companies."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadEntities()}
             />

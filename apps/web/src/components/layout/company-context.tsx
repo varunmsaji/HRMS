@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 interface CompanyDetail {
   id: string;
@@ -26,9 +27,8 @@ export function CompanyContext() {
       .then((data) => {
         if (!cancelled) setCompany(data);
       })
-      .catch(() => {
-        // Non-critical for the shell to render — the topbar just shows a placeholder.
-      });
+      // Non-critical for the shell to render — the topbar just shows a placeholder.
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };

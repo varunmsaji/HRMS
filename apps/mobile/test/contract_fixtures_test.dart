@@ -177,7 +177,7 @@ void _writeFormMatches(String name, FormSpec spec, String schema, {Set<String> n
     // Edit-only fields (the active flag) exist only on the Update schemas.
     final isCreate = schema.endsWith('Create');
     // Create-only fields (read-only on edit) never reach a PATCH.
-    final mine = spec.fields.where((f) => !(isCreate && f.editOnly) && !(!isCreate && f.readOnlyOnEdit)).map((f) => f.key).toSet();
+    final mine = spec.fields.where((f) => f.kind != FieldKind.section && !(isCreate && f.editOnly) && !(!isCreate && f.readOnlyOnEdit)).map((f) => f.key).toSet();
     expect(mine.difference(backend), isEmpty, reason: 'keys the backend (extra="forbid") would reject');
     expect(backend.difference(mine).difference(notInForm), isEmpty, reason: 'backend fields the form does not offer');
     final requiredInSpec = spec.fields.where((f) => f.required).map((f) => f.key).toSet();

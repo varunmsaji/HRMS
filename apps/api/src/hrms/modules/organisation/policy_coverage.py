@@ -273,7 +273,7 @@ class PolicyCoverageService:
                     {
                         "field": "changes",
                         "code": exc.code,
-                        "message": exc.message,
+                        "message": exc.client_message,
                         "context": {
                             "policy_kind": change.policy_kind,
                             "leave_type_id": str(change.leave_type_id)

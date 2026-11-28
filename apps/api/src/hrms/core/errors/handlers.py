@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hrms.core.db.timeouts import is_wait_timeout
 from hrms.core.errors.base import AppError
-from hrms.core.errors.envelope import ErrorBody, ErrorDetail, ErrorEnvelope
+from hrms.core.errors.envelope import ErrorBody, ErrorDetail, ErrorEnvelope, error_reference
 from hrms.core.observability.classification import RETRYABLE_DB_CATEGORIES, error_category
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.metrics import ERRORS, HTTP_UNHANDLED, safe_count
@@ -46,6 +46,7 @@ def _error_response(
             message=message,
             details=details or [],
             request_id=request_id,
+            reference=error_reference(request_id) if status_code >= 500 else None,
         )
     )
     return JSONResponse(
@@ -148,10 +149,10 @@ def register_exception_handlers(app: FastAPI) -> None:
                 message=str(d.get("message", exc.message)),
                 context=d.get("context"),
             )
-            for d in exc.details
+            for d in exc.client_details
         ]
         return _error_response(
-            exc.status_code, exc.code, exc.message, detail_models, headers=exc.headers
+            exc.status_code, exc.code, exc.client_message, detail_models, headers=exc.headers
         )
 
     @app.exception_handler(RequestValidationError)
@@ -230,6 +231,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 _logger.error,
                 "http_exception",
                 request_id=current_request_id() or "unknown",
+                reference=error_reference(current_request_id() or "unknown"),
                 http_method=request.scope.get("method"),
                 http_path=route_for_logging(request.scope),
                 status_code=exc.status_code,
@@ -313,6 +315,7 @@ def log_unhandled_exception(
         "unhandled_exception",
         exc_info=None if response_started else exc,
         request_id=current_request_id() or "unknown",
+        reference=error_reference(current_request_id() or "unknown"),
         http_method=scope.get("method"),
         http_path=route_for_logging(scope),
         # LOG-08 — no `str(exc)` field: the message is already inside the traceback, which goes
@@ -345,8 +348,12 @@ def _log_app_error(scope: Mapping[str, Any], exc: AppError) -> None:
         "http_method": scope.get("method"),
         "http_path": route_for_logging(scope),
         "status_code": exc.status_code,
+        "reference": error_reference(current_request_id() or "unknown"),
         "error_code": exc.code,
         "exception_type": type(exc).__name__,
+        # The instance message is never sent to the client on a 5xx (`AppError.client_message`),
+        # so the log is where a developer reads it. Passes through the redaction processor.
+        "internal_message": exc.message,
         "cause_type": type(exc.__cause__).__name__ if exc.__cause__ is not None else None,
         **tenant_log_fields(),
     }
@@ -370,6 +377,7 @@ def _log_db_error(
         "http_method": scope.get("method"),
         "http_path": route_for_logging(scope),
         "status_code": status_code,
+        "reference": error_reference(current_request_id() or "unknown"),
         "exception_type": type(exc).__name__,
         "driver_error": type(driver).__name__ if driver is not None else None,
         "sqlstate": getattr(driver, "sqlstate", None),

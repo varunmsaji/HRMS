@@ -93,18 +93,61 @@ Future<void> _pump(WidgetTester tester, FakeApiClient api, {CsvSharer? sharer}) 
 void main() {
   final people = [_employee(1, 'Asha'), _employee(2, 'Ben'), _employee(3, 'Bianca'), _employee(4, 'Cy')];
 
-  testWidgets('the record has both the Salary and Compensation tabs', (tester) async {
-    tester.view.physicalSize = const Size(1600, 2000);
+  Future<void> openRecord(WidgetTester tester, List<String> permissions) async {
+    tester.view.physicalSize = const Size(1600, 3000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(ProviderScope(
-      overrides: [apiClientProvider.overrideWithValue(FakeApiClient()), fakeAuth([employeeViewAll, employeeViewCompensation])],
+      overrides: [apiClientProvider.overrideWithValue(FakeApiClient()), fakeAuth(permissions)],
       child: MaterialApp(home: EmployeeDetailScreen(employee: Employee.fromJson(_employee(1, 'Asha')))),
     ));
     await tester.pumpAndSettle();
-    final tabs = find.byType(TabBar);
-    expect(find.descendant(of: tabs, matching: find.text('Compensation')), findsOneWidget);
-    expect(find.descendant(of: tabs, matching: find.text('Salary')), findsOneWidget);
+  }
+
+  testWidgets('the record has three tabs, not thirteen (MOB-UX-045)', (tester) async {
+    await openRecord(tester, [employeeViewAll, employeeViewCompensation, attendanceView]);
+    final tabs = find.descendant(of: find.byType(TabBar), matching: find.byType(Tab));
+    expect(tabs, findsNWidgets(3));
+    expect([for (final t in tester.widgetList<Tab>(tabs)) t.text], ['Overview', 'Attendance', 'Documents']);
+    // The other sections are not tabs any more...
+    final bar = find.byType(TabBar);
+    expect(find.descendant(of: bar, matching: find.text('Compensation')), findsNothing);
+    expect(find.descendant(of: bar, matching: find.text('Salary')), findsNothing);
+  });
+
+  testWidgets('every other section is a link in the Overview\'s Records card, grouped by area', (tester) async {
+    await openRecord(tester, [employeeViewAll, employeeViewCompensation, attendanceView]);
+    final records = find.byKey(const Key('overview-more-to-edit'));
+    await tester.ensureVisible(records);
+    for (final label in ['Work', 'Pay', 'Profile']) {
+      expect(find.descendant(of: records, matching: find.text(label)), findsOneWidget, reason: label);
+    }
+    for (final section in ['Employment', 'Assignment', 'Compensation', 'Salary', 'Documents']) {
+      expect(find.descendant(of: records, matching: find.text(section)), findsOneWidget, reason: section);
+    }
+  });
+
+  testWidgets('a Records link opens that section on its own screen, and back returns to the record', (tester) async {
+    await openRecord(tester, [employeeViewAll, employeeViewCompensation]);
+    final link = find.descendant(of: find.byKey(const Key('overview-more-to-edit')), matching: find.text('Compensation'));
+    await tester.ensureVisible(link);
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Compensation ·'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(TabBar), findsOneWidget);
+  });
+
+  testWidgets('a Records link to a tab (Documents) switches tab instead of opening a screen', (tester) async {
+    await openRecord(tester, [employeeViewAll, employeeViewCompensation]);
+    final link = find.descendant(of: find.byKey(const Key('overview-more-to-edit')), matching: find.text('Documents'));
+    await tester.ensureVisible(link);
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Documents ·'), findsNothing);
+    expect(tester.widget<Tab>(find.widgetWithText(Tab, 'Documents')).text, 'Documents');
+    expect(DefaultTabController.of(tester.element(find.byType(TabBarView))).index, 1);
   });
 
   testWidgets('the record offers Email, says "Confirm employment", and keeps Deactivate in the menu (MOB-UX-045/046)', (tester) async {

@@ -14,6 +14,7 @@ import '../data/roster_repository.dart';
 import '../domain/roster_views.dart';
 import 'rosters_screen.dart' show openRosterForm;
 import 'roster_view_switcher.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// Who is on which shift, by date — the Week view of Shift Rosters, as web's `app/app/rosters/schedule/week/page.tsx` (`/app/rosters/grid` redirects there): employees
 /// as rows, dates as columns, each cell the rostered shift. The names stay put while the dates
@@ -90,7 +91,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
     try {
       final shifts = await ref.read(rosterRepositoryProvider).listShifts();
       if (mounted) setState(() => _shifts = {for (final s in shifts) s.id: s});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _loadEmployees() async {
@@ -126,7 +127,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
         _page += 1;
       });
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_wrap(e).message)));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(describeApiError(_wrap(e)))));
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -231,7 +232,7 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
               icon: Icons.error_outline_rounded,
               tone: Tone.danger,
               title: "Couldn't load the roster",
-              message: error.status == 403 ? "You don't have permission to see this." : error.message,
+              message: error.status == 403 ? "You don't have permission to see this." : describeApiError(error),
               actionLabel: 'Retry',
               onAction: () {
                 if (_employeesError != null) _loadEmployees();

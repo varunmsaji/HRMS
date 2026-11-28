@@ -6,6 +6,8 @@ export class ApiError extends Error {
   readonly code: string;
   readonly details: ErrorDetail[];
   readonly requestId: string | null;
+  /** Short support reference the server logged for a 5xx (`ERR-1A2B3C4D`), when it sent one. */
+  readonly reference: string | null;
 
   constructor(params: {
     status: number;
@@ -13,6 +15,7 @@ export class ApiError extends Error {
     message: string;
     details?: ErrorDetail[];
     requestId?: string | null;
+    reference?: string | null;
   }) {
     super(params.message);
     this.name = "ApiError";
@@ -20,6 +23,7 @@ export class ApiError extends Error {
     this.code = params.code;
     this.details = params.details ?? [];
     this.requestId = params.requestId ?? null;
+    this.reference = params.reference ?? null;
   }
 }
 
@@ -68,6 +72,19 @@ export function timeoutError(requestId: string | null, isWrite: boolean): Networ
  * Matching on the last dot-segment handles both without the caller needing to know which path
  * produced the error.
  */
+/**
+ * Like `getFieldError`, but matches the *tail* of the dotted path, so `contact.email` and
+ * `address.country_code` can be told apart from a top-level `country_code`. A detail whose path
+ * is `body.contact.email` matches `("contact", "email")`.
+ */
+export function getNestedFieldError(details: ErrorDetail[], ...path: string[]): string | undefined {
+  const wanted = path.join(".");
+  return details.find((detail) => {
+    if (!detail.field) return false;
+    return detail.field === wanted || detail.field.endsWith(`.${wanted}`);
+  })?.message;
+}
+
 export function getFieldError(details: ErrorDetail[], field: string): string | undefined {
   return details.find((detail) => {
     if (!detail.field) return false;
@@ -95,8 +112,11 @@ export function isApiError(error: unknown): error is ApiError {
  * (validation, permission, conflict), which the message already explains.
  */
 export function errorReference(error: unknown): string | null {
-  if (!isApiError(error) || !error.requestId) return null;
-  return error.status === 0 || error.status >= 500 ? error.requestId : null;
+  if (!isApiError(error)) return null;
+  if (error.status !== 0 && error.status < 500) return null;
+  // The server's short reference when it sent one; otherwise the request id (network failures,
+  // proxy errors and older servers have no reference).
+  return error.reference ?? error.requestId;
 }
 
 /** True when repeating the *same read* is reasonable: no response, a gateway/availability
@@ -113,8 +133,14 @@ export function describeApiError(error: unknown): string {
     const reference = errorReference(error);
     return reference ? `${error.message} (Reference: ${reference})` : error.message;
   }
-  if (error instanceof Error) return error.message;
+  // Never the message of a non-API error (a TypeError, a library failure): it can hold internals.
   return "Something went wrong. Please try again.";
+}
+
+/** {@link describeApiError} for an error state that may be empty: the fallback when there is no
+ * error, otherwise the safe text (with the support reference for a server failure). */
+export function describeError(error: ApiError | null | undefined, fallback: string): string {
+  return error ? describeApiError(error) : fallback;
 }
 
 /**
@@ -148,5 +174,5 @@ export function describeLifecycleError(error: unknown): string {
       : "Compensation must be in the company's currency.";
   }
   if (error.status === 422 && detail?.message) return detail.message;
-  return error.message;
+  return describeApiError(error);
 }

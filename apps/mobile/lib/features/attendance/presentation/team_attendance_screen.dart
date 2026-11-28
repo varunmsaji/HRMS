@@ -24,6 +24,7 @@ import 'attendance_widgets.dart';
 import 'mark_attendance_screen.dart';
 import 'mismatch_fixes.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
 
@@ -140,7 +141,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
     try {
       final c = await loadChoices(ref.read(apiClientProvider), const ['employees']);
       if (mounted) setState(() => _employees = c['employees'] ?? const []);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -204,7 +205,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Calculation queued for ${ids.length} ${ids.length == 1 ? 'day' : 'days'}. Refresh in a minute to see them counted.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? 'Could not queue the calculation: ${e.message}' : 'Could not queue the calculation.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? 'Could not queue the calculation: ${describeApiError(e)}' : 'Could not queue the calculation.')));
     } finally {
       if (mounted) setState(() => _queuing = false);
     }
@@ -272,6 +273,55 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
         _ => d.raw['is_pending_approval'] == true,
       };
 
+  /// The chips for the day being looked at. "Not in yet" only means something for today (a past
+  /// day's gaps are absences), so it is offered only then. Each is a one-tap version of a filter
+  /// the sheet already has.
+  List<({String key, String label, int count, bool selected, VoidCallback onTap})> _quickChips(AttendanceSummary summary) {
+    final today = _date == businessToday(_zone);
+    void flag(String f) => setState(() {
+          _flag = _flag == f ? null : f;
+          _bucket = null;
+        });
+    final missing = _days.where((d) => _matches(d, 'missing_punch')).length;
+    final missingOn = _exceptions.contains('missing_punch');
+    return [
+      if (today) (key: 'not_checked_in', label: 'Not in yet', count: summary.notCheckedIn, selected: _flag == 'not_checked_in', onTap: () => flag('not_checked_in')),
+      (key: 'late', label: 'Late', count: summary.late, selected: _flag == 'late', onTap: () => flag('late')),
+      (
+        key: 'missing_punch',
+        label: 'Missing punch',
+        count: missing,
+        selected: missingOn,
+        onTap: () => setState(() {
+              final next = {..._exceptions};
+              missingOn ? next.remove('missing_punch') : next.add('missing_punch');
+              _filter = _filter.withGroup('exceptions', next.join(','));
+            }),
+      ),
+    ];
+  }
+
+  Widget _quickChipRow(List<({String key, String label, int count, bool selected, VoidCallback onTap})> chips) {
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        itemCount: chips.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final c = chips[i];
+          return FilterChip(
+            key: ValueKey('quick_${c.key}'),
+            label: Text('${c.label} ${c.count}'),
+            selected: c.selected,
+            onSelected: (_) => c.onTap(),
+          );
+        },
+      ),
+    );
+  }
+
   String _name(String employeeId) {
     for (final c in _employees) {
       if (c.value == employeeId) return c.label;
@@ -307,6 +357,9 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
       });
     final visible = [for (final (_, d) in ranked) if (!narrow || mismatchOf(d) != null) d];
     final summary = AttendanceSummary.compute(_days);
+    final chips = _quickChips(summary);
+    // A flag with its own chip is cleared by that chip; the "Showing" tag is for the others.
+    final flagHasChip = _flag != null && chips.any((c) => c.key == _flag);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Team attendance'),
@@ -360,17 +413,19 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
               onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
             ),
           ),
+        // One-tap versions of the filters managers use every morning (MOB-UX-047).
+        if (!_loading && _error == null && _days.isNotEmpty) _quickChipRow(chips),
         Expanded(
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load attendance", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
-                          if (_bucket != null || _flag != null)
+                          if (_bucket != null || (_flag != null && !flagHasChip))
                             Padding(
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Align(

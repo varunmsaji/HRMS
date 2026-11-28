@@ -38,6 +38,7 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import type { Branch } from "@/lib/branch/types";
 
 interface UserSummary {
   user_id: string;
@@ -47,6 +48,55 @@ interface UserSummary {
   is_primary: boolean;
   status: string;
   role_codes: string[];
+  /** Live branches this user covers; only meaningful for HR admin / branch manager. */
+  branch_ids?: string[];
+}
+
+/** Roles that see only the branches an admin assigns (unless the user is also a company admin). */
+const BRANCH_ROLES = ["HR_ADMIN", "BRANCH_MANAGER"];
+
+function needsBranches(roles: Iterable<string>): boolean {
+  const set = new Set(roles);
+  return !set.has("COMPANY_ADMIN") && BRANCH_ROLES.some((code) => set.has(code));
+}
+
+function BranchPicker({
+  branches,
+  selected,
+  onChange,
+  disabled,
+}: {
+  branches: Branch[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <fieldset className="space-y-2" disabled={disabled}>
+      <legend className="text-sm font-medium text-foreground">Branches they cover</legend>
+      <p className="text-xs text-foreground-secondary">
+        Choose at least one. They see and manage only these branches.
+      </p>
+      {branches.length === 0 ? (
+        <p className="text-sm text-foreground-secondary">No active branches yet.</p>
+      ) : (
+        branches.map((branch) => (
+          <label key={branch.id} className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
+              checked={selected.has(branch.id)}
+              onChange={(e) => {
+                const next = new Set(selected);
+                if (e.target.checked) next.add(branch.id);
+                else next.delete(branch.id);
+                onChange(next);
+              }}
+            />
+            {branch.name}
+          </label>
+        ))
+      )}
+    </fieldset>
+  );
 }
 
 const ASSIGNABLE_ROLES = [
@@ -56,6 +106,12 @@ const ASSIGNABLE_ROLES = [
   "BRANCH_MANAGER",
   "EMPLOYEE",
 ] as const;
+
+function branchSummary(ids: string[], branches: Branch[]): string {
+  if (ids.length === 0) return "No branches assigned";
+  const names = ids.map((id) => branches.find((b) => b.id === id)?.name).filter(Boolean);
+  return `Branches: ${names.length > 0 ? names.join(", ") : `${ids.length} assigned`}`;
+}
 
 function userName(user: UserSummary): string {
   return [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email || "—";
@@ -75,11 +131,14 @@ export default function UsersPage() {
 
   const [roleDialogUser, setRoleDialogUser] = useState<UserSummary | null>(null);
   const [roleSelection, setRoleSelection] = useState<Set<string>>(new Set());
+  const [roleBranches, setRoleBranches] = useState<Set<string>>(new Set());
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [savingRoles, setSavingRoles] = useState(false);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<string>("EMPLOYEE");
+  const [inviteBranches, setInviteBranches] = useState<Set<string>>(new Set());
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
 
@@ -116,17 +175,32 @@ export default function UsersPage() {
     void load(page);
   }, [load, page]);
 
+  useEffect(() => {
+    if (!canManageUsers && !canManageRoles) return;
+    apiClient
+      .get<Branch[]>("/branches")
+      .then((rows) => setBranches(rows.filter((b) => b.is_active !== false)))
+      .catch(() => setBranches([]));
+  }, [canManageUsers, canManageRoles]);
+
   function openRoleDialog(user: UserSummary) {
     setRoleDialogUser(user);
     setRoleSelection(new Set(user.role_codes));
+    setRoleBranches(new Set(user.branch_ids ?? []));
   }
 
   async function handleSaveRoles() {
     if (!roleDialogUser) return;
+    const branchRestricted = needsBranches(roleSelection);
+    if (branchRestricted && roleBranches.size === 0) {
+      toast({ title: "Choose at least one branch for this role.", variant: "danger" });
+      return;
+    }
     setSavingRoles(true);
     try {
       await apiClient.patch(`/users/${roleDialogUser.user_id}/roles`, {
         role_codes: Array.from(roleSelection),
+        branch_ids: branchRestricted ? Array.from(roleBranches) : [],
       });
       toast({ title: "Roles updated", variant: "success" });
       setRoleDialogUser(null);
@@ -152,6 +226,10 @@ export default function UsersPage() {
       setInviteError("Enter an email address.");
       return;
     }
+    if (needsBranches([inviteRole]) && inviteBranches.size === 0) {
+      setInviteError("Choose at least one branch for this role.");
+      return;
+    }
     setInviting(true);
     try {
       const result = await apiClient.post<{ email: string; email_sent: boolean }>(
@@ -159,6 +237,7 @@ export default function UsersPage() {
         {
           email: inviteEmail.trim(),
           role_code: inviteRole,
+          branch_ids: needsBranches([inviteRole]) ? Array.from(inviteBranches) : [],
         },
       );
       toast({
@@ -171,6 +250,7 @@ export default function UsersPage() {
       setInviteOpen(false);
       setInviteEmail("");
       setInviteRole("EMPLOYEE");
+      setInviteBranches(new Set());
     } catch (err) {
       if (err instanceof ApiError && (err.status === 422 || err.status === 409)) {
         setInviteError(err.message);
@@ -213,7 +293,7 @@ export default function UsersPage() {
 
         {error && !loading ? (
           <div className="p-6">
-            <ErrorState message={error.message} onRetry={() => void load(page)} />
+            <ErrorState message={describeApiError(error)} onRetry={() => void load(page)} />
           </div>
         ) : null}
 
@@ -256,6 +336,11 @@ export default function UsersPage() {
                         ))
                       )}
                     </div>
+                    {needsBranches(user.role_codes) ? (
+                      <p className="mt-1 text-xs text-foreground-secondary">
+                        {branchSummary(user.branch_ids ?? [], branches)}
+                      </p>
+                    ) : null}
                   </TableCell>
                   {canManageRoles ? (
                     <TableCell align="right">
@@ -313,6 +398,14 @@ export default function UsersPage() {
               </label>
             ))}
           </div>
+          {needsBranches(roleSelection) ? (
+            <BranchPicker
+              branches={branches}
+              selected={roleBranches}
+              onChange={setRoleBranches}
+              disabled={savingRoles}
+            />
+          ) : null}
           <DialogFooter>
             <Button
               type="button"
@@ -364,6 +457,14 @@ export default function UsersPage() {
                 ))}
               </NativeSelect>
             </FormField>
+            {needsBranches([inviteRole]) ? (
+              <BranchPicker
+                branches={branches}
+                selected={inviteBranches}
+                onChange={setInviteBranches}
+                disabled={inviting}
+              />
+            ) : null}
           </div>
           <DialogFooter>
             <Button

@@ -28,7 +28,7 @@ import {
   TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useLeaveTypes } from "@/lib/leave-type/use-leave-types";
@@ -138,7 +138,7 @@ export function PolicyListPage<
               message={
                 error.status === 403
                   ? `You do not have permission to view ${plural}.`
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadPolicies()}
             />

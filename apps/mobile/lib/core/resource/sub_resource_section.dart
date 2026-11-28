@@ -165,7 +165,7 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
       _load();
       widget.onChanged?.call();
     } catch (e) {
-      _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Reloading.' : e.message) : 'Something went wrong.');
+      _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Reloading.' : describeApiError(e)) : 'Something went wrong.');
       _load();
     }
   }
@@ -182,7 +182,7 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
         if (_loading)
           const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
         else if (_error != null)
-          Column(children: [Text(_error!.message), TextButton(onPressed: _load, child: const Text('Retry'))])
+          Column(children: [Text(describeApiError(_error!)), TextButton(onPressed: _load, child: const Text('Retry'))])
         else if (_rows.isEmpty)
           Text(widget.emptyLabel ?? 'Nothing here yet.', style: TextStyle(color: scheme.onSurfaceVariant))
         else

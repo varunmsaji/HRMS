@@ -15,6 +15,7 @@ import '../../../core/widgets/ui.dart';
 import '../../../features/shell/more_action.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/dashboard_repository.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepository>(
   (ref) => DashboardRepository(ref.watch(apiClientProvider)),
@@ -216,8 +217,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     CompanyInsights? insights;
     try {
       insights = await ref.read(dashboardRepositoryProvider).getInsights(leaveScope: scope, branchId: _branchId);
-    } catch (_) {
+    } catch (e, s) {
       // Keep the figures already shown; the switch shows the period they cover.
+      AppDiagnostics.instance.recordHandled(e, s);
     }
     if (!mounted || scope != _leaveScope) return;
     setState(() {
@@ -282,7 +284,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           icon: forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
           tone: forbidden ? Tone.warning : Tone.danger,
           title: forbidden ? 'No access' : 'Couldn\'t load the dashboard',
-          message: forbidden ? 'You do not have permission to view the company dashboard.' : _error!.message,
+          message: forbidden ? 'You do not have permission to view the company dashboard.' : describeApiError(_error!),
           actionLabel: forbidden ? null : 'Try again',
           onAction: _load,
         ),

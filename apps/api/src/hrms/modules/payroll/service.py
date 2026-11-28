@@ -21,6 +21,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -210,6 +211,22 @@ DEFAULT_STRUCTURES: tuple[tuple[str, str, str, Decimal], ...] = (
 )
 DEFAULT_STRUCTURE_EFFECTIVE_FROM = date(2000, 1, 1)
 _EMPLOYER_PF_CAP_MINOR = 180_000
+
+
+def _validation_summary(exc: ValueError) -> str:
+    """The user-facing text of a failed validation. Pydantic's own `str()` carries its internal
+    format, the model name, the rejected input and a documentation URL; only `loc` and `msg` of each
+    error are meant for a person. A plain `ValueError` from our own code is already a curated
+    sentence."""
+    if isinstance(exc, PydanticValidationError):
+        return (
+            "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors()
+            )
+            or "The parameters are not valid."
+        )
+    return str(exc)
 
 
 def _default_lines(hra_percentage: Decimal) -> list[dict[str, Any]]:
@@ -1320,7 +1337,7 @@ class EmployeeSalaryService:
                 esi_applicable=esi,
             )
         except SalaryBreakupUnavailableError as exc:
-            raise EmployeeSalaryInvalidError(exc.message) from exc
+            raise EmployeeSalaryInvalidError(exc.client_message) from exc
         except BreakupError as exc:
             raise EmployeeSalaryInvalidError(str(exc), field="salary_structure_id") from exc
 
@@ -1740,7 +1757,9 @@ class EmployeeSalaryService:
                         user_agent=user_agent,
                     )
             except (EmployeeSalaryInvalidError, NotFoundError) as exc:
-                skipped.append(EmployeeSalaryBulkSkip(employee_id=employee_id, reason=exc.message))
+                skipped.append(
+                    EmployeeSalaryBulkSkip(employee_id=employee_id, reason=exc.client_message)
+                )
                 continue
             assigned.append(employee_id)
         return EmployeeSalaryBulkResult(assigned=assigned, skipped=skipped)
@@ -3771,7 +3790,9 @@ class StatutoryRateService:
             try:
                 values["parameters"] = validate_statutory_parameters(row.scheme, body.parameters)
             except ValueError as exc:
-                raise StatutoryRateInvalidError(str(exc), field="parameters") from exc
+                raise StatutoryRateInvalidError(
+                    _validation_summary(exc), field="parameters"
+                ) from exc
         if "notes" in body.model_fields_set:
             values["notes"] = body.notes
         updated = await self._repo.update(

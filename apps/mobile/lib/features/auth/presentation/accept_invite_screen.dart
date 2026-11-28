@@ -120,9 +120,9 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
         } else if (error.status == 423) {
           setState(() => _formError = 'This account is temporarily locked. Try again later.');
         } else if (error.status == 409) {
-          setState(() => _formError = error.message);
+          setState(() => _formError = describeApiError(error));
         } else {
-          setState(() => _formError = error.message);
+          setState(() => _formError = describeApiError(error));
         }
       } else {
         setState(() => _formError = 'Something went wrong. Please try again.');
@@ -145,7 +145,7 @@ class _AcceptInviteScreenState extends ConsumerState<AcceptInviteScreen> {
         child: Text(
           _loadError?.status == 404
               ? 'This invite link is invalid or has expired. Please ask your admin to send a new one.'
-              : (_loadError?.message ?? 'Something went wrong.'),
+              : describeError(_loadError, 'Something went wrong.'),
           textAlign: TextAlign.center,
         ),
       );

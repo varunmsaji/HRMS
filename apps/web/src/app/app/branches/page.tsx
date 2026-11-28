@@ -43,6 +43,7 @@ import {
 } from "@/lib/branch/validate-branch";
 import type { CompanyProfile } from "@/lib/company/types";
 import type { LegalEntity } from "@/lib/legal-entity/types";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 export default function BranchesPage() {
   const { toast } = useToast();
@@ -69,7 +70,7 @@ export default function BranchesPage() {
       const [branchData, entityData, companyData] = await Promise.all([
         apiClient.get<Branch[]>("/branches"),
         apiClient.get<LegalEntity[]>("/legal-entities"),
-        apiClient.get<CompanyProfile>("/companies/current").catch(() => null),
+        apiClient.get<CompanyProfile>("/companies/current").catch(reportedFallback(null)),
       ]);
       setBranches(branchData);
       setLegalEntities(entityData);
@@ -215,7 +216,7 @@ export default function BranchesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view branches."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadBranches()}
             />

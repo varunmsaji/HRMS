@@ -272,7 +272,7 @@ export default function DepartmentDetailPage() {
                   ? "You do not have permission to view this department."
                   : error.status === 404
                     ? "This department could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={error.status === 404 ? undefined : () => void loadDepartment()}
             />

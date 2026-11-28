@@ -317,4 +317,76 @@ void main() {
       expect(find.textContaining('awaiting your decision'), findsNothing);
     });
   });
+
+  group('swipe to decide (a shortcut for the buttons)', () {
+    Widget regPanel() => Scaffold(body: RegularizationDecisionCenterPanel(now: _now));
+    Widget leavePanel() => Scaffold(body: LeaveDecisionCenterPanel(now: _now));
+    Finder card() => find.byType(Dismissible);
+
+    testWidgets('swiping right opens the same approve step as the button, and decides nothing yet', (tester) async {
+      final api = _Api(objects: {_regPath: _regData(), '/regularizations/r-1': _regItem(), '/regularizations/r-1/approve': {..._regItem(), 'status': 'APPROVED'}});
+      await _pump(tester, api, regPanel());
+      await tester.drag(card(), const Offset(300, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget, reason: 'the review dialog, exactly as the Approve button opens it');
+      expect(api.asked, contains('/regularizations/r-1'));
+      expect(api.calls, isEmpty, reason: 'a swipe alone never approves');
+      await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
+      await tester.pumpAndSettle();
+      expect(api.calls.single.path, '/regularizations/r-1/approve');
+    });
+
+    testWidgets('swiping left opens the reject step, and backing out leaves the card where it was', (tester) async {
+      final api = _Api(objects: {_regPath: _regData(), '/regularizations/r-1': _regItem()});
+      await _pump(tester, api, regPanel());
+      await tester.drag(card(), const Offset(-300, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(api.calls, isEmpty);
+      expect(card(), findsOneWidget, reason: 'the card springs back; it is only removed when the list refreshes after a decision');
+      expect(find.text('Ravi Iyer (E-2)'), findsOneWidget);
+    });
+
+    testWidgets('a short swipe does nothing', (tester) async {
+      final api = _Api(objects: {_regPath: _regData(), '/regularizations/r-1': _regItem()});
+      await _pump(tester, api, regPanel());
+      await tester.drag(card(), const Offset(40, 0));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(api.asked, isNot(contains('/regularizations/r-1')));
+    });
+
+    testWidgets('your own request and a decided one cannot be swiped', (tester) async {
+      await _pump(tester, _Api(objects: {_regPath: {..._regData(), 'items': [_regItem(employeeId: 'me')]}}), regPanel());
+      expect(card(), findsNothing);
+      await _pump(tester, _Api(objects: {_leavePath: _leaveData(items: [_leaveItem(status: 'APPROVED')])}), leavePanel());
+      expect(card(), findsNothing);
+    });
+
+    testWidgets('a leave request swipes the same way, through the same review', (tester) async {
+      final api = _Api(objects: {_leavePath: _leaveData(), '/leave-applications/l-1': _leaveItem()});
+      await _pump(tester, api, leavePanel());
+      expect(card(), findsOneWidget);
+      await tester.drag(card(), const Offset(300, 0));
+      await tester.pumpAndSettle();
+      expect(api.asked, contains('/leave-applications/l-1'), reason: 'the application is read for its current version, as the button does');
+      expect(api.calls.where((c) => c.path.contains('approve')), isEmpty);
+    });
+
+    testWidgets('the pending list says how to swipe; another tab does not', (tester) async {
+      await _pump(tester, _Api(objects: {_regPath: _regData()}), regPanel());
+      expect(find.textContaining('swipe a request right to approve'), findsOneWidget);
+      await tester.tap(find.textContaining('Approved ('));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('swipe a request right to approve'), findsNothing);
+    });
+
+    testWidgets('the buttons are still on the card', (tester) async {
+      await _pump(tester, _Api(objects: {_regPath: _regData()}), regPanel());
+      expect(find.widgetWithText(FilledButton, 'Approve'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Reject'), findsOneWidget);
+    });
+  });
 }

@@ -11,6 +11,7 @@ import '../../features/auth/state/auth_controller.dart';
 import 'resource_config.dart';
 import 'resource_screens.dart' show displayValue;
 import '../format.dart';
+import '../diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -61,7 +62,7 @@ class _VersionsSectionState extends ConsumerState<VersionsSection> {
     try {
       final choices = await loadChoices(_client, keys);
       if (mounted) setState(() => _names = {for (final e in choices.entries) e.key: {for (final c in e.value) c.value: c.label}});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _load() async {
@@ -86,7 +87,7 @@ class _VersionsSectionState extends ConsumerState<VersionsSection> {
     if (e is ApiError) {
       if (e.code == 'STALE_RESOURCE') return 'This ${_v.noun} was changed by someone else. Reloading.';
       if (e.status == 403) return "You don't have permission to do that.";
-      return e.message;
+      return describeApiError(e);
     }
     return 'Something went wrong.';
   }
@@ -261,7 +262,7 @@ class _VersionsSectionState extends ConsumerState<VersionsSection> {
         if (_loading)
           const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
         else if (_error != null)
-          Column(children: [Text(_error!.message), TextButton(onPressed: _load, child: const Text('Retry'))])
+          Column(children: [Text(describeApiError(_error!)), TextButton(onPressed: _load, child: const Text('Retry'))])
         else if (_versions.isEmpty)
           Text('No versions yet.', style: TextStyle(color: scheme.onSurfaceVariant))
         else

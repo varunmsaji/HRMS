@@ -90,6 +90,11 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # Indian PAN (`ABCDE1234F`).
     (re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"), REDACTED),
+    # Aadhaar number: 12 digits, first digit 2-9, optionally grouped 4-4-4. The lookarounds keep a
+    # UUID's last group, an epoch and longer ids intact. Bank account numbers (9-18 digits) have no
+    # such safe pattern - they collide with epochs and ids - so those are masked by field name
+    # (`account_number`, `ifsc`), never by value.
+    (re.compile(r"(?<![\w-])[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?![\w-])"), REDACTED),
     # Token-bearing URL path segments (same prefixes as `redact_path`), but not a route
     # template's `{token}` placeholder, which is exactly what the logs should show.
     (
@@ -107,6 +112,20 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 MAX_FIELD_CHARS = 2_000
 MAX_EXCEPTION_CHARS = 16_000
 _MAX_DEPTH = 4
+
+
+#: A `*_reason` field is normally a short code (`outside_window`); it is also where free text a
+#: person typed ("fever, doctor's note attached") would land. Anything that is not code-shaped is
+#: treated as free text.
+_REASON_CODE = re.compile(r"[A-Za-z0-9_.:-]{1,48}")
+
+
+def _is_free_text_reason(key: str, value: object) -> bool:
+    return (
+        key.lower().endswith("_reason")
+        and isinstance(value, str)
+        and _REASON_CODE.fullmatch(value) is None
+    )
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -135,7 +154,7 @@ def _redact_value(value: object, depth: int, limit: int) -> object:
     if isinstance(value, dict):
         return {
             k: REDACTED
-            if isinstance(k, str) and _is_sensitive_key(k)
+            if isinstance(k, str) and (_is_sensitive_key(k) or _is_free_text_reason(k, v))
             else _redact_value(v, depth + 1, MAX_FIELD_CHARS)
             for k, v in value.items()
         }
@@ -161,7 +180,7 @@ def redact_event(
         for key, value in event_dict.items():
             if key in _STRUCTURAL_KEYS:
                 out[key] = value
-            elif _is_sensitive_key(key):
+            elif _is_sensitive_key(key) or _is_free_text_reason(key, value):
                 out[key] = REDACTED
             else:
                 limit = MAX_EXCEPTION_CHARS if key == "exception" else MAX_FIELD_CHARS

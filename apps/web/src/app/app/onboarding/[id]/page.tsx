@@ -50,7 +50,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { formatDateTime } from "@/lib/attendance/format";
@@ -70,6 +70,7 @@ import {
   type OnboardingInvite,
   type OnboardingSectionName,
 } from "@/lib/onboarding/types";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 function ReviewStatusBadge({ status }: { status: string }) {
   if (status === "VERIFIED") return <Badge variant="success" dot>Verified</Badge>;
@@ -351,10 +352,10 @@ export default function OnboardingCaseDetailPage() {
     try {
       const [data, branches, departments, designations, legalEntities] = await Promise.all([
         apiClient.get<OnboardingCaseDetail>(`/onboarding-cases/${params.id}`),
-        apiClient.get<Branch[]>("/branches").catch(() => []),
-        apiClient.get<Department[]>("/departments").catch(() => []),
-        apiClient.get<Designation[]>("/designations").catch(() => []),
-        apiClient.get<LegalEntity[]>("/legal-entities").catch(() => []),
+        apiClient.get<Branch[]>("/branches").catch(reportedFallback([])),
+        apiClient.get<Department[]>("/departments").catch(reportedFallback([])),
+        apiClient.get<Designation[]>("/designations").catch(reportedFallback([])),
+        apiClient.get<LegalEntity[]>("/legal-entities").catch(reportedFallback([])),
       ]);
       setOnboardingCase(data);
       setRefs({ branches, departments, designations, legalEntities });
@@ -584,7 +585,7 @@ export default function OnboardingCaseDetailPage() {
             ? "This onboarding case could not be found."
             : error?.status === 403
               ? "You do not have permission to view this onboarding case."
-              : error?.message ?? "Something went wrong."
+              : describeError(error, "Something went wrong.")
         }
         onRetry={() => void load()}
       />

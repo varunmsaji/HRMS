@@ -173,7 +173,7 @@ export function StatutoryPanel({ employeeId }: StatutoryPanelProps) {
               message={
                 error.status === 403
                   ? "You do not have permission to view this employee's statutory information."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

@@ -9,6 +9,7 @@ class ApiError implements Exception {
     required this.message,
     this.details = const [],
     this.requestId,
+    this.reference,
   });
 
   final int status;
@@ -16,6 +17,9 @@ class ApiError implements Exception {
   final String message;
   final List<ErrorDetail> details;
   final String? requestId;
+
+  /// The short support reference (`ERR-1A2B3C4D`) the server logged for a 5xx, when it sent one.
+  final String? reference;
 
   @override
   String toString() => message;
@@ -46,8 +50,11 @@ class NetworkError extends ApiError {
 /// The support reference for a failure the user cannot fix (a server error or no response):
 /// the request id the API logged it under. Null for ordinary 4xx outcomes.
 String? errorReference(Object error) {
-  if (error is! ApiError || error.requestId == null) return null;
-  return error.status == 0 || error.status >= 500 ? error.requestId : null;
+  if (error is! ApiError) return null;
+  if (error.status != 0 && error.status < 500) return null;
+  // The server's short reference when it sent one; otherwise the request id (network failures,
+  // proxy errors and older servers have no reference).
+  return error.reference ?? error.requestId;
 }
 
 /// True when repeating the *same read* is reasonable. Never use it to resubmit a write.
@@ -77,3 +84,8 @@ String describeApiError(Object error) {
   }
   return 'Something went wrong. Please try again.';
 }
+
+/// [describeApiError] for an error that may be absent: [fallback] when there is none, otherwise
+/// the safe text (with the support reference for a server failure).
+String describeError(ApiError? error, String fallback) =>
+    error == null ? fallback : describeApiError(error);

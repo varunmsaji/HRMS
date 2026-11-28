@@ -27,7 +27,7 @@ import {
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import {
   employeeOptionName,
@@ -212,7 +212,7 @@ export function AssignmentHistoryPanel({
             message={
               error.status === 403
                 ? "You do not have permission to view all policy assignments. Filter by a policy type you manage."
-                : error.message
+                : describeApiError(error)
             }
             onRetry={() => setRefresh((n) => n + 1)}
           />

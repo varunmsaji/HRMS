@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import type { EmployeeDocument } from "@/lib/employee/types";
 import type { LeaveApplication } from "@/lib/leave-application/types";
 import type { LeaveBalance } from "@/lib/leave-ledger/types";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 function SideCard({ title, icon, action, children }: { title: string; icon: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -45,7 +46,7 @@ export function EmployeeSideCards({ employeeId }: { employeeId: string }) {
     apiClient
       .get<LeaveBalance[]>(`/leave-balances?employee_id=${employeeId}`)
       .then((d) => !cancelled && setBalances(d))
-      .catch(() => {});
+      .catch(reportHandledError);
     apiClient
       .getList<LeaveApplication>("/leave-applications", {
         employee_id: employeeId,
@@ -58,11 +59,11 @@ export function EmployeeSideCards({ employeeId }: { employeeId: string }) {
         const upcoming = data.filter((a) => a.end_date >= today).sort((a, b) => a.start_date.localeCompare(b.start_date));
         setNextLeave(upcoming[0] ?? null);
       })
-      .catch(() => {});
+      .catch(reportHandledError);
     apiClient
       .get<EmployeeDocument[]>(`/employees/${employeeId}/documents`)
       .then((d) => !cancelled && setDocuments(d))
-      .catch(() => {});
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };

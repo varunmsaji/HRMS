@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { formatDateTime, formatMinutes } from "@/lib/attendance/format";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
@@ -119,7 +119,7 @@ export default function OvertimeDetailPage() {
           message={
             error.status === 404
               ? "This overtime record was not found, or you don't have access to it."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

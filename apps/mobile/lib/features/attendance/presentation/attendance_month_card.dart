@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/export/file_share.dart';
 import '../../../core/time.dart';
 import '../../../core/theme/app_colors.dart';
 import '../data/attendance_repository.dart';
@@ -74,7 +75,7 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
       if (mounted) setState(() => _byDate = {for (final d in days) d.attendanceDate: d});
       if (mounted) widget.onLoaded?.call(_iso(_month).substring(0, 7), days);
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -83,6 +84,25 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
   void _shift(int delta) {
     setState(() => _month = DateTime(_month.year, _month.month + delta));
     _load();
+  }
+
+  static const _statementFormats = {
+    'pdf': ('PDF', 'application/pdf'),
+    'xlsx': ('Excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+    'csv': ('CSV', 'text/csv'),
+  };
+
+  /// Downloads this month's statement and opens the share sheet (save to Files, mail, chat…).
+  Future<void> _downloadStatement(String format) async {
+    final month = _iso(_month).substring(0, 7);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(content: Text('Preparing the statement…')));
+    try {
+      final file = await ref.read(attendanceRepositoryProvider).downloadStatement(widget.employeeId, month, format: format);
+      await ref.read(fileSharerProvider)(file.filename ?? 'statement_$month.$format', file.bytes, _statementFormats[format]!.$2);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e is ApiError ? describeApiError(e) : 'Could not download the statement.')));
+    }
   }
 
   bool _provisional(AttendanceDay d) => d.attendanceDate == businessToday(widget.zone, now: widget.now) && isNotCheckedIn(d) && !d.isLocked;
@@ -115,6 +135,14 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
             IconButton(onPressed: () => _shift(-1), icon: const Icon(Icons.chevron_left)),
             Expanded(child: Text('${_monthNames[_month.month - 1]} ${_month.year}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16))),
             IconButton(onPressed: () => _shift(1), icon: const Icon(Icons.chevron_right)),
+            PopupMenuButton<String>(
+              tooltip: 'Download statement',
+              icon: const Icon(Icons.download_outlined),
+              onSelected: _downloadStatement,
+              itemBuilder: (_) => [
+                for (final e in _statementFormats.entries) PopupMenuItem(value: e.key, child: Text('Statement (${e.value.$1})')),
+              ],
+            ),
           ]),
           if (_loading)
             const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))

@@ -36,11 +36,13 @@ interface PunctualityPanelProps {
   frequent: FrequentLate[];
   employeesById: Map<string, EmployeeLite>;
   onViewLate: () => void;
+  /** Opens the late arrivals in one band; without it the bands are plain bars. */
+  onViewBand?: (bandKey: string) => void;
 }
 
 /** How punctual the workforce is over the selected range: the on-time rate, how late "late"
  * usually is, and who is late again and again. */
-export function PunctualityPanel({ summary, frequent, employeesById, onViewLate }: PunctualityPanelProps) {
+export function PunctualityPanel({ summary, frequent, employeesById, onViewLate, onViewBand }: PunctualityPanelProps) {
   if (summary.checkedIn === 0) {
     return (
       <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-foreground-secondary">
@@ -55,33 +57,55 @@ export function PunctualityPanel({ summary, frequent, employeesById, onViewLate 
         <Stat
           label="On time"
           value={formatPct(summary.onTimeRate)}
-          hint={`${summary.onTime} of ${summary.checkedIn} check-ins`}
+          hint={`${summary.onTime} of ${summary.checkedIn} completed days`}
           tone={summary.late === 0 ? "good" : undefined}
         />
-        <Stat label="Late arrivals" value={String(summary.late)} hint={formatPct(summary.lateRate) + " of check-ins"} tone={summary.late > 0 ? "warn" : undefined} />
+        <Stat label="Late arrivals" value={String(summary.late)} hint={formatPct(summary.lateRate) + " of completed days"} tone={summary.late > 0 ? "warn" : undefined} />
         <Stat
           label="Average lateness"
           value={summary.avgLateMinutes === null ? "—" : `${Math.round(summary.avgLateMinutes)} min`}
           hint="On late days only"
         />
       </div>
+      <p className="text-xs text-foreground-muted">
+        A completed day has both an IN and an OUT punch. A day still open is not judged yet, so these figures can differ from the Late tile, which counts every check-in.
+      </p>
 
       {summary.late > 0 ? (
         <div>
           <p className="mb-2 text-xs font-medium text-foreground-secondary">How late</p>
           <ul className="space-y-1.5">
-            {summary.bands.map((band, bandIndex) => (
-              <li key={band.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)_2rem] items-center gap-3 text-xs">
-                <span className="text-foreground-secondary">{band.label}</span>
-                <span className="h-2 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-                  <span
-                    className="block h-full origin-left animate-grow-x rounded-full bg-warning"
-                    style={{ width: `${(band.count / maxBand) * 100}%`, animationDelay: `${bandIndex * 70}ms` }}
-                  />
-                </span>
-                <span className="text-right tabular-nums font-medium text-foreground">{band.count}</span>
-              </li>
-            ))}
+            {summary.bands.map((band, bandIndex) => {
+              const row = (
+                <>
+                  <span className="text-foreground-secondary">{band.label}</span>
+                  <span className="h-2 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+                    <span
+                      className="block h-full origin-left animate-grow-x rounded-full bg-warning"
+                      style={{ width: `${(band.count / maxBand) * 100}%`, animationDelay: `${bandIndex * 70}ms` }}
+                    />
+                  </span>
+                  <span className="text-right tabular-nums font-medium text-foreground">{band.count}</span>
+                </>
+              );
+              const grid = "grid w-full grid-cols-[6.5rem_minmax(0,1fr)_2rem] items-center gap-3 text-xs";
+              return (
+                <li key={band.key}>
+                  {onViewBand && band.count > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onViewBand(band.key)}
+                      aria-label={`${band.label}: ${band.count} late arrivals. Show these days`}
+                      className={cn(grid, "rounded-md py-0.5 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
+                    >
+                      {row}
+                    </button>
+                  ) : (
+                    <div className={grid}>{row}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}
@@ -122,7 +146,7 @@ export function PunctualityPanel({ summary, frequent, employeesById, onViewLate 
 }
 
 /** Absence rate for each weekday, so a "Monday problem" or a long-weekend pattern is visible. */
-export function WeekdayPanel({ stats }: { stats: WeekdayStat[] }) {
+export function WeekdayPanel({ stats, onSelectWeekday }: { stats: WeekdayStat[]; onSelectWeekday?: (index: number) => void }) {
   const worst = worstWeekday(stats);
   const max = Math.max(1, ...stats.map((s) => s.rate ?? 0));
   if (stats.every((s) => s.expected === 0)) {
@@ -139,13 +163,26 @@ export function WeekdayPanel({ stats }: { stats: WeekdayStat[] }) {
           ? `${worst.label}s have the highest absence — ${formatPct(worst.rate)} of expected days.`
           : "No weekday stands out: absence is spread evenly, or there is none in this range."}
       </p>
-      <div role="img" aria-label="Absence rate by weekday" className="flex h-36 items-end gap-2">
+      {/* An image hides its children from assistive technology, so clickable bars sit in a group. */}
+      <div role={onSelectWeekday ? "group" : "img"} aria-label="Absence rate by weekday" className="flex h-36 items-end gap-2">
         {stats.map((stat) => {
           const isWorst = worst?.index === stat.index;
+          const clickable = onSelectWeekday !== undefined && stat.absent > 0;
+          const Column = clickable ? "button" : "div";
           return (
-            <div
+            <Column
               key={stat.index}
-              className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
+              {...(clickable
+                ? {
+                    type: "button" as const,
+                    onClick: () => onSelectWeekday(stat.index),
+                    "aria-label": `${stat.label}: ${stat.absent} absent days. Show these days`,
+                  }
+                : {})}
+              className={cn(
+                "flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1",
+                clickable && "rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
               title={stat.rate === null ? `${stat.label}: no expected days` : `${stat.label}: ${formatPct(stat.rate)} absent (${stat.absent} of ${stat.expected})`}
             >
               <span className={cn("text-[11px] tabular-nums", isWorst ? "font-semibold text-danger" : "text-foreground-muted")}>
@@ -164,7 +201,7 @@ export function WeekdayPanel({ stats }: { stats: WeekdayStat[] }) {
                 />
               </div>
               <span className={cn("text-xs", isWorst ? "font-semibold text-foreground" : "text-foreground-secondary")}>{stat.label}</span>
-            </div>
+            </Column>
           );
         })}
       </div>

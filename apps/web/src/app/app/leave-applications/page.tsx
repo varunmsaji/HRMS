@@ -35,7 +35,7 @@ import { EmployeeSelect } from "@/components/employee/employee-select";
 import { apiClient } from "@/lib/api/client";
 import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { useEmployeeNames } from "@/lib/employee/use-employee-names";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { initialQueryValue } from "@/lib/dashboard/overview";
 import { businessToday } from "@/lib/attendance/format";
@@ -242,7 +242,7 @@ export default function LeaveApplicationsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view these applications."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load(page)}
             />

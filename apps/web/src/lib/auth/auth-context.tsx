@@ -12,6 +12,7 @@ import {
   type StoredSession,
 } from "@/lib/auth/token-storage";
 import type { LoginRequest, MeResponseData, TokenResponseData, UserProfile } from "@/lib/auth/types";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -95,8 +96,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     try {
       await apiClient.post("/auth/logout");
-    } catch {
-      // Best-effort server-side revoke — the client-side session is cleared regardless.
+    } catch (error) {
+      // Best-effort server-side revoke — the client-side session is cleared regardless. A failed
+      // revoke leaves the refresh token alive on the server, so it is reported.
+      reportHandledError(error);
     } finally {
       clearSession();
       setState({ status: "unauthenticated", session: null, user: null });

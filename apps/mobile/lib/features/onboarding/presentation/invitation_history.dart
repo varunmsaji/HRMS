@@ -51,7 +51,7 @@ class _InvitationHistoryState extends ConsumerState<InvitationHistory> {
       if (mounted) {
         setState(() {
           _messages = null;
-          _error = e is ApiError && e.status == 403 ? "You don't have permission to view invitation history." : 'Could not load invitation history: ${e is ApiError ? e.message : 'something went wrong.'}';
+          _error = e is ApiError && e.status == 403 ? "You don't have permission to view invitation history." : 'Could not load invitation history: ${e is ApiError ? describeApiError(e) : 'something went wrong.'}';
         });
       }
     }

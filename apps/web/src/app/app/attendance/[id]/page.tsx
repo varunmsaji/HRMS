@@ -36,6 +36,7 @@ import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveDayProjection } from "@/lib/leave-projection/types";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -121,7 +122,7 @@ export default function AttendanceDayDetailPage() {
       t.setUTCDate(t.getUTCDate() + n);
       return t.toISOString().slice(0, 10);
     };
-    apiClient.get<EmployeeLite>(`/employees/${dayEmployee}`).then((e) => !cancelled && e && !Array.isArray(e) && setEmployee(e)).catch(() => {});
+    apiClient.get<EmployeeLite>(`/employees/${dayEmployee}`).then((e) => !cancelled && e && !Array.isArray(e) && setEmployee(e)).catch(reportHandledError);
     if (dayShift) {
       apiClient
         .get<{ id: string; name: string }[]>("/shifts")
@@ -129,7 +130,7 @@ export default function AttendanceDayDetailPage() {
           const match = Array.isArray(list) ? list.find((s) => s.id === dayShift) : undefined;
           if (!cancelled && match) setShiftName(match.name);
         })
-        .catch(() => {});
+        .catch(reportHandledError);
     }
     const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
     apiClient
@@ -139,11 +140,11 @@ export default function AttendanceDayDetailPage() {
     apiClient
       .get<{ events: BreakEventLite[] }>(`/attendance/breaks/day?${q({ employee_id: dayEmployee, date: dayDate })}`)
       .then((d) => !cancelled && Array.isArray(d?.events) && setBreakEvents(d.events))
-      .catch(() => {});
+      .catch(reportHandledError);
     apiClient
       .get<RegularizationRequest[]>(`/regularizations?${q({ employee_id: dayEmployee })}`)
       .then((list) => !cancelled && Array.isArray(list) && setRequests(list.filter((r) => r.attendance_date === dayDate)))
-      .catch(() => {});
+      .catch(reportHandledError);
     apiClient
       .get<AttendanceDay[]>(`/attendance/days?${q({ employee_id: dayEmployee, date_from: shift(dayDate, -1), date_to: shift(dayDate, 1) })}`)
       .then((list) => {
@@ -153,7 +154,7 @@ export default function AttendanceDayDetailPage() {
           next: list.find((d) => d.attendance_date === shift(dayDate, 1))?.id ?? null,
         });
       })
-      .catch(() => {});
+      .catch(reportHandledError);
     return () => {
       cancelled = true;
     };
@@ -234,7 +235,7 @@ export default function AttendanceDayDetailPage() {
           message={
             error.status === 404
               ? "This attendance day was not found, or you don't have access to it."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

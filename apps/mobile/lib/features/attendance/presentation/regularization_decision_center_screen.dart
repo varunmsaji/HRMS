@@ -32,6 +32,7 @@ class RegularizationDecisionCenterPanel extends ConsumerWidget {
       count: (d, tab) => d.counts[tab] ?? 0,
       forbiddenMessage: 'You do not have permission to review regularizations.',
       narrowHint: 'Use Team to filter further.',
+      pendingHint: 'Tip: swipe a request right to approve or left to reject. You are asked to confirm first.',
       emptyIcon: Icons.edit_note,
       stats: (d) => [
         DecisionStat('Awaiting your decision', '${d.pendingCount}', needsAction: d.pendingCount > 0, note: d.oldestPendingAt == null ? 'Nothing waiting' : 'Oldest submitted ${relativeTime(d.oldestPendingAt!, now: now)}'),
@@ -93,7 +94,13 @@ class _RegularizationCard extends StatelessWidget {
               ]),
             ),
         ]);
-    return AppCard(
+    return SwipeToDecide(
+      id: item.id,
+      enabled: item.isPending && canReview,
+      approveLabel: 'Approve',
+      onApprove: () => _decide(context, approve: true),
+      onReject: () => _decide(context, approve: false),
+      child: AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         DecisionCardHeader(
           name: item.employeeName,
@@ -138,6 +145,7 @@ class _RegularizationCard extends StatelessWidget {
           onApprove: item.isPending && canReview ? () => _decide(context, approve: true) : null,
         ),
       ]),
+      ),
     );
   }
 }

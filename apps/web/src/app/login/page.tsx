@@ -11,7 +11,7 @@ import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { landingPathFor } from "@/lib/auth/landing";
 import {
@@ -97,7 +97,7 @@ export default function LoginPage() {
         } else if (error.status === 429) {
           setFormError("Too many attempts. Please wait a moment and try again.");
         } else {
-          setFormError(error.message);
+          setFormError(describeApiError(error));
         }
       } else {
         setFormError("Something went wrong. Please try again.");

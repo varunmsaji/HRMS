@@ -16,6 +16,9 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const TRANSFER_TIMEOUT_MS = 120_000;
 
+/** Shown when the server answered without the API's envelope (a proxy or platform error page). */
+const GENERIC_FAILURE_MESSAGE = "Something went wrong. Please try again.";
+
 /** Gateway failures from the proxy arrive without the API's JSON envelope. */
 const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
 
@@ -181,8 +184,9 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
         errorPayload?.error?.message ??
         (!hasEnvelope && UNAVAILABLE_STATUSES.has(response.status)
           ? "The service is temporarily unavailable. Please try again in a moment."
-          : `Request failed with status ${response.status}`),
+          : GENERIC_FAILURE_MESSAGE),
       details: errorPayload?.error?.details ?? [],
+      reference: errorPayload?.error?.reference ?? null,
       // The envelope's id, else the API's response header, else the id this client sent.
       requestId:
         errorPayload?.error?.request_id ?? response.headers?.get?.("X-Request-Id") ?? sentRequestId,

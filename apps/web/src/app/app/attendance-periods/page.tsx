@@ -26,7 +26,7 @@ import {
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -132,7 +132,7 @@ export default function AttendancePeriodsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view attendance periods."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

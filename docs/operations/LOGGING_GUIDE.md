@@ -296,3 +296,27 @@ docker compose -f docker-compose.prod.yml logs --since 10m api | grep file_loggi
   running — monitor disk space and `log_file_writes_dropped`.
 * Sub-second ordering across processes follows lock acquisition order, not event time — sort by
   `timestamp` when reconstructing a sequence.
+
+## Finding an error a user reported (the `ERR-…` reference)
+
+A server failure shows the user a reference such as `ERR-1A2B3C4D` (web and mobile show it next to
+"Something went wrong"). It is a hash of the request id, written on every server-error record as
+the `reference` field, so one search finds the whole story:
+
+1. Platform console → Logs → channel `errors` → search `ERR-1A2B3C4D`, or
+   `grep -h '"reference": "ERR-1A2B3C4D"' apps/api/logs/errors.log*`.
+2. The record has the traceback (`exception`), `http_path` (route template), `status_code`,
+   `company_id`, `user_id`, and the `request_id` — search that id to see the access line and any
+   other event from the same request or the Celery task it started.
+3. A failure on the user's *device* (a crashed screen, an unhandled promise rejection) arrives as a
+   `client_error` event (`POST /v1/client-errors`, rate limited, no message text): `source`
+   (`web`/`mobile`), `error_class`, the top code locations in `frames`, `page_path`, and the
+   `reference`/`client_request_id` of the API call that failed, when there was one.
+
+Retention: `LOG_RETENTION_DAYS` (default 30) deletes rotated log files older than that; the
+example env files for staging, QA and production set it. `errors.log` contains tracebacks, so keep
+it as short as your investigations allow.
+
+Alerts on server errors already exist (`HrmsUnhandledExceptions`, `HrmsHigh5xxRate` in
+`infra/monitoring/prometheus/alerts.yml`); they only notify someone once the monitoring overlay
+(`docker-compose.monitoring.yml`) is running in production.

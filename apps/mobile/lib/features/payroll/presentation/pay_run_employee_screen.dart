@@ -62,7 +62,7 @@ class _PayRunEmployeeScreenState extends ConsumerState<PayRunEmployeeScreen> {
       body: _loading
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this payslip", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this payslip", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [

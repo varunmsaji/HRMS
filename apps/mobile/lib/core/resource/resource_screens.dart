@@ -13,6 +13,7 @@ import '../theme/employee_theme_scope.dart';
 import '../widgets/ui.dart';
 import 'resource_config.dart';
 import 'versions_section.dart';
+import '../diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -134,7 +135,7 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
                   icon: _error!.status == 403 ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
                   tone: _error!.status == 403 ? Tone.warning : Tone.danger,
                   title: _error!.status == 403 ? 'No access' : 'Couldn\'t load this',
-                  message: _error!.status == 403 ? 'You do not have permission to view ${_c.title.toLowerCase()}.' : _error!.message,
+                  message: _error!.status == 403 ? 'You do not have permission to view ${_c.title.toLowerCase()}.' : describeApiError(_error!),
                   actionLabel: _error!.status == 403 ? null : 'Try again',
                   onAction: _load,
                 )
@@ -228,14 +229,14 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
     try {
       final choices = await loadChoices(_client, keys);
       if (mounted) setState(() => _names = {for (final e in choices.entries) e.key: {for (final c in e.value) c.value: c.label}});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _reload() async {
     try {
       final latest = await _client.get<Rec>(_url, parse: (d) => d as Rec);
       if (mounted) setState(() => _row = latest);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -244,7 +245,7 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
     if (e is ApiError) {
       if (e.code == 'STALE_RESOURCE') return 'This ${_c.singular.toLowerCase()} was changed by someone else. Reload and try again.';
       if (e.status == 403) return "You don't have permission to do that.";
-      return e.message;
+      return describeApiError(e);
     }
     return 'Something went wrong.';
   }

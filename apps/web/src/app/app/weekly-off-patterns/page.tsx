@@ -154,7 +154,7 @@ export default function WeeklyOffPatternsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view weekly-off patterns."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadPatterns()}
             />

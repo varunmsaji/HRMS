@@ -12,6 +12,7 @@ import '../../auth/state/auth_controller.dart';
 import '../domain/roster_form.dart';
 import 'rosters_screen.dart' show openRosterForm;
 import 'roster_view_switcher.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -59,7 +60,7 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
           if (_employeeId.isEmpty && _employees.isNotEmpty) _employeeId = _employees.first.value;
         });
       }
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     _load();
   }
 
@@ -130,7 +131,7 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
           IconButton(tooltip: 'Next month', icon: const Icon(Icons.chevron_right), onPressed: () => _shift(1)),
         ]),
         if (_loading) const LinearProgressIndicator(),
-        if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(_error!.message)),
+        if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(describeApiError(_error!))),
         Row(children: [for (final d in const ['M', 'T', 'W', 'T', 'F', 'S', 'S']) Expanded(child: Center(child: Text(d, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))))]),
         Expanded(
           child: GridView.builder(

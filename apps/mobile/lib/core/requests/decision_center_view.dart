@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/api_error.dart';
+import '../theme/app_theme.dart';
 import '../widgets/ui.dart';
 
 /// One headline figure at the top of a decision centre.
@@ -27,6 +29,7 @@ class DecisionCenterView<T> extends StatefulWidget {
     required this.forbiddenMessage,
     required this.narrowHint,
     required this.emptyIcon,
+    this.pendingHint,
   });
 
   /// Tab key and label.
@@ -44,6 +47,9 @@ class DecisionCenterView<T> extends StatefulWidget {
   /// Where to go for the rest when the server sent only part of a tab.
   final String narrowHint;
   final IconData emptyIcon;
+
+  /// A line shown above the cards of the pending tab (how to use the swipe shortcut).
+  final String? pendingHint;
 
   @override
   State<DecisionCenterView<T>> createState() => _DecisionCenterViewState<T>();
@@ -113,7 +119,7 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
           ]),
           const SizedBox(height: 12),
           if (_error != null)
-            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : _error!.message, actionLabel: 'Try again', onAction: _load)
+            StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load requests', message: _error!.status == 403 ? widget.forbiddenMessage : describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
           else if (_loading)
             const ListSkeleton(count: 3, embedded: true)
           else if (cards.isEmpty)
@@ -121,6 +127,8 @@ class _DecisionCenterViewState<T> extends State<DecisionCenterView<T>> {
                 ? StateMessage(icon: widget.emptyIcon, tone: Tone.success, title: 'Nothing awaiting your decision', message: 'New requests appear here as soon as they are submitted.')
                 : StateMessage(icon: widget.emptyIcon, title: 'Nothing here yet', message: 'Requests appear here once they are decided.')
           else ...[
+            if (_tab == 'pending' && widget.pendingHint != null)
+              Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(widget.pendingHint!, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
             for (final card in cards) Padding(padding: const EdgeInsets.only(bottom: 12), child: card),
             if (data != null && widget.count(data, _tab) > cards.length)
               Text('Showing ${cards.length} of ${widget.count(data, _tab)}. ${widget.narrowHint}', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
@@ -279,5 +287,64 @@ class DecisionCardFooter extends StatelessWidget {
       ],
       Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: onDetails, child: Text(detailsLabel))),
     ]);
+  }
+}
+
+
+/// A shortcut for the Reject and Approve buttons of a request card: swipe right to approve, left to
+/// reject.
+///
+/// A swipe never decides anything by itself. It opens exactly what the button opens (the review
+/// dialog, with its rules, its optional comment and the required reason for a rejection), and the
+/// card springs back until that is confirmed. So an accidental swipe costs one dismissed dialog,
+/// not a decision that moves a leave balance or a payroll input. The buttons stay on the card for
+/// anyone who prefers them or uses a screen reader.
+class SwipeToDecide extends StatelessWidget {
+  const SwipeToDecide({super.key, required this.id, required this.enabled, required this.approveLabel, required this.onApprove, required this.onReject, required this.child});
+
+  /// The request's id, so each card is its own swipe target.
+  final String id;
+
+  /// False when the viewer cannot decide this request (not pending, or their own).
+  final bool enabled;
+  final String approveLabel;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    final approve = toneColors(context, Tone.success);
+    final reject = toneColors(context, Tone.danger);
+    Widget hint(Color bg, Color fg, IconData icon, String label, Alignment align) => Container(
+          alignment: align,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(AppRadii.card)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (align == Alignment.centerLeft) Icon(icon, color: fg),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            if (align == Alignment.centerRight) Icon(icon, color: fg),
+          ]),
+        );
+    return Dismissible(
+      key: ValueKey('swipe-decide-$id'),
+      background: hint(approve.bg, approve.fg, Icons.check_circle_outline_rounded, approveLabel, Alignment.centerLeft),
+      secondaryBackground: hint(reject.bg, reject.fg, Icons.cancel_outlined, 'Reject', Alignment.centerRight),
+      dismissThresholds: const {DismissDirection.startToEnd: 0.4, DismissDirection.endToStart: 0.4},
+      confirmDismiss: (direction) async {
+        HapticFeedback.selectionClick();
+        // Open the same step the button opens, then let the card go back where it was.
+        if (direction == DismissDirection.startToEnd) {
+          onApprove();
+        } else {
+          onReject();
+        }
+        return false;
+      },
+      child: child,
+    );
   }
 }

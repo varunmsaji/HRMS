@@ -138,7 +138,7 @@ class MismatchFixer {
       _toast('Leave kept.');
       onChanged();
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
   }
 

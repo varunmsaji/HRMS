@@ -10,6 +10,9 @@ import { BreakdownPanel } from "@/components/attendance/dashboard/breakdown-pane
 import { AttendanceDashboardSkeleton } from "@/components/attendance/dashboard/dashboard-skeleton";
 import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboard/insight-panels";
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
+import { useSection } from "@/components/attendance/dashboard/use-dashboard-data";
+import { useTeamSize } from "@/components/attendance/dashboard/use-team-size";
+import { PatternAlertsPanel } from "@/components/attendance/dashboard/pattern-alerts";
 import { MusterHeatmap } from "@/components/attendance/dashboard/muster-heatmap";
 import { NeedsAttention } from "@/components/attendance/dashboard/needs-attention";
 import { NotCalculatedNotice } from "@/components/attendance/dashboard/not-calculated-notice";
@@ -33,6 +36,11 @@ import { Button } from "@/components/ui/button";
 import {
   BUCKET_LABELS,
   DEFAULT_FILTERS,
+  LATE_BANDS,
+  type DateRange,
+  type DrillScope,
+  type LateBandKey,
+  type WeekdayKey,
   FLAG_LABELS,
   applyDrillFilters,
   applyPopulationFilters,
@@ -53,6 +61,7 @@ import {
   serializeFilters,
   summarizeOvertime,
   summarizeWorkHours,
+  weekdayLabel,
   windowRange,
   bucketOf,
   type DashboardFilters,
@@ -76,8 +85,11 @@ import {
   toGroupStats,
   toKpiSet,
   toPunctuality,
+  summaryQuery,
   toRatePoints,
 } from "@/lib/attendance/summary";
+import type { PatternAlerts } from "@/lib/attendance/patterns";
+import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -188,13 +200,20 @@ function AttendanceDashboard() {
   const directory = useDirectoryDetails(employeeIds, canListEmployees);
   const directoryMap = directory.status === "ready" ? directory.data?.byEmployee : undefined;
   const directoryPending = canListEmployees && employeeIds.length > 0 && directory.status !== "ready" && directory.status !== "error";
+  // A manager is someone with direct reports, known before any attendance rows arrive; reading the
+  // rows is the fallback when that lookup fails or the caller has an employee record but no reports.
+  const teamSize = useTeamSize(myEmployeeId, !canViewAll && can("EMPLOYEE.VIEW"));
   const mode: "org" | "team" | "self" | "pending" = canViewAll
     ? "org"
-    : !allDays
+    : teamSize.status === "loading"
       ? "pending"
-      : allDays.some((d) => d.employee_id !== myEmployeeId)
+      : teamSize.status === "ready" && teamSize.total > 0
         ? "team"
-        : "self";
+        : !allDays
+          ? "pending"
+          : allDays.some((d) => d.employee_id !== myEmployeeId)
+            ? "team"
+            : "self";
 
   // Every total and chart on the page: counted by the backend, only reshaped here.
   const summary = data.summary.data;
@@ -265,8 +284,10 @@ function AttendanceDashboard() {
   // (F5-1). `filters.scope` distinguishes that drill source from every focus-date drill (KPI
   // card, status chart, toolbar status select), which never set it and must keep drilling
   // `focusRows` exactly as before.
-  const rangeScoped = filters.scope === "range" && (filters.bucket !== "" || filters.flag !== "");
-  const listSource = rangeScoped ? rangeRows : focusRows;
+  const rangeScoped = filters.scope !== "" && (filters.bucket !== "" || filters.flag !== "");
+  // A chart that counts the fetched window (range widened for context) drills into that window.
+  const windowRows = useMemo(() => rowsInRange(population, win), [population, win]);
+  const listSource = !rangeScoped ? focusRows : filters.scope === "window" ? windowRows : rangeRows;
   const listRows = useMemo<WhosInRow[]>(() => {
     const rows: WhosInRow[] = applyDrillFilters(listSource, filters).map((day) => ({
       id: day.id,
@@ -329,6 +350,20 @@ function AttendanceDashboard() {
   const muster = useMemo(
     () => buildMuster(population, musterDates(win), employeesById),
     [population, win, employeesById],
+  );
+
+  // Who keeps being late or absent, looked at up to the end of the selected range, with the
+  // dashboard's own population filters. The server limits it to the people the caller may see.
+  const patternQuery = useMemo(() => {
+    const query = summaryQuery(range, filters);
+    delete query.date_from;
+    delete query.date_to;
+    return new URLSearchParams({ as_of: range.to, ...query }).toString();
+  }, [range, filters]);
+  const patterns = useSection<PatternAlerts>(
+    () => apiClient.get<PatternAlerts>(`/attendance/pattern-alerts?${patternQuery}`),
+    `patterns|${patternQuery}`,
+    mode === "org" || mode === "team",
   );
 
   const winLabel = `${formatShortDate(win.from)} – ${formatShortDate(win.to)}`;
@@ -409,18 +444,52 @@ function AttendanceDashboard() {
     [employeesById, pendingRequestByDay, canApproveRegularization, canRecompute, canMarkDay, timezone],
   );
 
-  function drill(target: { bucket?: DayBucket; flag?: DayFlag; scope?: "range"; clear?: boolean }) {
+  function drill(target: {
+    bucket?: DayBucket;
+    flag?: DayFlag;
+    scope?: DrillScope;
+    lateBand?: LateBandKey;
+    weekday?: WeekdayKey;
+    clear?: boolean;
+  }) {
+    const none: Pick<DashboardFilters, "bucket" | "flag" | "scope" | "lateBand" | "weekday"> = {
+      bucket: "",
+      flag: "",
+      scope: "",
+      lateBand: "",
+      weekday: "",
+    };
     setFilters((prev) => {
-      if (target.clear) return { ...prev, bucket: "", flag: "", scope: "" };
-      const bucket = target.bucket ?? "";
-      const flag = target.flag ?? "";
-      // Omitting `scope` (every focus-date drill source) always resets it to "" — otherwise a
-      // leftover range-scoped drill would silently carry over into an unrelated focus-date drill.
-      const scope = target.scope ?? "";
+      if (target.clear) return { ...prev, ...none };
+      const next: Pick<DashboardFilters, "bucket" | "flag" | "scope" | "lateBand" | "weekday"> = {
+        bucket: target.bucket ?? "",
+        flag: target.flag ?? "",
+        // Omitting `scope` (every focus-date drill source) always resets it to "" — otherwise a
+        // leftover range-scoped drill would silently carry over into an unrelated focus-date drill.
+        scope: target.scope ?? "",
+        lateBand: target.lateBand ?? "",
+        weekday: target.weekday ?? "",
+      };
       // Clicking the active drill again clears it.
-      if (prev.bucket === bucket && prev.flag === flag && prev.scope === scope) return { ...prev, bucket: "", flag: "", scope: "" };
-      return { ...prev, bucket, flag, scope };
+      if (
+        prev.bucket === next.bucket &&
+        prev.flag === next.flag &&
+        prev.scope === next.scope &&
+        prev.lateBand === next.lateBand &&
+        prev.weekday === next.weekday
+      ) {
+        return { ...prev, ...none };
+      }
+      return { ...prev, ...next };
     });
+    scrollToListRef.current = true;
+    setView("today");
+    setLayout("list");
+  }
+
+  /** Opens the days behind a trend point: that period becomes the range, with no drill left over. */
+  function focusPeriod(period: DateRange) {
+    setFilters((prev) => ({ ...prev, preset: "custom", from: period.from, to: period.to, bucket: "", flag: "", scope: "", lateBand: "", weekday: "" }));
     scrollToListRef.current = true;
     setView("today");
     setLayout("list");
@@ -453,7 +522,9 @@ function AttendanceDashboard() {
       description={
         mode === "self"
           ? "Your attendance, shift and requests."
-          : "Who is working, who is absent, and what needs HR attention."
+          : mode === "team"
+            ? "Your team: who is working, who is absent, and what needs your approval."
+            : "Who is working, who is absent, and what needs HR attention."
       }
       actions={actions}
     />
@@ -474,7 +545,13 @@ function AttendanceDashboard() {
     : focusIsToday
       ? "Today's attendance"
       : `Attendance on ${formatShortDate(range.to)}`;
-  const drillDescription = [filters.bucket ? BUCKET_LABELS[filters.bucket] : null, filters.flag ? FLAG_LABELS[filters.flag] : null]
+  const drillDescription = [
+    filters.bucket ? BUCKET_LABELS[filters.bucket] : null,
+    filters.weekday ? `on ${weekdayLabel(filters.weekday)}` : null,
+    filters.flag ? FLAG_LABELS[filters.flag] : null,
+    filters.lateBand ? LATE_BANDS[filters.lateBand].label : null,
+    filters.scope === "window" ? winLabel : null,
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -530,6 +607,13 @@ function AttendanceDashboard() {
             </p>
           ) : null}
 
+          {mode === "team" ? (
+            <p className="text-sm text-foreground-secondary" data-testid="team-scope">
+              {teamSize.status === "ready" && teamSize.total > 0
+                ? `Showing your team: ${teamSize.total} ${teamSize.total === 1 ? "person reports" : "people report"} to you. Company totals and payroll close are with HR.`
+                : "Showing the people you can see. Company totals and payroll close are with HR."}
+            </p>
+          ) : null}
           <div role="tablist" aria-label="Attendance views" className="flex gap-1 overflow-x-auto border-b border-border">
             {VIEWS.map((key) => (
               <button
@@ -645,7 +729,7 @@ function AttendanceDashboard() {
             }
           >
             {layout === "grid" ? (
-              <MusterHeatmap muster={muster} />
+              <MusterHeatmap muster={muster} exportQuery={summaryQuery(range, filters)} />
             ) : (
               <WhosInPanel
                 rows={listRows}
@@ -686,7 +770,24 @@ function AttendanceDashboard() {
             description="Rates are of employees expected to work."
             status="ready"
           >
-            <TrendChart days={totals.daily} range={win} />
+            <TrendChart days={totals.daily} range={win} onSelectPeriod={focusPeriod} />
+          </SectionCard>
+
+          <SectionCard
+            id="att-patterns"
+            title="Patterns to look at"
+            description={
+              patterns.data
+                ? `People who keep being late or absent: ${patterns.data.thresholds.late_days}+ late days, ${patterns.data.thresholds.absent_days}+ absent days or ${patterns.data.thresholds.incomplete_days}+ missing punches in ${patterns.data.thresholds.window_days} days, or the same weekday ${patterns.data.thresholds.weekday_absences}+ times in ${patterns.data.thresholds.weekday_window_days} days. A prompt to look, not a finding.`
+                : "People who keep being late or absent."
+            }
+            status={patterns.status}
+            error={patterns.error}
+            onRetry={patterns.retry}
+            unavailable={patterns.status === "idle" ? "Pattern alerts aren't available for your role." : null}
+            empty={patterns.data && patterns.data.alerts.length === 0 ? { title: "No patterns found.", description: "Nobody has crossed a threshold." } : null}
+          >
+            {patterns.data ? <PatternAlertsPanel data={patterns.data} employeesById={employeesById} /> : null}
           </SectionCard>
 
           <div className="grid gap-6 lg:grid-cols-2">
@@ -701,6 +802,7 @@ function AttendanceDashboard() {
                 frequent={totals.frequentLate}
                 employeesById={employeesById}
                 onViewLate={() => drill({ flag: "late", scope: "range" })}
+                onViewBand={(key) => drill({ flag: "late", scope: "window", lateBand: key })}
               />
             </SectionCard>
             <SectionCard
@@ -720,7 +822,10 @@ function AttendanceDashboard() {
                 <div>
                   <h3 className="mb-2 text-sm font-medium text-foreground">By weekday</h3>
                   <p className="mb-2 text-xs text-foreground-muted">{winLabel} — share of expected days missed.</p>
-                  <WeekdayPanel stats={totals.weekdayStats} />
+                  <WeekdayPanel
+                    stats={totals.weekdayStats}
+                    onSelectWeekday={(index) => drill({ bucket: "ABSENT", scope: "window", weekday: String(index) as WeekdayKey })}
+                  />
                 </div>
               </div>
             </SectionCard>
@@ -772,6 +877,8 @@ function AttendanceDashboard() {
             timezone={timezone}
             today={today}
             rangeLabel={rangeLabel}
+            exportQuery={summaryQuery(range, filters)}
+            showPayroll={mode === "org"}
           />
             </div>
           ) : null}

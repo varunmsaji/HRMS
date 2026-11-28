@@ -81,7 +81,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
                   icon: Icons.error_outline_rounded,
                   tone: Tone.danger,
                   title: 'Couldn\'t load payslip',
-                  message: _error!.message,
+                  message: describeApiError(_error!),
                   actionLabel: 'Retry',
                   onAction: _fetch,
                 )

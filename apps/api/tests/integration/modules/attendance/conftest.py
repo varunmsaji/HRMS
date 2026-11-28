@@ -270,6 +270,7 @@ async def _face_tenant(
             "employee_face_profile",
             "face_enrollment_window",
             "company_face_policy",
+            "device_token",
             "notification",
         ):
             await session.execute(

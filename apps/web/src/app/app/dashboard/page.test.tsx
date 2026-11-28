@@ -41,12 +41,25 @@ const profile = {
   locale: { language_code: "en-IN", date_format: "DD/MM/YYYY" },
 } as CompanyProfile;
 
-/** `useApiResource` fires one GET per hook instance in mount order: dashboard, then profile. */
-function mockCalls(dash: unknown, prof: unknown, behavior: "resolve" | "reject" = "resolve") {
-  for (const result of [dash, prof]) {
-    if (behavior === "reject") mockedGet.mockRejectedValueOnce(result);
-    else mockedGet.mockResolvedValueOnce(result);
-  }
+const checklist = (complete: number) => ({
+  items: [],
+  required_total: 4,
+  required_complete: complete,
+  next_code: complete < 4 ? "SHIFT" : null,
+});
+
+/** Answers by path so the order the hooks fire in does not matter. */
+function mockCalls(
+  dash: unknown,
+  prof: unknown,
+  behavior: "resolve" | "reject" = "resolve",
+  setup: unknown = checklist(1),
+) {
+  mockedGet.mockImplementation(((path: string) => {
+    if (path === "/companies/current/setup-checklist") return Promise.resolve(setup);
+    const result = path === "/dashboards/company" ? dash : prof;
+    return behavior === "reject" ? Promise.reject(result) : Promise.resolve(result);
+  }) as never);
 }
 
 describe("CompanyDashboardPage", () => {
@@ -74,15 +87,16 @@ describe("CompanyDashboardPage", () => {
     render(<CompanyDashboardPage />);
 
     expect(await screen.findByText("Finish setting up Acme Manufacturing")).toBeInTheDocument();
-    expect(screen.getByText("1 of 4 steps complete")).toBeInTheDocument();
+    expect(await screen.findByText("1 of 4 essentials done")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open setup" })).toHaveAttribute("href", "/app/setup");
   });
 
   it("hides the setup banner once setup is complete", async () => {
-    mockCalls({ ...dashboard, setup_progress: { status: "COMPLETE", steps_completed: 4, steps_total: 4 } }, profile);
+    mockCalls(dashboard, profile, "resolve", checklist(4));
     render(<CompanyDashboardPage />);
 
     await screen.findByTestId("overview");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText(/Finish setting up/)).not.toBeInTheDocument();
   });
 

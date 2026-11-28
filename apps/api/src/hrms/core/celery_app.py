@@ -18,6 +18,7 @@ from celery.signals import (
     task_unknown,
 )
 from kombu import Queue  # type: ignore[import-untyped]
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from hrms.core.config.settings import get_settings
 from hrms.core.observability.logging import configure_logging, get_logger, safe_error, safe_log
@@ -126,6 +127,18 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_incomplete_reminders",
                 "schedule": crontab(minute=0, hour=10),
             },
+            # Attendance digests (`attendance/digests.py`) - both no-ops unless
+            # ATTENDANCE_DIGESTS_ENABLED. 11:00 is after the 09:30 calculation and the 10:00
+            # reminders, so "not checked in" is read after the working day has begun; each run is
+            # recorded per business date, so a repeated firing sends nothing twice.
+            "attendance-run-manager-daily-digest": {
+                "task": "attendance.run_manager_daily_digest",
+                "schedule": crontab(minute=0, hour=11, day_of_week="mon-fri"),
+            },
+            "attendance-run-hr-weekly-digest": {
+                "task": "attendance.run_hr_weekly_digest",
+                "schedule": crontab(minute=30, hour=10, day_of_week="mon"),
+            },
             # Face-record retention. A no-op until retention periods are configured (a privacy/legal
             # decision, none defaulted) and report-only until FACE_CLEANUP_DRY_RUN=false. Idempotent
             # and bounded per run, so a missed or repeated firing is harmless.
@@ -166,6 +179,25 @@ celery_app = create_celery_app()
 #: `SoftTimeLimitExceeded` inside the task so it can stop cleanly; the hard limit kills it.
 COMPANY_TASK_LIMITS: dict[str, Any] = {"soft_time_limit": 1500, "time_limit": 1800}
 FANOUT_TASK_LIMITS: dict[str, Any] = {"soft_time_limit": 120, "time_limit": 180}
+
+#: EH-B-04 — options for a task that is safe to run twice with the same result (a full-row
+#: recalculation, an outbox that only processes what is still pending, an enforcement sweep that
+#: skips what it already did). Only such a task may use them: `acks_late` + `reject_on_worker_lost`
+#: make a worker killed mid-run redeliver the task instead of losing it, and the retry covers only
+#: connection-level database failures (`OperationalError`, `InterfaceError`) - never a logic error,
+#: which would fail identically every time. Same policy Leave already applies to its own tasks.
+#: A task with an outward side effect (e-mail, push, creating records) must NOT use this; it is
+#: listed with its reason in `hrms.core.task_policy.NO_RETRY_TASKS`, and a test fails for any task
+#: that is in neither place.
+IDEMPOTENT_TASK_OPTIONS: dict[str, Any] = {
+    "acks_late": True,
+    "reject_on_worker_lost": True,
+    "autoretry_for": (OperationalError, InterfaceError),
+    "retry_backoff": 30,
+    "retry_backoff_max": 600,
+    "retry_jitter": True,
+    "max_retries": 3,
+}
 
 
 def dispatch_per_company(task: Any, company_ids: Iterable[UUID], *args: Any) -> int:

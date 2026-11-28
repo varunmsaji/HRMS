@@ -2,8 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+let mockUser: { company_status?: string } | null = null;
 vi.mock("@/lib/auth/auth-context", () => ({
-  useAuth: () => ({ session: { companyId: "company-1", accessToken: "token" } }),
+  useAuth: () => ({ session: { companyId: "company-1", accessToken: "token" }, user: mockUser }),
 }));
 
 const toastMock = vi.fn();
@@ -68,6 +69,7 @@ describe("CompanyProfilePage", () => {
     mockedGet.mockReset();
     mockedPatch.mockReset();
     toastMock.mockReset();
+    mockUser = null;
   });
 
   it("loads and renders the company profile", async () => {
@@ -162,5 +164,105 @@ describe("CompanyProfilePage", () => {
     expect(
       await screen.findByText(/do not have permission to view this company profile/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows the company code up front with a copy button", async () => {
+    mockedGet.mockResolvedValueOnce({ ...sampleProfile, login_code: "ACME42" });
+    render(<CompanyProfilePage />);
+
+    expect(await screen.findByText("ACME42")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy code/i })).toBeInTheDocument();
+    expect(screen.getByText(/employees who sign in with their employee id/i)).toBeInTheDocument();
+  });
+
+  it("switches Edit off while the company is awaiting approval", async () => {
+    mockUser = { company_status: "PENDING_APPROVAL" };
+    mockedGet.mockResolvedValueOnce(sampleProfile);
+    render(<CompanyProfilePage />);
+
+    expect(await screen.findByRole("button", { name: /edit/i })).toBeDisabled();
+  });
+
+  it("puts each server validation error on its own field, including contact and address", async () => {
+    mockedGet.mockResolvedValueOnce(sampleProfile);
+    mockedPatch.mockRejectedValueOnce(
+      new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "Invalid",
+        details: [
+          { code: "x", field: "body.contact.website", message: "Website must be a URL." },
+          { code: "x", field: "body.address.postal_code", message: "Postal code is too long." },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<CompanyProfilePage />);
+
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    await user.type(screen.getByLabelText(/legal name/i), "Changed");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Website must be a URL.")).toBeInTheDocument();
+    expect(screen.getByText("Postal code is too long.")).toBeInTheDocument();
+    expect(screen.getByText(/some details need fixing/i)).toBeInTheDocument();
+  });
+
+  it("shows the server's message when a validation error maps to no field", async () => {
+    mockedGet.mockResolvedValueOnce(sampleProfile);
+    mockedPatch.mockRejectedValueOnce(
+      new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "Something about the plan limit.",
+        details: [{ code: "x", field: "body.unknown_thing", message: "Nope" }],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<CompanyProfilePage />);
+
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    await user.type(screen.getByLabelText(/legal name/i), "Changed");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  it("checks the email address before sending", async () => {
+    mockedGet.mockResolvedValueOnce(sampleProfile);
+    const user = userEvent.setup();
+    render(<CompanyProfilePage />);
+
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    await user.type(screen.getByLabelText(/^email$/i), "not-an-email");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(mockedPatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the profile on screen when a save is refused with 403", async () => {
+    mockedGet.mockResolvedValueOnce(sampleProfile);
+    mockedPatch.mockRejectedValueOnce(
+      new ApiError({
+        status: 403,
+        code: "COMPANY_PENDING_APPROVAL",
+        message: "Your company is awaiting approval.",
+      }),
+    );
+    const user = userEvent.setup();
+    render(<CompanyProfilePage />);
+
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    await user.type(screen.getByLabelText(/legal name/i), "Changed");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Changes are switched off for this company" }),
+      ),
+    );
+    expect(screen.getByLabelText(/legal name/i)).toBeInTheDocument();
+    expect(screen.queryByText(/do not have permission to view this company profile/i)).not.toBeInTheDocument();
   });
 });

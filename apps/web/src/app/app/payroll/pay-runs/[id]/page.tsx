@@ -41,7 +41,7 @@ import {
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
-import { ApiError, describeApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
@@ -311,7 +311,7 @@ export default function PayRunDetailPage() {
         message={
           error?.status === 403
             ? "You do not have permission to view pay runs."
-            : (error?.message ?? "Pay run not found.")
+            : describeError(error, "Pay run not found.")
         }
         onRetry={() => void load()}
       />

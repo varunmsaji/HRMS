@@ -139,6 +139,63 @@ void main() {
     expect(describeApiError(error), contains('Reference: ${error.requestId}'));
   });
 
+  test('a 5xx shows the server\'s short reference; a body-less 500 has no status line', () async {
+    final (client, _) = _client(
+      (o) async => _json({
+        'error': {
+          'code': 'INTERNAL_ERROR',
+          'message': 'An unexpected error occurred',
+          'details': <Object>[],
+          'request_id': 'uuid-1',
+          'reference': 'ERR-1A2B3C4D',
+        },
+      }, 500),
+    );
+    final error =
+        await _failure(client.get('/x', authenticated: false, parse: (d) => d))
+            as ApiError;
+    expect(error.reference, 'ERR-1A2B3C4D');
+    expect(describeApiError(error), 'An unexpected error occurred (Reference: ERR-1A2B3C4D)');
+
+    final (bare, _) = _client((o) async => ResponseBody.fromString('oops', 500));
+    final plain =
+        await _failure(bare.get('/x', authenticated: false, parse: (d) => d))
+            as ApiError;
+    expect(plain.message, 'Something went wrong. Please try again.');
+  });
+
+  test('diagnostics: handled errors are recorded, reports are scrubbed, deduplicated and capped', () {
+    final sent = <DiagnosticEntry>[];
+    AppDiagnostics.instance.sink = sent.add;
+
+    // An expected 4xx and a connectivity failure are not defects.
+    AppDiagnostics.instance.recordHandled(ApiError(status: 403, code: 'PERMISSION_DENIED', message: 'x'), null);
+    AppDiagnostics.instance.recordHandled(NetworkError(), null);
+    expect(sent, isEmpty);
+
+    final secret = StateError('salary=1234567');
+    final here = StackTrace.current;
+    AppDiagnostics.instance.recordHandled(secret, here);
+    AppDiagnostics.instance.recordHandled(secret, here); // same place: once
+    expect(sent, hasLength(1));
+    final payload = sent.single.toReport();
+    expect(payload['source'], 'mobile');
+    expect(payload['error_class'], 'StateError');
+    expect(payload.toString(), isNot(contains('salary')));
+
+    AppDiagnostics.instance.recordFailedRequest(
+      ApiError(status: 500, code: 'INTERNAL_ERROR', message: 'm', requestId: 'r'),
+    );
+    expect(sent, hasLength(2)); // a 5xx is reported
+    AppDiagnostics.instance.recordFailedRequest(ApiError(status: 409, code: 'CONFLICT', message: 'm'));
+    expect(sent, hasLength(2)); // a 4xx is not
+
+    for (var i = 0; i < 30; i++) {
+      AppDiagnostics.instance.recordError(StateError('x'), null, source: 'platform$i');
+    }
+    expect(sent.length, AppDiagnostics.maxReportsPerSession);
+  });
+
   test('envelope request id wins; 4xx messages carry no reference', () async {
     final (client, _) = _client(
       (o) async => _json({

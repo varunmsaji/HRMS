@@ -71,8 +71,10 @@ const attendingBucketLabel = 'Present, remote and on duty';
 bool matchesBucket(AttendanceDay d, String bucket) =>
     bucket == attendingBucketKey ? attendingBuckets.contains(attendanceBucketOf(d)) : attendanceBucketOf(d) == bucket;
 
-/// Arrived late: late minutes on the day, or the server's late flag (web `isLate`).
-bool isLateDay(AttendanceDay d) => (d.lateMinutes ?? 0) > 0 || d.raw['is_late'] == true;
+/// Arrived late: the server's `is_late` flag, as web and the reports read it (`isLate` in
+/// attendance_insights.dart); late minutes only when a row has no flag. The engine sets the flag
+/// from the minutes after grace, so the two agree on its rows.
+bool isLateDay(AttendanceDay d) => d.raw.containsKey('is_late') ? d.raw['is_late'] == true : (d.lateMinutes ?? 0) > 0;
 
 /// Overtime detected on the day.
 bool hasOvertimeDay(AttendanceDay d) => ((d.raw['ot_minutes_detected'] as num?)?.toInt() ?? 0) > 0;

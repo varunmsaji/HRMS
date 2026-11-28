@@ -22,6 +22,13 @@ class NotificationRepository {
 
   Future<void> markRead(String id) => _client.patch<void>('/notifications/$id/read', parse: (_) {});
 
+  /// Registers this phone's push token for the signed-in user (idempotent).
+  Future<void> registerDevice({required String token, required String platform, String? appVersion}) =>
+      _client.post<void>('/notifications/devices', body: {'token': token, 'platform': platform, if (appVersion != null) 'app_version': appVersion}, parse: (_) {});
+
+  /// Stops pushes to this phone for the signed-in user (idempotent; 204).
+  Future<void> unregisterDevice(String token) => _client.post<void>('/notifications/devices/unregister', body: {'token': token}, parse: (_) {});
+
   /// Returns the unread count after the update.
   Future<int> markAllRead() => _client.post<int>('/notifications/read-all', body: const {}, parse: (d) => (d as Map<String, dynamic>)['unread_count'] as int);
 }

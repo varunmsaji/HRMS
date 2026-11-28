@@ -11,6 +11,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   BUCKET_LABELS,
+  LATE_BANDS,
   DAY_BUCKETS,
   FLAG_LABELS,
   RANGE_PRESETS,
@@ -18,6 +19,7 @@ import {
   employeeName,
   formatShortDate,
   hasActiveFilters,
+  weekdayLabel,
   type DashboardFilters,
   type DateRange,
   type DayBucket,
@@ -65,8 +67,10 @@ function activeChips(f: DashboardFilters, range: DateRange, lookups: FilterLooku
     const employee = lookups.employees.find((e) => e.id === f.employeeId);
     chips.push({ key: "employee", label: `Employee: ${employeeName(employee, f.employeeId)}`, clear: { employeeId: "" } });
   }
-  if (f.bucket) chips.push({ key: "bucket", label: `Status: ${BUCKET_LABELS[f.bucket]}`, clear: { bucket: "", scope: "" } });
-  if (f.flag) chips.push({ key: "flag", label: FLAG_LABELS[f.flag], clear: { flag: "", scope: "" } });
+  if (f.bucket) chips.push({ key: "bucket", label: `Status: ${BUCKET_LABELS[f.bucket]}`, clear: { bucket: "", scope: "", weekday: "" } });
+  if (f.weekday) chips.push({ key: "weekday", label: `On ${weekdayLabel(f.weekday)}`, clear: { weekday: "", bucket: "", scope: "" } });
+  if (f.flag) chips.push({ key: "flag", label: FLAG_LABELS[f.flag], clear: { flag: "", scope: "", lateBand: "" } });
+  if (f.lateBand) chips.push({ key: "lateBand", label: `Late ${LATE_BANDS[f.lateBand].label}`, clear: { lateBand: "", flag: "", scope: "" } });
   if (f.shiftId) {
     chips.push({ key: "shift", label: `Shift: ${lookups.shifts.find((s) => s.id === f.shiftId)?.name ?? "selected"}`, clear: { shiftId: "" } });
   }

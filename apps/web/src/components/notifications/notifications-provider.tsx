@@ -14,6 +14,7 @@ import {
 import { useOptionalToast } from "@/components/common/toast";
 import { useAuth } from "@/lib/auth/auth-context";
 import { fetchUnreadCount, listNotifications } from "@/lib/notifications/api";
+import { reportHandledError } from "@/lib/observability/report-client-error";
 
 interface NotificationsContextValue {
   unreadCount: number;
@@ -51,8 +52,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       const page = await listNotifications({ per_page: 1, unread_only: true });
       const newest = page.data[0];
       if (newest) toaster.toast({ title: newest.title, description: newest.body, variant: "info" });
-    } catch {
-      // The badge already shows the new count; the toast is a nicety.
+    } catch (error) {
+      // The badge already shows the new count; the toast is a nicety. A server failure is still
+      // worth knowing about.
+      reportHandledError(error);
     }
   }, [toaster]);
 
@@ -63,8 +66,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       const previous = known.current;
       setUnreadCount(count);
       if (previous !== null && count > previous) void announceNewest();
-    } catch {
+    } catch (error) {
       // A failed badge read must never break the shell; keep the last known count.
+      reportHandledError(error);
     }
   }, [announceNewest, setUnreadCount]);
 

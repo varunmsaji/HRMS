@@ -11,7 +11,14 @@ from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.notification.dependencies import get_notification_service
-from hrms.modules.notification.schemas import NotificationRead, ReadAllRead, UnreadCountRead
+from hrms.modules.notification.schemas import (
+    DeviceRead,
+    DeviceRegister,
+    DeviceUnregister,
+    NotificationRead,
+    ReadAllRead,
+    UnreadCountRead,
+)
 from hrms.modules.notification.service import NotificationService
 from hrms.shared.pagination import (
     DataEnvelope,
@@ -92,4 +99,36 @@ async def dismiss(
     service: Annotated[NotificationService, Depends(get_notification_service)],
 ) -> Response:
     await service.dismiss_notification(tenant.company_id, _uid(tenant), notification_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/devices", status_code=status.HTTP_200_OK)
+async def register_device(
+    body: DeviceRegister,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    service: Annotated[NotificationService, Depends(get_notification_service)],
+) -> DataEnvelope[DeviceRead]:
+    """The app registers its push token after sign-in (and whenever Firebase rotates it)."""
+    row = await service.register_device(
+        tenant.company_id,
+        _uid(tenant),
+        token=body.token,
+        platform=body.platform,
+        app_version=body.app_version,
+    )
+    return DataEnvelope(
+        data=DeviceRead(id=row.id, platform=row.platform, last_seen_at=row.last_seen_at),
+        meta=_meta(),
+    )
+
+
+@router.post("/devices/unregister", status_code=status.HTTP_204_NO_CONTENT)
+async def unregister_device(
+    body: DeviceUnregister,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    service: Annotated[NotificationService, Depends(get_notification_service)],
+) -> Response:
+    """Called on sign-out, so a phone stops receiving this user's notifications. A POST with the
+    token in the body (not DELETE /devices/{token}) keeps the token out of URLs and access logs."""
+    await service.unregister_device(tenant.company_id, _uid(tenant), token=body.token)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

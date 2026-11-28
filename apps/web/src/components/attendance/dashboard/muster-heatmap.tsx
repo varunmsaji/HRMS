@@ -1,9 +1,15 @@
 "use client";
 
+import { Download } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { useToast } from "@/components/common/toast";
+import { apiClient } from "@/lib/api/client";
+import { describeApiError } from "@/lib/api/errors";
+
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/native-select";
 
 import {
   BUCKET_GLYPHS,
@@ -14,18 +20,55 @@ import {
   formatShortDate,
   type Muster,
 } from "@/lib/attendance/dashboard";
+import { EXPORT_FORMAT_LABELS, musterRegisterPath, pdfRegisterError, saveDownloadedFile, type ExportFormat } from "@/lib/attendance/export";
 import { cn } from "@/lib/utils";
 
 const PAGE_ROWS = 25;
 
 /** Organisation heatmap / muster: one row per employee, one column per day, each cell the day's
  * status. Every cell carries a letter code and a text label as well as colour. */
-export function MusterHeatmap({ muster }: { muster: Muster }) {
+export function MusterHeatmap({ muster, exportQuery }: { muster: Muster; exportQuery: Record<string, string> }) {
+  const { toast } = useToast();
+  const [exporting, setExporting] = useState(false);
+  const [format, setFormat] = useState<ExportFormat>("csv");
+  const formatProblem = format === "pdf" ? pdfRegisterError(exportQuery.date_from, exportQuery.date_to) : null;
+  async function exportRegister() {
+    setExporting(true);
+    try {
+      const file = await apiClient.download(musterRegisterPath(exportQuery, format));
+      saveDownloadedFile(file, `muster-register_${exportQuery.date_from}_${exportQuery.date_to}.${format}`);
+    } catch (err) {
+      toast({ title: "Could not export the register", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setExporting(false);
+    }
+  }
   // 25 employees × ~30 days is already 750 cells; render more only when asked.
   const [visible, setVisible] = useState(PAGE_ROWS);
   const rows = muster.rows.slice(0, visible);
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {formatProblem ? (
+          <p role="alert" className="text-xs text-danger">
+            {formatProblem}
+          </p>
+        ) : null}
+        <label htmlFor="att-muster-format" className="sr-only">
+          Register format
+        </label>
+        <NativeSelect id="att-muster-format" className="h-8 w-28" value={format} onChange={(e) => setFormat(e.target.value as ExportFormat)}>
+          {(Object.keys(EXPORT_FORMAT_LABELS) as ExportFormat[]).map((f) => (
+            <option key={f} value={f}>
+              {EXPORT_FORMAT_LABELS[f]}
+            </option>
+          ))}
+        </NativeSelect>
+        <Button type="button" size="sm" variant="outline" disabled={muster.rows.length === 0 || exporting || formatProblem !== null} onClick={exportRegister}>
+          <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
+          {exporting ? "Preparing…" : "Export muster register"}
+        </Button>
+      </div>
       <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-foreground-secondary" aria-label="Legend">
         {DAY_BUCKETS.filter((b) => b !== "NOT_EMPLOYED" && b !== "CONFIG_ERROR").map((bucket) => (
           <li key={bucket} className="flex items-center gap-1.5">

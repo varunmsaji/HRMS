@@ -54,6 +54,12 @@ from hrms.modules.attendance.dependencies import (
     get_regularization_request_service,
     get_shift_roster_service,
 )
+from hrms.modules.attendance.digest_settings import (
+    DigestSettingsRead,
+    DigestSettingsService,
+    DigestSettingsUpdate,
+)
+from hrms.modules.attendance.documents import ExportFormat
 from hrms.modules.attendance.exceptions import FaceImageInvalidError
 from hrms.modules.attendance.face_comparison_router import router as face_comparison_router
 from hrms.modules.attendance.face_policy import (
@@ -69,8 +75,10 @@ from hrms.modules.attendance.face_rate_limit import (
 )
 from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
 from hrms.modules.attendance.geofence_form import parse_form_location
+from hrms.modules.attendance.muster_export import MusterExportService
 from hrms.modules.attendance.overview import AttendanceOverviewService
 from hrms.modules.attendance.overview_schemas import AttendanceOverviewRead
+from hrms.modules.attendance.patterns import PatternAlertService, PatternAlertsRead
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_FACE_ENROLLMENT_MANAGE,
     ATTENDANCE_LEAVE_PROJECTION_SYNC,
@@ -97,6 +105,7 @@ from hrms.modules.attendance.regularization_decision_center import (
     RegularizationTab,
     build_regularization_decision_center,
 )
+from hrms.modules.attendance.report_export import ReportExportService, ReportName
 from hrms.modules.attendance.schemas import (
     FACE_IMAGE_MAX_BYTES,
     FACE_LIVENESS_FRAME_MAX_BYTES,
@@ -177,6 +186,7 @@ from hrms.modules.attendance.service import (
     RegularizationRequestService,
     ShiftRosterService,
 )
+from hrms.modules.attendance.statement import StatementService
 from hrms.modules.attendance.summary import AttendanceSummaryService, SummaryFilters
 from hrms.modules.attendance.summary_schemas import AttendanceSummaryRead
 from hrms.modules.identity.schemas import build_meta
@@ -1182,6 +1192,250 @@ async def get_attendance_summary(
         ),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance/export/muster", status_code=status.HTTP_200_OK)
+async def export_muster_register(
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query()],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    branch_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    export_format: Annotated[ExportFormat, Query(alias="format")] = "csv",
+) -> Response:
+    """The muster register as a CSV file for up to a year: one row per employee, one column per
+    date. Same population, filters and day rules as `/attendance/summary`, limited to the
+    employees the caller's attendance scope can see. Each download is audited."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    file = await MusterExportService(session).build(
+        tenant.company_id,
+        actor_user_id=tenant.user_id,
+        date_from=date_from,
+        date_to=date_to,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+        today=business_today(company.timezone),
+        timezone=company.timezone,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+        fmt=export_format,
+    )
+    return Response(
+        content=file.content,
+        media_type=file.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file.filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/attendance/reports/{report}/export", status_code=status.HTTP_200_OK)
+async def export_attendance_report(
+    report: ReportName,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query()],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    branch_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    export_format: Annotated[ExportFormat, Query(alias="format")] = "csv",
+) -> Response:
+    """One Reports-tab report as a CSV file for up to a year: `daily`, `present-absent`,
+    `late-early`, `hours` or `overtime`. Same population, filters and day rules as
+    `/attendance/summary`, limited to the employees the caller's attendance scope can see. Each
+    download is audited."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    file = await ReportExportService(session).build(
+        tenant.company_id,
+        report,
+        actor_user_id=tenant.user_id,
+        date_from=date_from,
+        date_to=date_to,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+        today=business_today(company.timezone),
+        timezone=company.timezone,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+        fmt=export_format,
+    )
+    return Response(
+        content=file.content,
+        media_type=file.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file.filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/attendance/employees/{employee_id}/statement", status_code=status.HTTP_200_OK)
+async def download_attendance_statement(
+    employee_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    month: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$", description="The month, YYYY-MM")],
+    export_format: Annotated[ExportFormat, Query(alias="format")] = "pdf",
+) -> Response:
+    """One employee's attendance statement for a month, as a PDF (default), Excel or CSV file.
+    Limited to employees the caller's attendance scope can see: anyone else is a 404, the same as
+    an employee who does not exist. Each download is audited."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    file = await StatementService(session).build(
+        tenant.company_id,
+        employee_id,
+        month=month,
+        visible_employee_ids=visible_ids,
+        actor_user_id=tenant.user_id,
+        today=business_today(company.timezone),
+        timezone=company.timezone,
+        company_name=company.name,
+        fmt=export_format,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return Response(
+        content=file.content,
+        media_type=file.media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file.filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/attendance/pattern-alerts", status_code=status.HTTP_200_OK)
+async def get_attendance_pattern_alerts(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    as_of: Annotated[
+        date | None, Query(description="The last day looked at; default today")
+    ] = None,
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+    branch_id: Annotated[UUID | Literal["unassigned"] | None, Query()] = None,
+) -> DataEnvelope[PatternAlertsRead]:
+    """Employees who keep being late or absent: repeat lateness, frequent absence, repeat missing
+    punches, and absence on the same weekday. The same population, filters and day rules as
+    `/attendance/summary`, limited to the employees the caller's attendance scope can see. An alert
+    is a prompt to look, and lists the days behind it."""
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    today = business_today(company.timezone)
+    data = await PatternAlertService(session, get_settings()).alerts(
+        tenant.company_id,
+        as_of=as_of or today,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+        today=today,
+        timezone=company.timezone,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance/digest-settings", status_code=status.HTTP_200_OK)
+async def get_digest_settings(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+) -> DataEnvelope[DigestSettingsRead]:
+    """Whether this company receives the attendance digest emails, and whether the deployment
+    sends them at all. Both digests are on until a company switches one off."""
+    from hrms.core.config.settings import get_settings
+
+    service = DigestSettingsService(
+        session, deployment_enabled=get_settings().attendance_digests_enabled
+    )
+    return DataEnvelope(
+        data=await service.get(tenant.company_id),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
+
+
+@router.put("/attendance/digest-settings", status_code=status.HTTP_200_OK)
+async def update_digest_settings(
+    body: DigestSettingsUpdate,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+) -> DataEnvelope[DigestSettingsRead]:
+    """Opts this company in or out of each attendance digest email. The change is audited."""
+    from hrms.core.config.settings import get_settings
+
+    service = DigestSettingsService(
+        session, deployment_enabled=get_settings().attendance_digests_enabled
+    )
+    return DataEnvelope(
+        data=await service.update(tenant.company_id, body, actor_user_id=tenant.user_id),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/attendance/days/{attendance_day_id}", status_code=status.HTTP_200_OK)

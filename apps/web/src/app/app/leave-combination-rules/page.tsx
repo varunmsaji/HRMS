@@ -191,7 +191,7 @@ export default function LeaveCombinationRulesPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view combination rules."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

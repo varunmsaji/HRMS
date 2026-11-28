@@ -13,6 +13,7 @@ import '../../attendance/domain/employee_calendar.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 /// One leave type as the form needs it: its name, the employee's balance (null when the type keeps
 /// no balance row for them), and whether it is maternity leave (which asks for a delivery date).
@@ -123,7 +124,7 @@ class _LeaveApplyScreenState extends ConsumerState<LeaveApplyScreen> {
         ];
       });
     } catch (e) {
-      if (mounted) setState(() => _loadError = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _loadError = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
   }
 
@@ -166,7 +167,7 @@ class _LeaveApplyScreenState extends ConsumerState<LeaveApplyScreen> {
       if (!mounted || mine != _calendarRequest || calendar.configuration != 'COMPLETE') return;
       final working = calendar.days.where((d) => d.kind == CalendarDayKind.working || d.kind == CalendarDayKind.specialWorking).length;
       setState(() => _workingDays = working);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<void> _pickDeliveryDate() async {

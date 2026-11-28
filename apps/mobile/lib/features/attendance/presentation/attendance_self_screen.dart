@@ -115,7 +115,7 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     if (_loading && _days.isEmpty) {
       history = const AttendanceHistorySkeleton();
     } else if (_error != null && _days.isEmpty) {
-      history = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load attendance', message: _error!.message, actionLabel: 'Try again', onAction: _load);
+      history = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load attendance', message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load);
     } else if (_days.isEmpty) {
       history = const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: StateMessage(icon: Icons.event_busy_outlined, title: 'No attendance yet', message: 'Your punches will show up here.'));
     } else {

@@ -39,7 +39,7 @@ import {
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
@@ -198,7 +198,7 @@ export default function SalaryStructureDetailPage() {
   if (error || !structure) {
     return (
       <ErrorState
-        message={error?.status === 404 ? "Salary structure not found." : (error?.message ?? "")}
+        message={error?.status === 404 ? "Salary structure not found." : describeError(error, "")}
         onRetry={() => void load()}
       />
     );

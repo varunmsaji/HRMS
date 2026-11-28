@@ -807,6 +807,7 @@ class AttendanceQueueUnavailableError(AppError):
 
     code = "ATTENDANCE_QUEUE_UNAVAILABLE"
     status_code = 503
+    public_message = "The calculation could not be queued. Try again shortly"
     headers = {"Retry-After": "5"}
 
     def __init__(
@@ -837,6 +838,7 @@ class FaceVerificationUnavailableError(AppError):
 
     code = "FACE_VERIFICATION_UNAVAILABLE"
     status_code = 503
+    public_message = "Face verification is not enabled for this deployment"
 
     def __init__(
         self, message: str = "Face verification is not enabled for this deployment"
@@ -850,6 +852,7 @@ class FaceProviderFailedError(AppError):
 
     code = "FACE_PROVIDER_FAILED"
     status_code = 502
+    public_message = "Face verification service is unavailable; try again shortly"
 
     def __init__(
         self, message: str = "Face verification service is unavailable; try again shortly"
@@ -1140,6 +1143,7 @@ class FaceLivenessUnavailableError(AppError):
 
     code = "FACE_LIVENESS_UNAVAILABLE"
     status_code = 503
+    public_message = "Face attendance is temporarily unavailable; use another punch method"
 
     def __init__(
         self, message: str = "Face attendance is temporarily unavailable; use another punch method"
@@ -1150,6 +1154,7 @@ class FaceLivenessUnavailableError(AppError):
 class FaceLivenessTimeoutError(AppError):
     code = "FACE_LIVENESS_TIMEOUT"
     status_code = 503
+    public_message = "Face check took too long; please try again in a moment"
 
     def __init__(
         self, message: str = "Face check took too long; please try again in a moment"

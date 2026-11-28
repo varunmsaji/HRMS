@@ -145,7 +145,7 @@ export default function HolidayCalendarsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view holiday calendars."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadCalendars()}
             />

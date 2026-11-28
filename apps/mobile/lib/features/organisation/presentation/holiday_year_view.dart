@@ -219,7 +219,7 @@ class _HolidayYearViewState extends ConsumerState<HolidayYearView> {
           IconButton(tooltip: 'Next year', onPressed: () => _shift(1), icon: const Icon(Icons.chevron_right_rounded)),
         ]),
         if (_error != null)
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_error!.message), TextButton(onPressed: _load, child: const Text('Try again'))])
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(describeApiError(_error!)), TextButton(onPressed: _load, child: const Text('Try again'))])
         else if (holidays == null)
           const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(semanticsLabel: 'Loading holidays…')))
         else ...[

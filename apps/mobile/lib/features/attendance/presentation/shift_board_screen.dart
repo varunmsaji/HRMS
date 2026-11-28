@@ -53,7 +53,7 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
     if (_allowed) _load();
   }
 
-  String _describe(Object e) => e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This entry was changed by someone else. Try again.' : (e.status == 403 ? "You don't have permission to do that." : e.message)) : 'Something went wrong.';
+  String _describe(Object e) => e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This entry was changed by someone else. Try again.' : (e.status == 403 ? "You don't have permission to do that." : describeApiError(e))) : 'Something went wrong.';
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
@@ -233,7 +233,7 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
           ],
           const SizedBox(height: 12),
           if (_error != null)
-            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the board", message: _error!.status == 403 ? "You don't have permission to see this." : _error!.message, actionLabel: 'Retry', onAction: _load)
+            StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load the board", message: _error!.status == 403 ? "You don't have permission to see this." : describeApiError(_error!), actionLabel: 'Retry', onAction: _load)
           else if (_loading && _employees == null)
             const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
           else ...[

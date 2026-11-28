@@ -225,7 +225,7 @@ export default function PayRunsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view pay runs."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

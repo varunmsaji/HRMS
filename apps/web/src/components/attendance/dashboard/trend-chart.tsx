@@ -7,6 +7,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import {
   TREND_METRICS,
   TREND_METRIC_LABELS,
+  addDays,
   buildTrend,
   dayDiff,
   formatPct,
@@ -20,6 +21,8 @@ interface TrendChartProps {
   /** The summary's per-day counts for `range`. */
   days: SummaryDay[];
   range: DateRange;
+  /** Opens the days behind a point: one day, or a week clipped to `range`. */
+  onSelectPeriod?: (period: DateRange) => void;
 }
 
 export function formatTrendValue(metric: TrendMetric, value: number): string {
@@ -28,7 +31,7 @@ export function formatTrendValue(metric: TrendMetric, value: number): string {
 
 /** One metric at a time (selector) rather than a tangle of lines. Percentages use expected
  * working days as the denominator, so weekends and holidays don't read as absence. */
-export function TrendChart({ days, range }: TrendChartProps) {
+export function TrendChart({ days, range, onSelectPeriod }: TrendChartProps) {
   const [metric, setMetric] = useState<TrendMetric>("present_pct");
   const [granularity, setGranularity] = useState<TrendGranularity>("daily");
   const canWeek = dayDiff(range.from, range.to) >= 13;
@@ -71,6 +74,15 @@ export function TrendChart({ days, range }: TrendChartProps) {
           ariaLabel={`${TREND_METRIC_LABELS[metric]}, ${effective}`}
           format={(v) => formatTrendValue(metric, v)}
           yMax={metric === "avg_hours" ? undefined : 100}
+          onSelectPoint={
+            onSelectPeriod
+              ? (key) => {
+                  const from = key < range.from ? range.from : key;
+                  const weekEnd = addDays(key, 6);
+                  onSelectPeriod({ from, to: effective === "weekly" ? (weekEnd > range.to ? range.to : weekEnd) : key });
+                }
+              : undefined
+          }
         />
       ) : (
         <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-foreground-secondary">

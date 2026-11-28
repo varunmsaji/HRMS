@@ -175,7 +175,7 @@ export default function DepartmentsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to view departments."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void loadDepartments()}
             />

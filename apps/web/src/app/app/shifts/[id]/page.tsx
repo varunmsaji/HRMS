@@ -576,7 +576,7 @@ export default function ShiftDetailPage() {
                   ? "You do not have permission to view this shift."
                   : error.status === 404
                     ? "This shift could not be found."
-                    : error.message
+                    : describeApiError(error)
               }
               onRetry={
                 error.status === 404 ? undefined : () => void loadShift()

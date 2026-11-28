@@ -19,7 +19,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -383,7 +383,7 @@ export default function RosterGridPage() {
           <span className="sr-only">Loading roster…</span>
         </div>
       ) : null}
-      {error && !loading ? <ErrorState message={error.message} /> : null}
+      {error && !loading ? <ErrorState message={describeApiError(error)} /> : null}
 
       {hasData && !error ? (
         rows.length === 0 ? (

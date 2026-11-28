@@ -229,7 +229,7 @@ export default function AttendancePeriodDetailPage() {
           message={
             error.status === 404
               ? "This attendance period was not found, or you don't have access to it."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

@@ -184,7 +184,7 @@ export default function SalaryComponentsPage() {
               message={
                 error.status === 403
                   ? "You do not have permission to manage payroll setup."
-                  : error.message
+                  : describeApiError(error)
               }
               onRetry={() => void load()}
             />

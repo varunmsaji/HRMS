@@ -94,6 +94,42 @@ export interface DateRange {
   to: string;
 }
 
+/** Where a drill-down reads its rows from: the focus date, the selected range, or the window. */
+export type DrillScope = "" | "range" | "window";
+
+/** The late bands the backend counts (`summary.py::LATE_BANDS`), by key. `max` is `null` for the
+ * open-ended band. A late day with no minutes recorded counts as 1 minute, as the backend does. */
+export const LATE_BANDS: Record<string, { label: string; min: number; max: number | null }> = {
+  "1_15": { label: "1–15 min", min: 1, max: 15 },
+  "16_30": { label: "16–30 min", min: 16, max: 30 },
+  "31_60": { label: "31–60 min", min: 31, max: 60 },
+  "60_plus": { label: "Over an hour", min: 61, max: null },
+};
+export type LateBandKey = keyof typeof LATE_BANDS;
+export const LATE_BAND_KEYS = Object.keys(LATE_BANDS) as LateBandKey[];
+
+export const WEEKDAY_KEYS = ["0", "1", "2", "3", "4", "5", "6"] as const;
+export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
+const WEEKDAY_NAMES = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"];
+
+/** 0 = Monday ... 6 = Sunday, from an ISO date; no timezone is involved in a calendar date. */
+export function weekdayIndex(iso: string): number {
+  return (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
+}
+
+export function weekdayLabel(key: WeekdayKey): string {
+  return WEEKDAY_NAMES[Number(key)];
+}
+
+/** Whether `day` is a late arrival the backend counted in `band`: only a complete check-in and
+ * check-out is judged, and an open day is not yet late. */
+export function inLateBand(day: AttendanceDay, band: LateBandKey): boolean {
+  if (!day.is_late || !day.actual_first_in || !day.actual_last_out) return false;
+  const { min, max } = LATE_BANDS[band];
+  const minutes = Math.max(day.late_minutes, 1);
+  return minutes >= min && (max === null || minutes <= max);
+}
+
 export interface DashboardFilters {
   preset: RangePreset;
   /** Only meaningful when `preset === "custom"`. */
@@ -107,8 +143,15 @@ export interface DashboardFilters {
   /** "range" when the active `bucket`/`flag` drill came from a whole-range Needs Attention item
    * and must filter the entire selected range, not just the focus date. "" (default) is every
    * other drill source (KPI card, status chart, toolbar status select) — all focus-date scoped.
-   * Needed because the same `bucket`/`flag` value can be drilled from either source. */
-  scope: "" | "range";
+   * Needed because the same `bucket`/`flag` value can be drilled from either source. "window" is
+   * a drill from a chart that counts the whole fetched window (the selected range widened to at
+   * least two weeks): the list covers that window, so it holds exactly the rows the chart counted. */
+  scope: DrillScope;
+  /** A late-arrival band (`LATE_BAND_KEYS`) from the punctuality chart; with `flag: "late"`. */
+  lateBand: LateBandKey | "";
+  /** A weekday, "0" (Monday) to "6" (Sunday), from the absence-by-weekday chart; with
+   * `bucket: "ABSENT"`. */
+  weekday: WeekdayKey | "";
   shiftId: string;
   employeeStatus: string;
   /** Scopes the attendance-period panels only — attendance days carry no company. */
@@ -128,6 +171,8 @@ export const DEFAULT_FILTERS: DashboardFilters = {
   bucket: "",
   flag: "",
   scope: "",
+  lateBand: "",
+  weekday: "",
   shiftId: "",
   employeeStatus: "",
   legalEntityId: "",
@@ -166,6 +211,10 @@ function groupFilterParam(value: string | null): string {
   return value && (value === UNASSIGNED_KEY || UUID.test(value)) ? value : "";
 }
 
+function scopeParam(value: string | null): DrillScope {
+  return value === "range" || value === "window" ? value : "";
+}
+
 export function parseFilters(params: ParamReader): DashboardFilters {
   const preset = params.get("range");
   const bucket = params.get("bucket");
@@ -179,7 +228,9 @@ export function parseFilters(params: ParamReader): DashboardFilters {
     employeeId: params.get("employee") ?? "",
     bucket: (DAY_BUCKETS as readonly string[]).includes(bucket ?? "") ? (bucket as DayBucket) : "",
     flag: (DAY_FLAGS as readonly string[]).includes(flag ?? "") ? (flag as DayFlag) : "",
-    scope: params.get("scope") === "range" ? "range" : "",
+    scope: scopeParam(params.get("scope")),
+    lateBand: (LATE_BAND_KEYS as string[]).includes(params.get("lateband") ?? "") ? (params.get("lateband") as LateBandKey) : "",
+    weekday: (WEEKDAY_KEYS as readonly string[]).includes(params.get("weekday") ?? "") ? (params.get("weekday") as WeekdayKey) : "",
     shiftId: params.get("shift") ?? "",
     employeeStatus: params.get("estatus") ?? "",
     legalEntityId: params.get("entity") ?? "",
@@ -199,6 +250,8 @@ export function serializeFilters(filters: DashboardFilters): URLSearchParams {
   if (filters.bucket) out.set("bucket", filters.bucket);
   if (filters.flag) out.set("flag", filters.flag);
   if (filters.scope) out.set("scope", filters.scope);
+  if (filters.lateBand) out.set("lateband", filters.lateBand);
+  if (filters.weekday) out.set("weekday", filters.weekday);
   if (filters.shiftId) out.set("shift", filters.shiftId);
   if (filters.employeeStatus) out.set("estatus", filters.employeeStatus);
   if (filters.legalEntityId) out.set("entity", filters.legalEntityId);
@@ -508,6 +561,8 @@ export function applyDrillFilters(days: AttendanceDay[], filters: DashboardFilte
   return days.filter((day) => {
     if (filters.bucket && bucketOf(day) !== filters.bucket) return false;
     if (filters.flag && !matchesFlag(day, filters.flag)) return false;
+    if (filters.lateBand && !inLateBand(day, filters.lateBand)) return false;
+    if (filters.weekday && weekdayIndex(day.attendance_date) !== Number(filters.weekday)) return false;
     return true;
   });
 }
@@ -616,7 +671,7 @@ export const TREND_METRICS = [
 export type TrendMetric = (typeof TREND_METRICS)[number];
 
 export const TREND_METRIC_LABELS: Record<TrendMetric, string> = {
-  present_pct: "Present %",
+  present_pct: "Present % (full days)",
   absent_pct: "Absent %",
   leave_pct: "Leave %",
   late_pct: "Late %",

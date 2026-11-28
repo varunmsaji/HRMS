@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api/client", () => ({
@@ -8,128 +8,65 @@ vi.mock("@/lib/api/client", () => ({
 import CompanySetupPage from "@/app/app/setup/page";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { CompanySetupProgressSummary } from "@/lib/company/types";
+import type { SetupChecklist } from "@/lib/company/setup-checklist";
 
 const mockedGet = vi.mocked(apiClient.get);
 
-const incompleteProgress: CompanySetupProgressSummary = {
-  status: "IN_PROGRESS",
-  current_step: "COMPANY_PROFILE",
-  steps: [{ code: "COMPANY_PROFILE", label: "Company Profile", is_complete: false }],
-  started_at: "2026-08-10T00:00:00Z",
-  completed_at: null,
-};
+const item = (code: string, label: string, required: boolean, done: boolean) => ({
+  code,
+  label,
+  description: `${label} description`,
+  required,
+  is_complete: done,
+  path: `/app/${code.toLowerCase()}`,
+});
 
-const completeProgress: CompanySetupProgressSummary = {
-  status: "COMPLETE",
-  current_step: null,
-  steps: [{ code: "COMPANY_PROFILE", label: "Company Profile", is_complete: true }],
-  started_at: "2026-08-10T00:00:00Z",
-  completed_at: "2026-08-10T00:05:00Z",
-};
-
-const partialProgress: CompanySetupProgressSummary = {
-  status: "IN_PROGRESS",
-  current_step: "BRANCHES",
-  steps: [
-    { code: "COMPANY_PROFILE", label: "Company Profile", is_complete: true },
-    { code: "BRANCHES", label: "Branches", is_complete: false },
+const partial: SetupChecklist = {
+  items: [
+    item("SHIFT", "Create a shift", true, true),
+    item("EMPLOYEES", "Add your people", true, false),
+    item("BRANCH", "Add your offices", false, false),
   ],
-  started_at: "2026-08-10T00:00:00Z",
-  completed_at: null,
+  required_total: 2,
+  required_complete: 1,
+  next_code: "EMPLOYEES",
 };
-
-/** The page also asks for the live checklist, which these tests do not cover; answer only the
- * progress path so each mock below cannot be consumed by the wrong request. */
-function answer(result: unknown, fail = false) {
-  mockedGet.mockImplementation(((path: string) => {
-    if (path === "/companies/current/setup-checklist") return Promise.reject(new Error("n/a"));
-    return fail ? Promise.reject(result) : Promise.resolve(result);
-  }) as never);
-}
 
 describe("CompanySetupPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
   });
 
-  it("shows a loading state before the response resolves", async () => {
+  it("shows a loading state before the response resolves", () => {
     mockedGet.mockImplementation(() => new Promise(() => {}));
     render(<CompanySetupPage />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("renders an incomplete setup with a next-step call to action", async () => {
-    answer(incompleteProgress);
+  it("lists essentials and optional steps from the one live checklist", async () => {
+    mockedGet.mockResolvedValue(partial);
     render(<CompanySetupPage />);
 
-    expect(await screen.findByText("Company Profile")).toBeInTheDocument();
-    expect(screen.getByText("Pending")).toBeInTheDocument();
-    expect(screen.getByText("0 of 1 registration steps done")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /go to company profile/i })).toHaveAttribute(
-      "href",
-      "/app/company",
-    );
+    expect(await screen.findByText("Add your people")).toBeInTheDocument();
+    expect(screen.getAllByText("1 of 2 essentials done").length).toBeGreaterThan(0);
+    expect(screen.getByText("Add your offices")).toBeInTheDocument();
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    // Only the checklist is asked for: there is no second, disagreeing "registration" count.
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+    expect(mockedGet).toHaveBeenCalledWith("/companies/current/setup-checklist");
   });
 
-  it("renders a partially completed setup with per-step status", async () => {
-    answer(partialProgress);
+  it("says so when every essential is done", async () => {
+    mockedGet.mockResolvedValue({ ...partial, required_complete: 2, next_code: "BRANCH" });
     render(<CompanySetupPage />);
-
-    await screen.findByText("Company Profile");
-    expect(screen.getByText("Branches")).toBeInTheDocument();
-    expect(screen.getByText("1 of 2 registration steps done")).toBeInTheDocument();
-    expect(screen.getAllByText("Complete")).toHaveLength(1);
-    expect(screen.getAllByText("Pending")).toHaveLength(1);
+    expect(await screen.findByText("Essentials done")).toBeInTheDocument();
   });
 
-  it("renders a fully completed setup with no next-step action", async () => {
-    answer(completeProgress);
-    render(<CompanySetupPage />);
-
-    expect(await screen.findByText("Registration complete")).toBeInTheDocument();
-    expect(screen.getByText("Complete")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /go to company profile/i })).not.toBeInTheDocument();
-  });
-
-  it("shows an error state on API failure", async () => {
-    answer(
-      new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "Boom" }),
-      true,
-    );
-    render(<CompanySetupPage />);
-
-    expect(await screen.findByText("Boom")).toBeInTheDocument();
-  });
-
-  it("shows a permission-specific message on 403", async () => {
-    answer(
+  it("explains itself when the checklist cannot be loaded, instead of rendering nothing", async () => {
+    mockedGet.mockRejectedValue(
       new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "Forbidden" }),
-      true,
     );
     render(<CompanySetupPage />);
-
-    expect(
-      await screen.findByText(/do not have permission to view company setup progress/i),
-    ).toBeInTheDocument();
-  });
-
-  it("retries loading after an error", async () => {
-    answer(
-      new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "Boom" }),
-      true,
-    );
-    render(<CompanySetupPage />);
-    await screen.findByText(/try again/i);
-
-    answer(completeProgress);
-    screen.getByRole("button", { name: /try again/i }).click();
-
-    await waitFor(() =>
-      expect(
-        mockedGet.mock.calls.filter(([path]) => path === "/companies/current/setup-progress"),
-      ).toHaveLength(2),
-    );
-    expect(await screen.findByText("Registration complete")).toBeInTheDocument();
+    expect(await screen.findByText(/could not load your setup list/i)).toBeInTheDocument();
   });
 });

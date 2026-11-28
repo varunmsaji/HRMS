@@ -40,7 +40,7 @@ from hrms.modules.attendance.day_classification import (
     is_expected,
     rate_weight,
 )
-from hrms.modules.attendance.models import AttendanceDay
+from hrms.modules.attendance.models import AttendanceDay, OvertimeRecord
 from hrms.modules.attendance.summary_schemas import (
     AttendanceSummaryRead,
     BucketCount,
@@ -57,6 +57,8 @@ from hrms.modules.organisation.models import Branch, Department
 
 #: The longest window one request may summarise (the dashboards' own range cap).
 MAX_SUMMARY_DAYS = 92
+#: The longest window the muster register export may cover: a year, to the day.
+MAX_EXPORT_DAYS = 366
 
 #: Display order, the same as both dashboards.
 DAY_BUCKETS = (
@@ -142,9 +144,15 @@ class AttendanceSummaryService:
         checked_in = ad.actual_first_in.is_not(None)
         stmt: Select[Any] = (
             select(
+                ad.id.label("day_id"),
                 ad.employee_id.label("employee_id"),
                 ad.attendance_date.label("attendance_date"),
                 day_bucket(clock).label("bucket"),
+                ad.actual_first_in.label("first_in"),
+                ad.actual_last_out.label("last_out"),
+                ad.scheduled_minutes.label("scheduled_minutes"),
+                ad.is_early_out.label("is_early_out"),
+                ad.early_departure_minutes.label("early_minutes"),
                 checked_in.label("checked_in"),
                 ad.actual_last_out.is_not(None).label("checked_out"),
                 ad.is_late.label("is_late"),
@@ -191,6 +199,114 @@ class AttendanceSummaryService:
         if org_filters and filters.branch_id is not None:
             stmt = stmt.where(_org_filter(EmployeeAssignment.branch_id, filters.branch_id))
         return stmt.subquery("rows")
+
+    @staticmethod
+    def _export_clock(
+        date_from: date, date_to: date, today: date, timezone: str, now: datetime | None
+    ) -> DayClock | None:
+        """The window rules every export shares, and the clock today's open days are read by."""
+        if date_from > date_to:
+            raise ValidationError("date_from must be on or before date_to.")
+        if date_to > today:
+            raise ValidationError("An export cannot cover a future date.")
+        if (date_to - date_from).days + 1 > MAX_EXPORT_DAYS:
+            raise ValidationError(f"The window can be at most {MAX_EXPORT_DAYS} days.")
+        return DayClock.for_company(today, timezone, now) if timezone else None
+
+    async def report_days(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date,
+        date_to: date,
+        filters: SummaryFilters,
+        today: date,
+        timezone: str,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[Any]:
+        """One row per attendance day in the window, oldest first, after the filters. Reads at
+        most `limit + 1` rows so the caller can tell a window that is too large."""
+        clock = self._export_clock(date_from, date_to, today, timezone, now)
+        rows = self._rows(company_id, filters, date_from, date_to, clock=clock)
+        result = await self._session.execute(
+            select(rows)
+            .order_by(rows.c.attendance_date, rows.c.employee_id, rows.c.day_id)
+            .limit(limit + 1)
+        )
+        return list(result)
+
+    async def report_overtime(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date,
+        date_to: date,
+        filters: SummaryFilters,
+        today: date,
+        timezone: str,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[Any]:
+        """The overtime records of the attendance days in the population, oldest first."""
+        clock = self._export_clock(date_from, date_to, today, timezone, now)
+        rows = self._rows(company_id, filters, date_from, date_to, clock=clock)
+        result = await self._session.execute(
+            select(
+                OvertimeRecord.attendance_date,
+                OvertimeRecord.employee_id,
+                OvertimeRecord.day_class,
+                OvertimeRecord.minutes_detected,
+                OvertimeRecord.minutes_approved,
+                OvertimeRecord.status,
+            )
+            .where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.attendance_day_id.in_(select(rows.c.day_id)),
+            )
+            .order_by(OvertimeRecord.attendance_date, OvertimeRecord.employee_id)
+            .limit(limit + 1)
+        )
+        return list(result)
+
+    def population(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date,
+        date_to: date,
+        filters: SummaryFilters,
+        today: date,
+        timezone: str,
+        now: datetime | None = None,
+    ) -> Any:
+        """The attendance days of the window after the filters, as a subquery with the dashboard's
+        own columns (`bucket`, `is_late`, `checked_in`, ...). For callers that add their own
+        grouping over exactly the population the dashboard counts."""
+        clock = self._export_clock(date_from, date_to, today, timezone, now)
+        return self._rows(company_id, filters, date_from, date_to, clock=clock)
+
+    async def muster_cells(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date,
+        date_to: date,
+        filters: SummaryFilters,
+        today: date,
+        timezone: str,
+        now: datetime | None = None,
+    ) -> list[tuple[UUID, date, str]]:
+        """Every (employee, date, bucket) in the window after the filters: the cells of a muster
+        register, read through the same population and bucket rules as the dashboard."""
+        clock = self._export_clock(date_from, date_to, today, timezone, now)
+        rows = self._rows(company_id, filters, date_from, date_to, clock=clock)
+        result = await self._session.execute(
+            select(rows.c.employee_id, rows.c.attendance_date, rows.c.bucket).order_by(
+                rows.c.employee_id, rows.c.attendance_date
+            )
+        )
+        return [(r.employee_id, r.attendance_date, r.bucket) for r in result]
 
     async def _no_record(self, company_id: UUID, filters: SummaryFilters, focus: date) -> int:
         """Employed on `focus` and in the population, but with no attendance day yet."""

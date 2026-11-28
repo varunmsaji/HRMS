@@ -42,3 +42,10 @@ android {
 flutter {
     source = "../.."
 }
+
+// Firebase push. The plugin needs google-services.json (a per-project file from the Firebase
+// console, not committed); without it the plugin would fail the build, so apply it only when the
+// file is present. A build without it still compiles and runs, with push switched off.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}

@@ -183,7 +183,7 @@ export default function LeaveApplicationDetailPage() {
           message={
             error.status === 404
               ? "This application was not found, or you don't have access to it."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => void load()}
         />

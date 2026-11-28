@@ -9,7 +9,7 @@ import { PasswordInput } from "@/components/common/password-input";
 import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 
 export default function ResetPasswordPage() {
   const params = useParams<{ token: string }>();
@@ -52,7 +52,7 @@ export default function ResetPasswordPage() {
         if (error.status === 401) {
           setFormError("This reset link is invalid or has expired. Please request a new one.");
         } else {
-          setFormError(error.message);
+          setFormError(describeApiError(error));
         }
       } else {
         setFormError("Something went wrong. Please try again.");

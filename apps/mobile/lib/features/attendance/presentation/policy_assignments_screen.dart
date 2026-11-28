@@ -12,6 +12,7 @@ import '../data/assignment_lookup.dart';
 import '../domain/policy_assignment_form.dart';
 import 'set_policies_panel.dart';
 import '../../../core/widgets/ui.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -64,7 +65,7 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
     try {
       final c = await loadChoices(_client, _nameSources);
       if (mounted) setState(() => _names = {for (final e in c.entries) e.key: {for (final x in e.value) x.value: x.label}});
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   Future<({List<Rec> rows, bool more})> _fetch(int page) async {
@@ -104,7 +105,8 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
           _hasMore = r.more;
         });
       }
-    } catch (_) {
+    } catch (e, s) {
+      AppDiagnostics.instance.recordHandled(e, s);
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -178,7 +180,7 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
           child: _loading
               ? const ListSkeleton()
               : _error != null
-                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load assignments", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load assignments", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(

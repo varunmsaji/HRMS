@@ -56,7 +56,7 @@ class _ShiftSwapsScreenState extends ConsumerState<ShiftSwapsScreen> {
       await call();
       _toast(done);
     } catch (e) {
-      _toast(e is ApiError ? e.message : 'Something went wrong.');
+      _toast(e is ApiError ? describeApiError(e) : 'Something went wrong.');
     }
     if (mounted) setState(() => _busyId = null);
     await _load();
@@ -91,7 +91,7 @@ class _ShiftSwapsScreenState extends ConsumerState<ShiftSwapsScreen> {
       body: _loading && _swaps == null
           ? const ListSkeleton()
           : _error != null
-              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load shift swaps", message: _error!.message, actionLabel: 'Try again', onAction: _load)
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load shift swaps", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: swaps.isEmpty
@@ -264,7 +264,7 @@ class _RequestSwapSheetState extends ConsumerState<RequestSwapSheet> {
       await ref.read(scheduleRepositoryProvider).requestSwap(counterpartEmployeeId: _counterpart, date: _date, reason: _reason.text);
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
+      if (mounted) setState(() => _error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }

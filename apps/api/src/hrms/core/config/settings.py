@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     log_file_max_bytes: int = Field(default=10 * 1024 * 1024, ge=0)
     log_file_backup_count: int = Field(default=5, ge=0, le=100)
     # Age limit for *rotated* backups, in days; 0 = keep by count only.
-    log_retention_days: int = Field(default=0, ge=0)
+    log_retention_days: int = Field(default=30, ge=0)
     # true = refuse to start when the log directory is unusable; false = stdout-only fallback.
     log_files_required: bool = False
     # Prometheus scrape endpoint (`GET /metrics`, docs/architecture/OBSERVABILITY_ARCHITECTURE.md).
@@ -219,6 +219,16 @@ class Settings(BaseSettings):
     #: is taken over. Must exceed the longest send (the HTTP/SMTP clients time out at 10 s).
     email_outbox_lease_seconds: int = Field(default=300, ge=30)
     email_outbox_batch_size: int = Field(default=10, ge=1, le=100)
+
+    # Mobile push notifications (`modules/notification/push.py`). `disabled` (the default) means a
+    # new in-app notification queues nothing: no task, no network call. `fcm` sends through
+    # Firebase Cloud Messaging HTTP v1 using a service-account key. The key is a secret: supply it
+    # as `FCM_SERVICE_ACCOUNT_JSON` (the JSON text) or `FCM_SERVICE_ACCOUNT_FILE` (a path mounted
+    # into the worker), never in the repository.
+    push_provider: Literal["disabled", "fcm"] = "disabled"
+    fcm_project_id: str = ""
+    fcm_service_account_json: str = ""
+    fcm_service_account_file: str = ""
 
     # Sender identity shown on outgoing email — shared by whichever provider is active (`"smtp"`
     # or `"mailtrap"`); not itself an SMTP protocol detail, despite the field name predating the
@@ -465,6 +475,25 @@ class Settings(BaseSettings):
     # unresolved INCOMPLETE days are reminded daily from this many days before an open attendance
     # period's end until it is closed; HR gets a matching digest.
     attendance_incomplete_reminder_lead_days: int = 3
+
+    # Attendance digest emails: a weekday-morning note to each manager whose team has absences,
+    # late arrivals, missing punches or requests waiting (`attendance/digests.py`), and a Monday
+    # summary of last week to HR. Off by default: turning it on starts mailing people who did not
+    # ask for it, so it is an operator's decision, made per deployment.
+    attendance_digests_enabled: bool = False
+
+    # Pattern alerts (`attendance/patterns.py`): who keeps being late or absent. An employee is
+    # flagged when, within the last `attendance_pattern_window_days`, they were late on at least
+    # `attendance_pattern_late_days` days, absent on `attendance_pattern_absent_days`, or missing
+    # a punch on `attendance_pattern_incomplete_days`; or, within the last
+    # `attendance_pattern_weekday_window_days`, absent on the same weekday
+    # `attendance_pattern_weekday_absences` times. The same numbers for every company.
+    attendance_pattern_window_days: int = 30
+    attendance_pattern_weekday_window_days: int = 56
+    attendance_pattern_late_days: int = 5
+    attendance_pattern_absent_days: int = 4
+    attendance_pattern_incomplete_days: int = 3
+    attendance_pattern_weekday_absences: int = 3
 
     # Initial-release product rule: a tenant has exactly one company (the `legal_entity` table)
     # with any number of branches under it. `0` removes the cap (multi-company), which is what the

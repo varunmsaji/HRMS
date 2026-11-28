@@ -74,6 +74,7 @@ class RateLimiterUnavailableError(AppError):
 
     code = "RATE_LIMITER_UNAVAILABLE"
     status_code = 503
+    public_message = "The service is temporarily unavailable. Please try again shortly."
     headers = {"Retry-After": "5"}
 
 

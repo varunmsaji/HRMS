@@ -10,6 +10,7 @@ import '../data/onboarding_repository.dart';
 import '../domain/onboarding_invitation.dart';
 import '../domain/onboarding_form_spec.dart';
 import 'onboarding_case_detail_screen.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 
 final onboardingRepositoryProvider = Provider<OnboardingRepository>((ref) => OnboardingRepository(ref.watch(apiClientProvider)));
 
@@ -38,7 +39,7 @@ class _OnboardingCasesScreenState extends ConsumerState<OnboardingCasesScreen> {
     try {
       final counts = await ref.read(onboardingRepositoryProvider).getStatusCounts();
       if (mounted) setState(() => _counts = counts);
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
   }
 
   void _reload() {

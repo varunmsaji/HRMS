@@ -40,7 +40,7 @@ import { StatutoryInfoStep } from "@/components/onboarding/wizard/statutory-info
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, describeLifecycleError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeError, describeLifecycleError } from "@/lib/api/errors";
 import type { OnboardingDocument, PublicOnboardingCase } from "@/lib/onboarding/types";
 import {
   EMPTY_ADDRESS_INFO,
@@ -84,6 +84,7 @@ import {
   type PreviousEmploymentFormValues,
   type StatutoryInfoFormValues,
 } from "@/lib/onboarding/public-wizard";
+import { reportedFallback } from "@/lib/observability/report-client-error";
 
 const STEPS = [
   "welcome",
@@ -378,7 +379,7 @@ export default function OnboardingWizardPage() {
           .get<OnboardingDocument[]>(`/public/onboarding/${token}/documents`, {
             authenticated: false,
           })
-          .catch(() => []),
+          .catch(reportedFallback([])),
       ]);
       setOnboardingCase(data);
       setPersonalInfo(personalInfoFromSection(data.personal_info));
@@ -467,7 +468,7 @@ export default function OnboardingWizardPage() {
         description={
           error?.status === 404
             ? "This onboarding link is invalid or has expired. Please contact HR for a new one."
-            : (error?.message ?? "Something went wrong.")
+            : describeError(error, "Something went wrong.")
         }
       />
     );

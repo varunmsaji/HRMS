@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_client.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
+import 'package:hrms_mobile/core/export/file_share.dart';
 import 'package:hrms_mobile/core/theme/app_theme.dart';
 import 'package:hrms_mobile/core/time.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
@@ -32,6 +34,13 @@ class _Repo implements AttendanceRepository {
   _Repo(this.rows, {this.projections = const []});
   final List<Map<String, dynamic>> rows;
   final List<LeaveDayProjection> projections;
+  final statementCalls = <String>[];
+
+  @override
+  Future<DownloadedFile> downloadStatement(String employeeId, String month, {String format = 'pdf'}) async {
+    statementCalls.add('$employeeId $month $format');
+    return DownloadedFile(bytes: [1, 2, 3], filename: 'statement_$month.$format');
+  }
 
   @override
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async =>
@@ -47,12 +56,12 @@ class _Repo implements AttendanceRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<void> _pumpMonth(WidgetTester tester, _Repo repo, {double width = 360}) async {
+Future<void> _pumpMonth(WidgetTester tester, _Repo repo, {double width = 360, FileSharer? sharer}) async {
   tester.view.physicalSize = Size(width, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(ProviderScope(
-    overrides: [attendanceRepositoryProvider.overrideWithValue(repo), fakeAuth(const [attendanceView], employeeId: 'e-1')],
+    overrides: [attendanceRepositoryProvider.overrideWithValue(repo), fakeAuth(const [attendanceView], employeeId: 'e-1'), if (sharer != null) fileSharerProvider.overrideWithValue(sharer)],
     child: MaterialApp(theme: AppTheme.employee, home: Scaffold(body: SingleChildScrollView(child: Padding(padding: const EdgeInsets.all(16), child: AttendanceMonthCard(employeeId: 'e-1', zone: _zone))))),
   ));
   await tester.pumpAndSettle();
@@ -64,6 +73,18 @@ void main() {
   group('month card (T1-07)', () {
     final today = businessToday(_zone);
     final yesterdayish = '${today.substring(0, 8)}01';
+
+    testWidgets('the statement menu downloads the shown month and hands it to the share sheet', (tester) async {
+      final repo = _Repo([]);
+      final shared = <String>[];
+      await _pumpMonth(tester, repo, sharer: (name, bytes, mime) async => shared.add('$name ${bytes.length} $mime'));
+      await tester.tap(find.byTooltip('Download statement'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Statement (Excel)'));
+      await tester.pumpAndSettle();
+      expect(repo.statementCalls, ['e-1 ${today.substring(0, 7)} xlsx']);
+      expect(shared, ['statement_${today.substring(0, 7)}.xlsx 3 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+    });
 
     testWidgets('Monday-first two-letter labels', (tester) async {
       await _pumpMonth(tester, _Repo([]));

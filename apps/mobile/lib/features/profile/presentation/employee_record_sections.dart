@@ -253,7 +253,7 @@ Future<bool> openAssignmentChange(BuildContext context, WidgetRef ref, {required
     items = (await client.getList<Map<String, dynamic>>('/employees/$employeeId/assignments', query: PageQuery(perPage: 100), parseItem: (d) => d as Map<String, dynamic>)).data;
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError && e.status == 403 ? "You do not have permission to view or change this employee's assignment." : e is ApiError ? e.message : 'Something went wrong.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError && e.status == 403 ? "You do not have permission to view or change this employee's assignment." : e is ApiError ? describeApiError(e) : 'Something went wrong.')));
     }
     return false;
   }
@@ -605,7 +605,7 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const ListSkeleton(count: 3);
-    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this section", message: _error!.message, actionLabel: 'Try again', onAction: _load);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: "Couldn't load this section", message: describeApiError(_error!), actionLabel: 'Try again', onAction: _load);
     final scheme = Theme.of(context).colorScheme;
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final actions = [
@@ -673,7 +673,7 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
       if (mounted) _toast('Done.');
       await _load();
     } catch (e) {
-      if (mounted) _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Pull to refresh and try again.' : e.message) : 'Something went wrong.');
+      if (mounted) _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Pull to refresh and try again.' : describeApiError(e)) : 'Something went wrong.');
     }
   }
 }

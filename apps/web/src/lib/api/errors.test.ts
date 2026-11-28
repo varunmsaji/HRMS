@@ -85,6 +85,21 @@ describe("support references and retryability", () => {
     expect(describeApiError(noId)).toBe("Boom");
   });
 
+  it("never shows the message of a non-API error", () => {
+    const text = describeApiError(new TypeError("Cannot read properties of undefined (reading 'secret')"));
+    expect(text).toBe("Something went wrong. Please try again.");
+    expect(describeApiError("raw string")).toBe("Something went wrong. Please try again.");
+  });
+
+  it("shows the server's short reference for a 5xx, falling back to the request id", () => {
+    const withRef = new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "An unexpected error occurred", requestId: "uuid-1", reference: "ERR-1A2B3C4D" });
+    const noRef = new ApiError({ status: 502, code: "BAD_GATEWAY", message: "x", requestId: "uuid-2" });
+    const client = new ApiError({ status: 422, code: "X", message: "Bad", requestId: "uuid-3", reference: "ERR-IGNORED0" });
+    expect(describeApiError(withRef)).toBe("An unexpected error occurred (Reference: ERR-1A2B3C4D)");
+    expect(errorReference(noRef)).toBe("uuid-2");
+    expect(errorReference(client)).toBeNull();
+  });
+
   it("only treats no-response, gateway and rate-limit failures as retryable", () => {
     const make = (status: number) => new ApiError({ status, code: "X", message: "x" });
     expect(isRetryableError(new NetworkError())).toBe(true);

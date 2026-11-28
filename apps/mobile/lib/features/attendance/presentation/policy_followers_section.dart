@@ -15,6 +15,7 @@ import '../../organisation/presentation/change_impact_screen.dart';
 import '../domain/policy_assignment_form.dart';
 import '../domain/policy_coverage.dart';
 import '../domain/policy_followers.dart';
+import '../../../core/diagnostics/app_diagnostics.dart';
 import 'set_policies_panel.dart' show endPolicyAssignment;
 
 /// The add form (web `assign-policy-dialog.tsx`): who, from when, and why.
@@ -114,13 +115,13 @@ class _PolicyFollowersSectionState extends ConsumerState<PolicyFollowersSection>
           found[c.value] = c.label;
         }
       }
-    } catch (_) {}
+    } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     for (final id in people) {
       try {
         final e = await _client.get<Rec>('/employees/$id', parse: (d) => d as Rec);
         final display = '${e['display_name'] ?? ''}'.trim();
         found[id] = display.isNotEmpty ? display : [e['first_name'], e['middle_name'], e['last_name']].where((s) => s != null && '$s'.trim().isNotEmpty).join(' ');
-      } catch (_) {}
+      } catch (e, s) { AppDiagnostics.instance.recordHandled(e, s); }
     }
     if (mounted) setState(() => _names = {..._names, ...found});
   }
@@ -222,7 +223,7 @@ class _PolicyFollowersSectionState extends ConsumerState<PolicyFollowersSection>
             icon: Icons.error_outline_rounded,
             tone: Tone.danger,
             title: "Couldn't load who follows this",
-            message: _error!.status == 403 ? 'You do not have permission to see who follows this policy.' : _error!.message,
+            message: _error!.status == 403 ? 'You do not have permission to see who follows this policy.' : describeApiError(_error!),
             actionLabel: 'Try again',
             onAction: _load,
           )

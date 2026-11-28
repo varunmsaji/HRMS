@@ -8,6 +8,7 @@ import { EmployeeDashboard } from "@/components/dashboard/employee-dashboard";
 import { DashboardOverview } from "@/components/dashboard/dashboard-overview";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
+import { useSetupChecklist } from "@/components/company/setup-checklist-card";
 import { WelcomeSetupDialog } from "@/components/company/welcome-setup-dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -17,6 +18,7 @@ import { usePermissions } from "@/lib/auth/use-permissions";
 import { businessToday } from "@/lib/attendance/format";
 import { rememberCompanyDateFormat } from "@/lib/dates/use-company-date";
 import type { CompanyDashboardSummary, CompanyProfile } from "@/lib/company/types";
+import { describeApiError } from "@/lib/api/errors";
 
 /** People with an employee record but no company-dashboard permission get their own workday view. */
 export default function DashboardPage() {
@@ -51,13 +53,16 @@ function CompanyDashboard() {
     retry: retryProfile,
   } = useApiResource<CompanyProfile>("/companies/current");
 
+  // The same live checklist the Settings and Setup pages show, so the counts agree everywhere.
+  const checklist = useSetupChecklist();
+
   useEffect(() => {
     if (profile?.locale?.date_format) rememberCompanyDateFormat(profile.locale.date_format);
   }, [profile?.locale?.date_format]);
 
   const loading = dashboardLoading || profileLoading;
   const error = dashboardError ?? profileError;
-  const setupIncomplete = dashboard?.setup_progress.status !== "COMPLETE";
+  const setupIncomplete = checklist ? checklist.required_complete < checklist.required_total : false;
   const companyName =
     profile?.name ??
     session?.companies.find((c) => c.id === session.companyId)?.name ??
@@ -81,7 +86,7 @@ function CompanyDashboard() {
           message={
             error.status === 403
               ? "You do not have permission to view the company dashboard."
-              : error.message
+              : describeApiError(error)
           }
           onRetry={() => {
             retryDashboard();
@@ -101,12 +106,11 @@ function CompanyDashboard() {
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-foreground">Finish setting up {companyName}</p>
                   <p className="mt-0.5 text-xs text-foreground-secondary">
-                    {dashboard.setup_progress.steps_completed} of {dashboard.setup_progress.steps_total}{" "}
-                    steps complete
+                    {checklist?.required_complete} of {checklist?.required_total} essentials done
                   </p>
                   <Progress
-                    value={dashboard.setup_progress.steps_completed}
-                    max={dashboard.setup_progress.steps_total}
+                    value={checklist?.required_complete ?? 0}
+                    max={checklist?.required_total ?? 1}
                     className="mt-2.5 w-full max-w-xs"
                   />
                 </div>

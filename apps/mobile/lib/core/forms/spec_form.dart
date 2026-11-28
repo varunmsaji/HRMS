@@ -359,12 +359,48 @@ class _SpecFormState extends State<SpecForm> {
 
   final _fieldKeys = <String, GlobalKey>{};
 
+  /// Titles' keys of the sections currently open (only used by a form that has sections).
+  final _open = <String>{};
+  bool _openInitialised = false;
+
+  /// The section each field belongs to: the nearest [FieldKind.section] above it, or null.
+  Map<String, String?> _sectionOf() {
+    final out = <String, String?>{};
+    String? current;
+    for (final f in widget.spec.fields) {
+      if (f.kind == FieldKind.section) {
+        current = f.key;
+      } else {
+        out[f.key] = current;
+      }
+    }
+    return out;
+  }
+
+  /// Opens, for a first build: the first section, and any holding a required field or an error, so
+  /// nothing the person must fill in or fix starts hidden.
+  void _initOpen() {
+    _openInitialised = true;
+    final sectionOf = _sectionOf();
+    final sections = [for (final f in widget.spec.fields) if (f.kind == FieldKind.section) f.key];
+    if (sections.isEmpty) return;
+    _open.add(sections.first);
+    for (final f in widget.spec.fields) {
+      final sec = sectionOf[f.key];
+      if (sec != null && (f.required || widget.errors.containsKey(f.key))) _open.add(sec);
+    }
+  }
+
   @override
   void didUpdateWidget(covariant SpecForm old) {
     super.didUpdateWidget(old);
     // A failed submit brings the first field with an error into view, rather than leaving the
-    // person at the bottom of a long form looking for it (audit MOB-UX-027).
+    // person at the bottom of a long form looking for it (audit MOB-UX-027). A field inside a
+    // closed section is opened first.
     if (widget.errors.isNotEmpty && !_sameKeys(old.errors, widget.errors)) {
+      final sectionOf = _sectionOf();
+      final toOpen = {for (final k in widget.errors.keys) if (sectionOf[k] != null) sectionOf[k]!};
+      if (toOpen.any((k) => !_open.contains(k))) setState(() => _open.addAll(toOpen));
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         for (final f in widget.spec.fields) {
@@ -380,16 +416,94 @@ class _SpecFormState extends State<SpecForm> {
 
   static bool _sameKeys(Map<String, String> a, Map<String, String> b) => identical(a, b) || (a.length == b.length && a.keys.every(b.containsKey));
 
-  @override
-  Widget build(BuildContext context) {
-    final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && (!f.editOnly || widget.editing) && fieldVisible(f, widget.values));
-    return AutofillGroup(
-      child: Column(
+  Widget _fieldWidget(FieldSpec f) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final f in visible) ...[KeyedSubtree(key: _fieldKeys.putIfAbsent(f.key, GlobalKey.new), child: _input(f)), const SizedBox(height: 14)],
-        ],
+        children: [KeyedSubtree(key: _fieldKeys.putIfAbsent(f.key, GlobalKey.new), child: _input(f)), const SizedBox(height: 14)],
+      );
+
+  Widget _sectionCard(FieldSpec header, List<FieldSpec> fields) {
+    final scheme = Theme.of(context).colorScheme;
+    final open = _open.contains(header.key);
+    final errorCount = fields.where((f) => widget.errors.containsKey(f.key)).length;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: errorCount > 0 ? scheme.error : scheme.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Semantics(
+            button: true,
+            expanded: open,
+            label: header.label,
+            child: InkWell(
+              key: Key('section-${header.key}'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => setState(() => open ? _open.remove(header.key) : _open.add(header.key)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(header.label, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                      if (header.hint != null) Text(header.hint!, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                    ]),
+                  ),
+                  if (errorCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(errorCount == 1 ? '1 to fix' : '$errorCount to fix', style: TextStyle(color: scheme.error, fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                  Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: scheme.onSurfaceVariant),
+                ]),
+              ),
+            ),
+          ),
+          if (open)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [for (final f in fields) _fieldWidget(f)]),
+            ),
+        ]),
       ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && (!f.editOnly || widget.editing) && fieldVisible(f, widget.values)).toList();
+    if (!visible.any((f) => f.kind == FieldKind.section)) {
+      return AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final f in visible) _fieldWidget(f)],
+        ),
+      );
+    }
+    if (!_openInitialised) _initOpen();
+    // Group: fields before any section stand alone; the rest go under their section's header.
+    final children = <Widget>[];
+    FieldSpec? header;
+    var group = <FieldSpec>[];
+    void flush() {
+      if (header != null) {
+        if (group.isNotEmpty) children.add(_sectionCard(header, group));
+      } else {
+        children.addAll(group.map(_fieldWidget));
+      }
+      group = <FieldSpec>[];
+    }
+
+    for (final f in visible) {
+      if (f.kind == FieldKind.section) {
+        flush();
+        header = f;
+      } else {
+        group.add(f);
+      }
+    }
+    flush();
+    return AutofillGroup(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children));
   }
 }

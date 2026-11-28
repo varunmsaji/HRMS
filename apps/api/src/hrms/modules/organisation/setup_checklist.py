@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.session import get_session
+from hrms.modules.employee.repository import EmployeeRepository
 from hrms.modules.organisation.models import PolicyAssignment
 from hrms.modules.organisation.repository import (
     OrganisationRepository,
@@ -79,6 +80,12 @@ class SetupChecklistService:
             self._session, company_id=company_id
         )
         has_calendar = bool(await self._company_wide(company_id, "WORK_CALENDAR"))
+        # Registration does not create an employee record for the administrator, so any active
+        # employee means someone has actually been added.
+        has_people = (
+            await EmployeeRepository().count_active_employees(self._session, company_id=company_id)
+            > 0
+        )
 
         items = [
             SetupChecklistItem(
@@ -104,6 +111,14 @@ class SetupChecklistService:
                 required=True,
                 is_complete=await self._company_policy_live(company_id, "ATTENDANCE_POLICY"),
                 path="/app/attendance-policies/new",
+            ),
+            SetupChecklistItem(
+                code="EMPLOYEES",
+                label="Add your people",
+                description="Add employees one by one, or import them from a spreadsheet.",
+                required=True,
+                is_complete=has_people,
+                path="/app/employees",
             ),
             SetupChecklistItem(
                 code="REGULARIZATION_POLICY",

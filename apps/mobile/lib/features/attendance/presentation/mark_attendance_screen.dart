@@ -112,7 +112,7 @@ class _MarkAttendanceScreenState extends ConsumerState<MarkAttendanceScreen> {
   MarkDayInstants? get _instants => markDayInstants(date: _date, inTime: _inTime, outTime: _outTime, zone: _zone);
 
   String _errorText(Object e) {
-    if (e is ApiError) return e.status == 403 ? "You don't have permission to mark attendance for other employees." : e.message;
+    if (e is ApiError) return e.status == 403 ? "You don't have permission to mark attendance for other employees." : describeApiError(e);
     return 'Something went wrong.';
   }
 

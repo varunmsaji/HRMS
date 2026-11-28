@@ -90,7 +90,7 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
         });
       }
     } catch (error) {
-      _toast(error is ApiError ? error.message : 'Something went wrong.');
+      _toast(error is ApiError ? describeApiError(error) : 'Something went wrong.');
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -167,7 +167,7 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
                   }
                   if (ctx.mounted) Navigator.of(ctx).pop(true);
                 } catch (e) {
-                  setLocal(() => error = e is ApiError ? e.message : 'Something went wrong.');
+                  setLocal(() => error = e is ApiError ? describeApiError(e) : 'Something went wrong.');
                 }
               },
               child: const Text('Save'),
@@ -223,7 +223,7 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
                       icon: Icons.error_outline_rounded,
                       tone: Tone.danger,
                       title: 'Couldn\'t load balances',
-                      message: _error!.message,
+                      message: describeApiError(_error!),
                       actionLabel: 'Retry',
                       onAction: _load,
                     ),
